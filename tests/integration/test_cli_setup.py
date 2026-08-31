@@ -1,0 +1,360 @@
+"""Tests for `outo-models setup` — interactive + non-interactive wizard.
+
+Two surfaces:
+
+    * `non_interactive=True` with all flags: deterministic — no prompts,
+      asserts on the YAML + admin DB row.
+    * Interactive surface: monkeypatches `cli.prompts.{text,password,confirm}`
+      so we can drive the wizard through CliRunner without a real terminal.
+
+The wizard must NEVER write the plaintext admin password anywhere (YAML,
+DB row, log, console). The DB row must carry an argon2id hash; the YAML
+must carry the API token only when the operator chose Cloudflare.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from typer.testing import CliRunner
+
+from outo_models.cli import prompts as cli_prompts
+from outo_models.cli.main import app
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+@pytest.fixture
+def patched_prompts(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace the prompt backend with deterministic canned answers.
+
+    The text/password helpers are queue-based: callers can push values
+    before invoking the CLI. Defaults cover the common wizard walk
+    where flags fill in the easy fields and only password + ports +
+    require_approval actually need prompting.
+    """
+    import queue as _q
+
+    text_queue: _q.Queue[str] = _q.Queue()
+    # Order matches the wizard's prompt sequence when flags fill the
+    # earlier fields: public_ipv4, then ports.
+    text_queue.put("203.0.113.42")
+    text_queue.put("80,443")
+
+    password_queue: _q.Queue[str] = _q.Queue()
+    password_queue.put("correct horse battery staple")
+    password_queue.put("correct horse battery staple")
+
+    def _text(*_a: Any, **_k: Any) -> str:
+        return text_queue.get_nowait()
+
+    def _pw(*_a: Any, **_k: Any) -> str:
+        return password_queue.get_nowait()
+
+    answers = {
+        "text": _text,
+        "password": _pw,
+        "confirm": lambda *_a, **_k: True,
+        "int_prompt": lambda *_a, **_k: 42,
+    }
+    for name, func in answers.items():
+        monkeypatch.setattr(cli_prompts, name, func)
+    return answers
+
+
+# ---------------------------------------------------------------------------
+# Non-interactive surface
+# ---------------------------------------------------------------------------
+
+
+class TestNonInteractive:
+    """All flags → no prompts → deterministic YAML + admin DB row."""
+
+    def test_full_non_interactive_writes_yaml_and_admin(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        patched_prompts: dict[str, Any],
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        # No DNS / firewall side-effects in unit tests — those are host-privileged.
+        argv = [
+            "setup",
+            "run",
+            "--non-interactive",
+            "--domain",
+            "models.example.com",
+            "--acme-email",
+            "ops@example.com",
+            "--dns-provider",
+            "manual",
+            "--public-ipv4",
+            "203.0.113.42",
+            "--admin-username",
+            "admin",
+            "--admin-email",
+            "admin@example.com",
+            "--admin-password",
+            "correct horse battery staple",
+            "--skip-dns",
+            "--skip-firewall",
+            "--skip-ip-detect",
+        ]
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, result.output
+
+        # YAML was written.
+        assert config_path.exists()
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["domain"] == "models.example.com"
+        assert payload["admin_username"] == "admin"
+        assert payload["admin_email"] == "admin@example.com"
+        assert payload["dns_provider"] == "manual"
+        assert payload["public_ipv4"] == "203.0.113.42"
+        # Secrets: no plaintext password in the YAML.
+        raw = config_path.read_text(encoding="utf-8")
+        assert "correct horse battery staple" not in raw
+        # File mode is 0o600 — secrets inside, permissions locked down.
+        mode = config_path.stat().st_mode & 0o777
+        assert mode == 0o600
+
+        # Admin user exists in the DB with role=admin / status=approved.
+        import asyncio as _aio
+
+        from sqlalchemy import select
+
+        from outo_models.db import User, get_engine, get_session_factory
+
+        async def _check() -> None:
+            engine = get_engine(_settings())
+            factory = get_session_factory(engine)
+            async with factory() as session:
+                rows = (await session.execute(select(User))).scalars().all()
+                assert len(rows) == 1
+                u = rows[0]
+                assert u.username == "admin"
+                assert u.email == "admin@example.com"
+                assert u.role == "admin"
+                assert u.status == "approved"
+                assert u.password_hash.startswith("$argon2id$")
+                assert "correct horse battery staple" not in u.password_hash
+            await engine.dispose()
+
+        _aio.run(_check())
+
+    def test_missing_flag_in_non_interactive_mode_fails_cleanly(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        argv = [
+            "setup",
+            "run",
+            "--non-interactive",
+            "--domain",
+            "models.example.com",
+            # missing everything else
+            "--skip-dns",
+            "--skip-firewall",
+        ]
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "--non-interactive" in result.output or "필요" in result.output
+        assert not config_path.exists()
+
+    def test_invalid_password_below_minimum(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        argv = [
+            "setup",
+            "run",
+            "--non-interactive",
+            "--domain",
+            "models.example.com",
+            "--acme-email",
+            "ops@example.com",
+            "--dns-provider",
+            "manual",
+            "--public-ipv4",
+            "203.0.113.42",
+            "--admin-username",
+            "admin",
+            "--admin-email",
+            "admin@example.com",
+            "--admin-password",
+            "short",  # < 8 chars
+            "--skip-dns",
+            "--skip-firewall",
+        ]
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Interactive surface — monkeypatched prompts
+# ---------------------------------------------------------------------------
+
+
+class TestInteractive:
+    """`--non-interactive=False` (default) drives `prompts.{text,password,...}`."""
+
+    def test_interactive_wizard_completes_with_patched_prompts(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        patched_prompts: dict[str, Any],
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        # Patch the IP-detection `httpx.get` so the wizard doesn't try
+        # to reach api.ipify.org from the test runner.
+        import httpx as _httpx
+
+        class _Resp:
+            status_code = 200
+
+            def __init__(self, text_value: str) -> None:
+                self._text = text_value
+
+            @property
+            def text(self) -> str:
+                return self._text
+
+        monkeypatch.setattr(_httpx, "get", lambda *_a, **_k: _Resp("203.0.113.99"))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--skip-dns",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+            input="correct horse battery staple\n",
+        )
+        assert result.exit_code == 0, result.output
+
+        # Admin user exists.
+        import asyncio as _aio
+
+        from sqlalchemy import select
+
+        from outo_models.db import User, get_engine, get_session_factory
+
+        async def _check() -> None:
+            engine = get_engine(_settings())
+            factory = get_session_factory(engine)
+            async with factory() as session:
+                rows = (await session.execute(select(User))).scalars().all()
+                assert any(u.username == "admin" and u.role == "admin" for u in rows)
+            await engine.dispose()
+
+        _aio.run(_check())
+
+    def test_password_mismatch_reprompts(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        patched_prompts: dict[str, Any],
+    ) -> None:
+        # First two `password` calls are the wizard's pw / confirm pair;
+        # if they differ, the loop re-asks. After two wrong + two right,
+        # the wizard proceeds.
+        calls: list[str] = []
+
+        def _pw(_msg: str, **_k: object) -> str:
+            calls.append(_msg)
+            return "correct horse battery staple" if len(calls) >= 3 else "wrong"
+
+        monkeypatch.setattr(cli_prompts, "password", _pw)
+        monkeypatch.setattr(
+            cli_prompts, "confirm", lambda *a, **k: True
+        )
+
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        import httpx as _httpx
+
+        class _Resp:
+            status_code = 200
+            text = "203.0.113.99"
+
+        monkeypatch.setattr(_httpx, "get", lambda *_a, **_k: _Resp())
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--skip-dns",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        # 4 prompt calls: pw1, pw2, pw3, pw4 (third and fourth match).
+        assert len(calls) >= 4

@@ -1,0 +1,42 @@
+# .containerignore — keep the build context tight.
+# Anything NOT needed inside the image (or already provided by a stage) is
+# listed here. Podman / Buildah honor this file alongside .dockerignore.
+#
+# Note: AGENTS.md §3 — docs are Korean-language documentation, not runtime
+# assets; they are excluded so a doc-only edit does not invalidate the
+# uv-cache layer.
+
+# Local virtualenv + caches. Recreating the env inside the builder is the
+# whole point of the uv stage.
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.hypothesis
+
+# VCS metadata, editor swap, OS noise.
+.git
+.gitignore
+.gitattributes
+.editorconfig
+.DS_Store
+
+# Tests + dev tooling. The image only needs the runtime src/ tree.
+tests
+pytest.ini
+conftest.py
+.coverage
+htmlcov
+
+# Docs (Korean-language guides) are not part of the runtime image.
+docs
+*.md
+!README.md
+!Containerfile
+!LICENSE
+
+# Examples + host-side scripts are loaded explicitly via COPY container/...
+# but excluding their directories from the *build context*'s auto-include is
+# not necessary — the explicit COPYs still win. Listed for clarity only:
+# container/examples
+# container/systemd

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ owner }}/{{ repo.name }} — outo-models{% endblock %}
+{% block content %}
+<h1>{{ owner }}/{{ repo.name }}</h1>
+<p><span class="pill">{{ repo.kind }}</span> <span class="pill">{{ repo.visibility }}</span></p>
+{% if repo.description %}<p>{{ repo.description }}</p>{% endif %}
+
+<h2>Clone</h2>
+<pre><code>git clone {{ clone_url }}</code></pre>
+
+<h2>최근 커밋</h2>
+{% if revisions %}
+  <table>
+    <thead><tr><th>SHA</th><th>메시지</th><th>작성자</th><th>시간</th></tr></thead>
+    <tbody>
+      {% for rev in revisions %}
+        <tr>
+          <td><code>{{ rev.commit_sha[:10] }}</code></td>
+          <td>{{ rev.message }}</td>
+          <td>{{ rev.author }}</td>
+          <td>{{ rev.committed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="muted">아직 커밋이 없습니다.</p>
+{% endif %}
+{% endblock %}

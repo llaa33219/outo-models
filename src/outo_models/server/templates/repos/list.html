@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}저장소 — outo-models{% endblock %}
+{% block content %}
+<h1>공개 저장소</h1>
+{% if repos %}
+  {% for repo in repos %}
+    <div class="card">
+      <h2><a href="/{{ repo.owner.username }}/{{ repo.name }}">{{ repo.owner.username }}/{{ repo.name }}</a></h2>
+      <p><span class="pill">{{ repo.kind }}</span> <span class="pill">{{ repo.visibility }}</span></p>
+      {% if repo.description %}<p>{{ repo.description }}</p>{% endif %}
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">아직 공개된 저장소가 없습니다.</p>
+{% endif %}
+{% endblock %}

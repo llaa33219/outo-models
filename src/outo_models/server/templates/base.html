@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}outo-models{% endblock %}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head_extra %}{% endblock %}
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #fafafa;
+    color: #111;
+    line-height: 1.5;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111; color: #eee; }
+    a { color: #6cf; }
+    header, footer { background: #1a1a1a; border-color: #333; }
+    .card { background: #1a1a1a; border-color: #333; }
+    pre { background: #1a1a1a; color: #eee; }
+  }
+  header, footer {
+    background: #fff;
+    border-bottom: 1px solid #eee;
+    padding: 12px 24px;
+  }
+  footer { border-top: 1px solid #eee; border-bottom: none; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; }
+  h1, h2 { line-height: 1.25; }
+  a { color: #06c; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  nav a { margin-right: 16px; }
+  .card {
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 12px 0;
+  }
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+  }
+  input, button, textarea, select {
+    font: inherit;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #fff;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+  }
+  button.danger { background: #b91c1c; border-color: #b91c1c; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+  .muted { color: #666; font-size: 14px; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: #eef;
+  }
+  @media (prefers-color-scheme: dark) { .pill { background: #223; } }
+  .errors { color: #b91c1c; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <nav>
+    <a href="/"><strong>outo-models</strong></a>
+    <a href="/signup">가입</a>
+    <a href="/login">로그인</a>
+    <a href="/admin">관리자</a>
+  </nav>
+</header>
+<main>
+  {% block content %}{% endblock %}
+</main>
+<footer>
+  <p class="muted">© outo-models — 자체 호스팅 가능한 모델 허브</p>
+</footer>
+</body>
+</html>

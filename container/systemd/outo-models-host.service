@@ -1,0 +1,55 @@
+# outo-models-host.service
+#
+# ============================================================================
+#  OPT-IN 호스트 측 부트스트랩 유닛 — 기본값은 비활성(disabled) 상태입니다.
+# ============================================================================
+# 이 유닛은 부팅 시점에 호스트 방화벽을 자동으로 개방하는 *선택적* 헬퍼입니다.
+# 필요 없다면 그대로 두세요 (유닛을 enable 하지 않으면 아무 일도 일어나지
+# 않습니다). 다음 경우에 활성화하세요:
+#   - 호스트 방화벽이 firewalld / ufw / nftables 중 하나로 자동 감지됨
+#   - 매 부팅마다 80/443 을 자동으로 열어 두고 싶음
+#
+# 활성화:
+#   cp container/systemd/outo-models-host.service /etc/systemd/system/
+#   systemctl edit outo-models-host.service   # OUTO_FIREWALL_KIND 실제 값으로
+#   systemctl enable --now outo-models-host.service
+#
+# 의존: 방화벽 관리 데몬(firewalld.service / ufw.service 등)이 먼저 기동되어
+# 있어야 합니다. After= 만 지정되어 있을 뿐 Requires= 는 두지 않습니다 —
+# 방화벽 데몬이 없는 환경에서도 유닛이 실패하지 않고 출력만 남깁니다.
+#
+# ============================================================================
+
+[Unit]
+Description=outo-models host bootstrap (open 80/443 firewall ports at boot)
+Documentation=https://github.com/outo-models/outo-models
+# After= 는 ordering 만 지정. Requires= 는 일부 호스트에 firewalld 가 없을
+# 수 있어 두지 않는다 — 유닛은 항상 Attempt 를 시도하고 실패해도 boot 을
+# 막지 않는다 (Type=oneshot + RemainAfterExit=yes + 성공/실패 무관 로그).
+After=network-online.target firewalld.service ufw.service nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# ---- 어떤 방화벽을 열지 (반드시 운영 환경 값으로 덮어쓰세요) ----
+# 유효 값: firewalld | ufw | nftables | none
+#   firewalld  : firewall-cmd --permanent --add-port=80/tcp && reload
+#   ufw        : ufw allow 80/tcp
+#   nftables   : inet outo_models 테이블에 누적
+#   none       : 아무것도 하지 않고 한국어 안내만 출력 (0 종료)
+Environment=OUTO_FIREWALL_KIND=firewalld
+
+# ---- 헬퍼 스크립트 경로 ----
+# setup 위저드가 /opt/outo-models/scripts/ 로 복사했다고 가정합니다.
+# 다른 경로에 설치했다면 ExecStart 의 경로를 환경에 맞게 조정하세요.
+ExecStart=/opt/outo-models/scripts/firewall-open.sh ${OUTO_FIREWALL_KIND} 80 443
+
+# 표준 로그 — journalctl -u outo-models-host 로 확인.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# enable 하지 않는 한 동작하지 않는다 — 의도된 opt-in 동작.
+WantedBy=multi-user.target

@@ -1,0 +1,86 @@
+name: release-image
+
+# Tag-driven image builds. Push a tag of the form:
+#   v1.2.3-stable   → IMAGE_FLAVOR=stable → ghcr.io/<owner>/outo-models:1.2.3{,-stable}, :stable
+#   v1.2.3-dev      → IMAGE_FLAVOR=dev    → ghcr.io/<owner>/outo-models:1.2.3-dev, :dev
+on:
+  push:
+    tags:
+      - "v*-stable"
+      - "v*-dev"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run pytest
+      - run: bash scripts/check-docs.sh
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: tag
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(stable|dev)$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "flavor=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Tag '$REF' must match vX.Y.Z-stable or vX.Y.Z-dev"
+            exit 1
+          fi
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build image
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          FLAVOR: ${{ steps.tag.outputs.flavor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          podman build \
+            --build-arg IMAGE_FLAVOR="$FLAVOR" \
+            --tag "$IMAGE:$VERSION-$FLAVOR" \
+            --tag "$IMAGE:$FLAVOR" \
+            .
+
+      - name: Push image
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          FLAVOR: ${{ steps.tag.outputs.flavor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          podman push "$IMAGE:$VERSION-$FLAVOR"
+          podman push "$IMAGE:$FLAVOR"
+          # The moving latest tag only tracks stable releases.
+          if [[ "$FLAVOR" == "stable" ]]; then
+            podman tag "$IMAGE:$VERSION-$FLAVOR" "$IMAGE:latest"
+            podman push "$IMAGE:latest"
+          fi
+
+      - name: Smoke check the built image
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          FLAVOR: ${{ steps.tag.outputs.flavor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          podman run --rm "$IMAGE:$VERSION-$FLAVOR" --help

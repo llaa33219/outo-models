@@ -1,0 +1,34 @@
+{# Caddyfile template — rendered by `render_caddyfile()` in caddy_manager.py.
+
+   Jinja delimiters: `{{ }}` for expressions, `{% %}` for statements.
+   Single Caddy braces (`{...}`) are literal — Jinja does not interpret them.
+
+   Block trim flags (`trim_blocks`, `lstrip_blocks`) are enabled on the
+   Environment so conditional directives collapse cleanly without blank lines.
+   The right-trim `-%}` on every block tag strips the blank line that the
+   source uses to visually separate `{% if %}` from its content.
+#}
+{
+	email {{ email }}
+	{% if staging -%}
+
+	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+	{% endif -%}
+}
+
+{{ domain }} {
+	reverse_proxy 127.0.0.1:8000
+	{% if dns_provider == "cloudflare" -%}
+
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	{% endif -%}
+}
+
+# Caddy-level health probe — short-circuits before reverse-proxying to the app.
+# Bound to a dedicated listener so it does not collide with the Caddy admin
+# API (which lives at `admin_url`, by default :2019).
+:8080/healthz {
+	respond "ok" 200
+}

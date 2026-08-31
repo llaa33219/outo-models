@@ -1,0 +1,73 @@
+# =============================================================================
+# outo-models.container — podman quadlet unit 예시
+# =============================================================================
+#
+# 이 파일은 /etc/containers/systemd/ (또는 사용자의 ~/.config/containers/systemd/)
+# 아래에 동일한 이름의 .container 확장자로 복사하면 됩니다. systemd 가
+# 자동으로 *.container 를 읽어 outo-models.service 라는 systemd 서비스 유닛을
+# 생성합니다. 시작: `systemctl --user start outo-models.service`.
+#
+# 참고 문서: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
+#
+# 이 파일은 stable 플레이버용입니다. dev 이미지로 바꾸려면 Image= 의 태그를
+# dev 로 바꾸세요 (단, AGENTS.md §4 — dev 이미지를 운영에 배포하지 말 것).
+
+[Unit]
+Description=outo-models (self-hostable model hub)
+# 컨테이너가 먼저 부팅된 후 시작하도록 network-online 만 의존. 다른 유닛
+# 과의 명시적 결합은 피한다 — 부팅 순서 보장은 최소한으로.
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+# 운영 시에는 registry 에 push 한 이미지로 교체하세요. localhost/ 는
+# podman 의 image-scp 없이 로컬에서 build 한 이미지를 그대로 가리키는
+# 표준 컨벤션입니다.
+Image=localhost/outo-models:stable
+
+# 공개 포트. 컨테이너 내부에서도 80/443 으로 바인딩하므로 EXPOSE 와 짝을
+# 맞춥니다. 컨테이너가 non-root 로 실행된다면 --cap-add NET_BIND_SERVICE
+# 가 필요합니다 — SecurityOpt 섹션의 주석 라인을 해제하세요.
+PublishPort=80:80
+PublishPort=443:443
+
+# 데이터 볼륨. update.sh / reset.sh 가 동일 이름("outo-models-data")을
+# 사용합니다 — 절대 변경하지 마세요 (정적 테스트가 이름 일치를 검사함).
+Volume=outo-models-data:/var/lib/outo-models
+
+# 자동 갱신 — quadlet 가 Podman auto-update 정책을 그대로 위임.
+# AutoUpdate=registry 가 설정되면 `podman-auto-update.timer` 가 새 이미지를
+# 감지해 컨테이너를 무중단 교체합니다.
+AutoUpdate=registry
+
+# -----------------------------------------------------------------------------
+# 보안 옵션
+# -----------------------------------------------------------------------------
+# 최소 권한 원칙. NoNewPrivileges 는 setuid/setgid 바이너리의 권한 상승을
+# 거부해 컨테이너 안의 프로세스가 root 로 escape 하는 경로를 차단합니다.
+SecurityOpt=no-new-privileges:true
+SecurityOpt=label=type:container_runtime_t
+
+# 기본적으로 컨테이너는 NET_BIND_SERVICE 캡 없이 실행됩니다 — 80/443 바인딩은
+# 다음 줄의 주석을 해제해 명시적으로 부여하세요.
+# AddCapability=NET_BIND_SERVICE
+
+# ReadOnly=false: 데이터 볼륨 외에는 쓰기 가능 영역이 없으므로 안전합니다.
+# 만약 보안을 더 강화하려면 ReadOnly=true 로 두고 /tmp, /run 등을
+# Tmpfs= 로 마운트하세요.
+ReadOnly=false
+
+# 재시작 정책. always 는 컨테이너가 어떤 이유로 종료돼도 부팅 시 재기동.
+Restart=always
+RestartSec=10
+
+# 환경 변수. 시크릿은 systemd-creds 또는 별도 secret provider 로 주입하세요.
+# 환경별 추가 설정은 Environment= 로 확장하세요.
+Environment=OUTO_ENV=production
+
+[Service]
+# quadlet 가 생성한 서비스 유닛의 재시작 정책 (컨테이너 레벨과 별개).
+Restart=always
+
+[Install]
+WantedBy=default.target
