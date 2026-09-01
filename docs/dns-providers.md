@@ -1,146 +1,168 @@
-# DNS 제공자
+# DNS providers
 
-`outo_models.dns` 패키지는 설정 마법사와 Caddy 가 공통으로 사용하는 비동기
-인터페이스 (`DNSProvider` ABC) 를 정의합니다. 구체 구현 (Cloudflare, 수동) 은
-이 인터페이스를 구현하고 [factory.create_provider](../src/outo_models/dns/factory.py)
-에서 디스패치됩니다. 새 제공자를 추가하는 4단계 절차는
-[src/outo_models/dns/README.md](../src/outo_models/dns/README.md) 에 있습니다.
+The `outo_models.dns` package defines the asynchronous interface
+(`DNSProvider` ABC) shared by the setup wizard and Caddy. Concrete
+implementations (Cloudflare, manual) implement this interface and are
+dispatched from [factory.create_provider](../src/outo_models/dns/factory.py).
+The four-step procedure for adding a new provider is documented in
+[src/outo_models/dns/README.md](../src/outo_models/dns/README.md).
 
-이 문서는 운영자가 마법사에서 어떤 제공자를 골라야 하는지, 토큰은 어디서
-만드는지, 수동 모드는 어떻게 동작하는지를 다룹니다.
+This page covers the operator-facing decisions: which provider to pick, how
+to mint a token, and how the manual mode works.
 
-## 인터페이스
+## Interface
 
 ```python
 @dataclass(frozen=True, slots=True)
 class DnsRecord:
-    name: str         # 예: models.example.com
+    name: str         # e.g. models.example.com
     type: str         # "A" | "AAAA" | "CNAME" | "TXT"
-    value: str        # IPv4 / IPv6 / target / 텍스트
-    ttl: int = 300    # 5분 기본값 — ACME 검증 왕복을 짧게
+    value: str        # IPv4 / IPv6 / target / text
+    ttl: int = 300    # 5-minute default — keeps the ACME verification round-trip short
 
 class DNSProvider(ABC):
-    name: str         # 팩토리 디스패치 키
+    name: str         # factory dispatch key
 
     async def ensure_record(self, record: DnsRecord) -> None
     async def delete_record(self, record: DnsRecord) -> None
     async def list_records(self) -> list[DnsRecord]
 ```
 
-`ensure_record` 는 멱등입니다 — 같은 레코드가 이미 있으면 업데이트, 없으면
-생성합니다. 마법사가 재실행되어도 안전합니다.
+`ensure_record` is idempotent — it updates the existing record if one
+already exists, otherwise creates it. The wizard is safe to re-run.
 
-## 오류 매핑
+## Error mapping
 
-| 상황 | 예외 |
+| Situation | Exception |
 | --- | --- |
-| 알 수 없는 제공자 이름 | `ConfigError` (`config_error`) |
-| 제공자별 자격 증명 누락 | `ConfigError` |
-| 제공자 4xx 응답 (인증 / 검증 / not-found) | `ConfigError` + 제공자 메시지 |
-| 제공자 5xx / 네트워크 오류 | `OutoError(code="dns_upstream")` |
+| Unknown provider name | `ConfigError` (`config_error`) |
+| Provider-specific credentials missing | `ConfigError` |
+| Provider 4xx response (auth / validation / not-found) | `ConfigError` with the provider's message |
+| Provider 5xx / network error | `OutoError(code="dns_upstream")` |
 
-`dns_upstream` 은 일시적 오류로 간주되어 마법사가 재시도 안내를 표시합니다.
+`dns_upstream` is treated as transient — the wizard surfaces a retry
+hint.
 
-## Cloudflare 모드
+## Cloudflare mode
 
-대부분의 운영자에게 권장되는 모드입니다. Cloudflare DNS 가 위임된 도메인에
-대해 `A` 레코드를 자동으로 만들고, 이후 ACME 의 DNS-01 챌린지도 같은 토큰으로
-처리합니다.
+This is the recommended mode for most operators. For domains delegated to
+Cloudflare DNS, it creates the `A` record automatically and uses the same
+token for DNS-01 ACME challenges.
 
-### API 토큰 발급
+### API token issuance
 
-1. <https://dash.cloudflare.com/profile/api-tokens> 에서 **Create Token**
-2. 템플릿 선택: **Edit zone DNS** (또는 **Custom token**)
-3. 권한 (Permissions):
+1. Visit <https://dash.cloudflare.com/profile/api-tokens> and click
+   **Create Token**
+2. Choose the template **Edit zone DNS** (or a **Custom token**)
+3. Permissions:
    - `Zone` → `DNS` → `Edit`
-   - `Zone Resources` → `Include` → `Specific zone` → `<your-zone>` (예: `example.com`)
+   - `Zone Resources` → `Include` → `Specific zone` → `<your-zone>`
+     (e.g. `example.com`)
 4. **Continue to summary** → **Create Token**
-5. 생성된 토큰을 마법사에 붙여 넣기 (또는 `OUTO_CLOUDFLARE_API_TOKEN` 으로 주입)
+5. Paste the generated token into the wizard (or inject it via
+   `OUTO_CLOUDFLARE_API_TOKEN`)
 
-> 토큰은 **Zone.DNS:Edit** 권한만 있으면 됩니다. 더 넓은 권한 (예: Zone Read,
-> Account Read) 은 부여하지 마세요.
+> The token only needs the `Zone.DNS:Edit` permission. Do not grant
+> broader permissions (Zone Read, Account Read, etc.).
 
-### 마법사 응답
+### Wizard behavior
 
-`--dns-provider cloudflare` 로 마법사를 실행하면 다음이 자동으로 일어납니다.
+Running the wizard with `--dns-provider cloudflare` performs the
+following automatically:
 
-1. Cloudflare API 로 `GET /zones?name=<domain>` 호출 → zone_id 캐시
-2. `POST /zones/{zone_id}/dns_records` (또는 이미 있으면 `PUT`) 로
-   `{ name: <domain>, type: A, content: <ipv4>, ttl: 300 }` 레코드 보장
-3. 마법사 진행 → Caddy 가 같은 토큰으로 DNS-01 ACME 챌린지 수행
+1. Calls Cloudflare API `GET /zones?name=<domain>` to cache the
+   `zone_id`
+2. Calls `POST /zones/{zone_id}/dns_records` (or `PUT` if it already
+   exists) to ensure the record
+   `{ name: <domain>, type: A, content: <ipv4>, ttl: 300 }`
+3. The wizard continues → Caddy uses the same token for the DNS-01 ACME
+   challenge
 
-API 응답 본문에 토큰이 포함될 경우 마법사는 `re.sub(r"[A-Za-z0-9_-]{32,}",
-"***", ...)` 마스킹을 거쳐 한국어 메시지를 만듭니다.
+If the API response body ever contains the token, the wizard applies
+`re.sub(r"[A-Za-z0-9_-]{32,}", "***", ...)` to mask it before composing
+the message.
 
-### 마스킹
+### Masking
 
-`CloudflareProvider.__repr__` 은 zone domain 만 표시합니다 (`api_token` 절대
-포함 안 함). 로그 / 예외 메시지 / DB 어디에도 평문이 새지 않습니다.
+`CloudflareProvider.__repr__` shows only the zone domain (the `api_token`
+is never included). Plaintext never leaks into logs, exception messages,
+or the DB.
 
-## 수동 모드
+## Manual mode
 
-Cloudflare 외 DNS 호스트 (Route53, 가디라이브, ...), 또는 마법사가 DNS 를
-건드리지 못하게 막아 둔 환경에서 사용합니다.
+For DNS hosts other than Cloudflare (Route53, GoDaddy, etc.), or for
+environments where the wizard must not touch DNS at all.
 
-### 마법사 응답
+### Wizard behavior
 
-`--dns-provider manual` 로 실행하면 다음이 자동으로 일어납니다.
+Running with `--dns-provider manual` performs the following:
 
-1. `ManualProvider._pending` 메모리 dict 에 `{name, type, value, ttl}` 저장
-2. `ManualProvider.instructions()` 가 한국어 안내를 stdout 으로 출력
-3. 운영자가 안내에 따라 DNS 호스트 측에서 직접 레코드 생성
-4. 마법사가 `prompts.confirm("DNS 레코드가 전파되었으면 Enter 키를 눌러 주세요.", default=True)` 로 사용자 확인 대기
+1. `ManualProvider._pending` (in-memory dict) stores
+   `{name, type, value, ttl}`
+2. `ManualProvider.instructions()` prints operator instructions to stdout
+3. The operator follows the instructions to create the record on their
+   DNS host
+4. The wizard waits for confirmation via
+   `prompts.confirm("DNS record has propagated — press Enter to continue.", default=True)`
 
-예시 안내:
+Example instruction output:
 
 ```
-다음 DNS 레코드를 example.com 의 DNS 호스트에 추가하세요:
+Add the following DNS record to the DNS host for example.com:
 
-1. 이름(name): models.example.com  유형(type): A  값(value): 203.0.113.10  TTL: 300s
+1. name: models.example.com  type: A  value: 203.0.113.10  TTL: 300s
 
-레코드가 전파된 것을 확인한 뒤 설치 마법사에서 '확인'을 눌러 주세요.
+After confirming the record has propagated, press 'confirm' in the setup wizard.
 ```
 
-전파 확인 (예: `dig +short models.example.com @1.1.1.1`) 후 마법사를 진행하면
-됩니다. 메모리 dict 는 마법사 인스턴스가 끝나면 사라지므로, 재호출하면 같은
-안내가 다시 출력됩니다.
+After propagation (e.g. `dig +short models.example.com @1.1.1.1`) the
+wizard can proceed. The in-memory dict goes away with the wizard
+instance, so re-running prints the instructions again.
 
-### DNS-01 챌린지를 수동으로 처리하고 싶다면
+### Handling DNS-01 manually
 
-수동 모드에서는 Cloudflare 플러그인이 없으므로 Caddy 는 HTTP-01 챌린지를
-사용합니다. 즉, ACME 발급 시점에 80 포트가 외부에서 도달 가능해야 합니다
-(보통의 운영 환경이면 충족). 도메인 wildcard 인증서나 비공개 도메인 인증서가
-필요하다면 [troubleshooting.md](troubleshooting.md) 의 ACME 섹션을 보세요.
+In manual mode the Cloudflare plugin is unavailable, so Caddy uses the
+HTTP-01 challenge. That means port 80 must be reachable from the public
+internet at ACME issuance time (typical for production deployments). If
+you need wildcard certificates or private-domain certificates, see the
+ACME section of [troubleshooting.md](troubleshooting.md).
 
-## 새 제공자 추가 (4 단계)
+## Adding a new provider (4 steps)
 
-[src/outo_models/dns/README.md](../src/outo_models/dns/README.md) 에 정식 절차가
-있습니다. 요약:
+The formal procedure is documented in
+[src/outo_models/dns/README.md](../src/outo_models/dns/README.md). Summary:
 
-1. **ABC 구현**: `src/outo_models/dns/<name>.py` 에 `DNSProvider` 서브 클래스.
-   `__aenter__` / `__aexit__` 로 httpx / boto3 같은 클라이언트를 관리.
-2. **오류 매핑**: 4xx → `ConfigError`, 5xx / 네트워크 → `OutoError(code="dns_upstream")`.
-   예외 메시지에 자격 증명 포함 금지.
-3. **팩토리 등록**: `dns/factory.create_provider` 에 새 분기 추가. 자격 증명
-   누락은 `ConfigError` 로 즉시 거절.
-4. **내보내기 / 테스트**: `dns/__init__.py` 에서 export. `tests/unit/test_dns_<name>.py`
-   에 성공 / 갱신 / 오류 / 시크릿 위생 / (HTTP 기반이면) zone 캐싱 테스트 추가.
-   `tests/unit/test_dns_factory.py` 의 디스패치 케이스도 추가.
+1. **Implement the ABC**: add a `DNSProvider` subclass under
+   `src/outo_models/dns/<name>.py`. Manage httpx / boto3 etc. via
+   `__aenter__` / `__aexit__`.
+2. **Error mapping**: 4xx → `ConfigError`, 5xx / network →
+   `OutoError(code="dns_upstream")`. Never embed credentials in exception
+   messages.
+3. **Register in the factory**: add a new branch in
+   `dns/factory.create_provider`. Missing credentials must immediately
+   raise `ConfigError`.
+4. **Export / test**: export from `dns/__init__.py`. Add success /
+   update / error / secret-hygiene tests to
+   `tests/unit/test_dns_<name>.py`, plus a dispatch case in
+   `tests/unit/test_dns_factory.py`.
 
-마법사 / TLS 매니저는 `DNSProvider` 인터페이스만 보기 때문에 새 제공자가
-들어와도 다른 모듈을 수정할 필요가 없습니다.
+The wizard and TLS manager only depend on the `DNSProvider` interface, so
+adding a new provider requires no other module changes.
 
-## 운영 체크리스트
+## Operational checklist
 
-DNS 모드를 변경하려면:
+To change the DNS mode:
 
-1. `/etc/outo-models/config.yaml` 의 `dns_provider` 키 변경
-2. (Cloudflare 로 전환 시) Cloudflare API 토큰을 `cloudflare_api_token` 키로 추가
-3. `outo-models setup` 을 다시 실행 (멱등) — DNS / Caddyfile 단계가 새 설정으로 재생성됨
-4. `outo-models restart` — 새 Caddyfile 적용
+1. Update the `dns_provider` key in `/etc/outo-models/config.yaml`
+2. (When switching to Cloudflare) add the Cloudflare API token under
+   `cloudflare_api_token`
+3. Re-run `outo-models setup` (idempotent) — the DNS / Caddyfile steps
+   regenerate with the new settings
+4. Run `outo-models restart` — the new Caddyfile takes effect
 
-## 다음 단계
+## Next steps
 
-- [setup-wizard.md](setup-wizard.md) — DNS 단계의 프롬프트 순서
-- [security.md](security.md) — DNS 토큰의 시크릿 위생
-- [troubleshooting.md](troubleshooting.md) — DNS 전파 / 인증서 발급 실패 디버깅
+- [setup-wizard.md](setup-wizard.md) — prompt order of the DNS step
+- [security.md](security.md) — secret hygiene for DNS tokens
+- [troubleshooting.md](troubleshooting.md) — debugging DNS propagation /
+  certificate issuance

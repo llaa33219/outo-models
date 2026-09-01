@@ -1,159 +1,161 @@
-# 아키텍처
+# Architecture
 
-이 페이지는 운영자가 시스템 동작을 머릿속에 그릴 수 있도록 돕습니다. 구현
-세부 사항은 코드와 함께 진화하므로, 본 문서가 코드와 어긋날 때마다 PR 로
-갱신합니다 (AGENTS.md §3).
+This page helps operators build a mental model of how the system behaves.
+Implementation details evolve with the code, so whenever the doc drifts from
+the code we update the doc (AGENTS.md §3).
 
-## 모듈 지도
+## Module map
 
 ```
 src/outo_models/
-├── config.py, logging.py, exceptions.py      코어 인프라
-├── utils/                                     경로, 슬러그, 시간, 해시
-├── auth/                                      argon2, 세션, PASETO PAT, 권한, 레이트리밋
-│   ├── approval.py                            가입 승인 상태 머신
-│   ├── passwords.py                           argon2id 래퍼
+├── config.py, logging.py, exceptions.py      core infrastructure
+├── utils/                                     paths, slugs, time, hashing
+├── auth/                                      argon2, sessions, PASETO PAT, permissions, rate limit
+│   ├── approval.py                            signup approval state machine
+│   ├── passwords.py                           argon2id wrapper
 │   ├── permissions.py                         scope / role
 │   ├── rate_limit.py                          slowapi Limiter
-│   ├── sessions.py                            itsdangerous 세션 쿠키
-│   └── tokens.py                              PASETO v4 local + 지문
+│   ├── sessions.py                            itsdangerous session cookies
+│   └── tokens.py                              PASETO v4 local + fingerprint
 ├── db/
-│   ├── engine.py, session.py                  SQLAlchemy 비동기 엔진 / 세션
-│   ├── models/                                ORM 모델
-│   └── migrations/                            Alembic 마이그레이션
+│   ├── engine.py, session.py                  SQLAlchemy async engine / session
+│   ├── models/                                ORM models
+│   └── migrations/                            Alembic migrations
 ├── dns/
-│   ├── base.py                                DNSProvider 추상 ABC + DnsRecord
-│   ├── cloudflare.py                          Cloudflare 구현
-│   ├── factory.py                             create_provider 디스패치
-│   └── manual.py                              수동 모드 (안내 출력)
+│   ├── base.py                                DNSProvider ABC + DnsRecord
+│   ├── cloudflare.py                          Cloudflare implementation
+│   ├── factory.py                             create_provider dispatch
+│   └── manual.py                              manual mode (prints instructions)
 ├── firewall/
-│   ├── detect.py                              firewalld / ufw / nftables 감지
-│   └── open_ports.py                          호스트 스크립트 호출
+│   ├── detect.py                              firewalld / ufw / nftables detection
+│   └── open_ports.py                          host-script invocation
 ├── tls/
-│   ├── caddy_manager.py                       Caddyfile 렌더링 + admin API
-│   └── renewal.py                             인증서 헬스체크 + nudge
+│   ├── caddy_manager.py                       Caddyfile rendering + admin API
+│   └── renewal.py                             certificate healthcheck + nudge
 ├── tasks/
-│   ├── scheduler.py                           APScheduler 래퍼
+│   ├── scheduler.py                           APScheduler wrapper
 │   └── jobs/                                  cert_renewal / quota_reconcile / audit_prune
 ├── repos/
-│   ├── models.py                              RepoKind / Visibility 도메인 모델
-│   ├── storage.py                             디스크 레이아웃 + per-repo asyncio.Lock
-│   ├── create.py, delete.py                   bare repo 생성 / 삭제
+│   ├── models.py                              RepoKind / Visibility domain models
+│   ├── storage.py                             disk layout + per-repo asyncio.Lock
+│   ├── create.py, delete.py                   bare repo creation / deletion
 │   ├── quota.py                               UserQuota / UserUsage + reconcile
-│   └── reflog.py                              최근 커밋 조회
+│   └── reflog.py                              recent commit lookup
 ├── spaces/
-│   ├── registry.py                            SDK 사이드카 + CRUD
-│   ├── runtime.py                             RuntimeState / Status (Podman inspect 매핑)
+│   ├── registry.py                            SDK sidecar + CRUD
+│   ├── runtime.py                             RuntimeState / Status (Podman inspect mapping)
 │   ├── runtime_manager.py                     SpaceRuntimeManager (Podman REST)
-│   └── build.py                               dulwich 트리 → tar + 정적 사이트 export
+│   └── build.py                               dulwich tree → tar + static-site export
 ├── objectstore/
 │   ├── base.py                                ObjectStore Protocol + LfsAction
-│   ├── local.py                               디스크 백엔드 (sha256 검증 + 원자적 rename)
-│   ├── s3.py                                  S3 백엔드 (자체 SigV4, MinIO 호환)
-│   └── factory.py                             OUTO_LFS_BACKEND 디스패치
+│   ├── local.py                               disk backend (sha256 verification + atomic rename)
+│   ├── s3.py                                  S3 backend (in-house SigV4, MinIO compatible)
+│   └── factory.py                             OUTO_LFS_BACKEND dispatch
 ├── git_smart/
-│   ├── service.py                             GitSmartService (dulwich 어댑터)
-│   ├── auth.py                                Basic auth + authorize 매트릭스
-│   ├── lfs.py                                 LFS 디스패치 + PUT/GET 핸들러
-│   └── lfs_api.py                             LFS batch API 파싱 + 응답 빌드
+│   ├── service.py                             GitSmartService (dulwich adapter)
+│   ├── auth.py                                Basic auth + authorize matrix
+│   ├── lfs.py                                 LFS dispatch + PUT/GET handlers
+│   └── lfs_api.py                             LFS batch API parsing + response building
 ├── server/
-│   ├── app.py                                 create_app (FastAPI 팩토리)
+│   ├── app.py                                 create_app (FastAPI factory)
 │   ├── middleware.py                          SecurityHeadersMiddleware
 │   ├── deps.py                                get_db / get_current_user / require_admin
-│   ├── errors.py                              예외 → JSON envelope
+│   ├── errors.py                              exception → JSON envelope
 │   ├── routers/                               auth, users, repos, spaces, admin, webhooks, ui
-│   └── templates/                             Jinja HTML 템플릿
+│   └── templates/                             Jinja HTML templates
 ├── cli/                                       outo-models Typer CLI
-│   ├── setup/                                 대화형 마법사
-│   ├── admin/                                 사용자 / 쿼터 / GPU 관리
-│   ├── start.py, stop.py, restart.py, status.py  컨테이너 lifecycle
+│   ├── setup/                                 interactive wizard
+│   ├── admin/                                 user / quota / GPU management
+│   ├── start.py, stop.py, restart.py, status.py  container lifecycle
 │   ├── update.py, reset.py                    update / reset
-│   └── server.py                              컨테이너 내부 serve / migrate
-└── cli_remote/                                AdminApiClient (원격 admin 모드)
+│   └── server.py                              in-container serve / migrate
+└── cli_remote/                                AdminApiClient (remote admin mode)
 ```
 
-`container/` 디렉터리는 호스트 측 글루입니다.
+The `container/` directory holds the host-side glue.
 
 ```
 container/
-├── caddy/Caddyfile.j2                         Jinja Caddyfile 템플릿
-├── rootfs/                                    컨테이너 이미지에 복사되는 파일 트리
+├── caddy/Caddyfile.j2                         Jinja Caddyfile template
+├── rootfs/                                    file tree copied into the container image
 │   ├── etc/outo-models/config.example.yaml
 │   └── usr/local/bin/outo-entrypoint.sh
 ├── scripts/
-│   ├── firewall-open.sh                       호스트 방화벽 조작
+│   ├── firewall-open.sh                       manipulate host firewall
 │   ├── update.sh                              pull + migrate + restart
-│   └── reset.sh                               컨테이너 / 볼륨 정리
-├── examples/quadlet/                          podman systemd quadlet 예시
-└── systemd/outo-models-host.service           부팅 시 방화벽 자동 개방 (opt-in)
+│   └── reset.sh                               container / volume cleanup
+├── examples/quadlet/                          podman systemd quadlet example
+└── systemd/outo-models-host.service           boot-time firewall auto-open (opt-in)
 ```
 
-## 데이터 레이아웃
+## Data layout
 
-기본 루트는 `OUTO_DATA_DIR` (기본 `/var/lib/outo-models`). 컨테이너 안에서도
-같은 경로입니다 (Podman 볼륨 마운트).
+The default root is `OUTO_DATA_DIR` (default `/var/lib/outo-models`). The
+same path is used inside the container (via a Podman volume mount).
 
 ```
 /var/lib/outo-models/
-├── db.sqlite3                      SQLite (또는 OUTO_DB_URL 의 Postgres)
-├── repos/                          bare git 저장소
+├── db.sqlite3                      SQLite (or Postgres via OUTO_DB_URL)
+├── repos/                          bare git repositories
 │   └── <owner>/
-│       └── <name>.git/              dulwich 가 만든 bare repo
-├── lfs/                            local LFS 백엔드 (OUTO_LFS_BACKEND=local)
-│   └── <aa>/<bb>/<oid>             sha256 oid 의 2단계 샤딩
-├── spaces/                         Spaces 사이드카 + static 사이트 export
+│       └── <name>.git/              bare repo created by dulwich
+├── lfs/                            local LFS backend (OUTO_LFS_BACKEND=local)
+│   └── <aa>/<bb>/<oid>             sha256 oid, 2-level sharded
+├── spaces/                         Spaces sidecar + static-site export
 │   └── <owner>/
 │       ├── <name>.json             { "sdk": "static" | "gradio" | "streamlit" | "docker", ... }
-│       └── <name>/site/            static SDK 가 export 한 파일 트리 (있는 경우)
-├── certs/                          ACME 인증서 캐시 (Caddy 가 채움)
-└── audit/                          감사 로그 (현재는 DB 안에 저장)
+│       └── <name>/site/            files exported by the static SDK (when applicable)
+├── certs/                          ACME certificate cache (populated by Caddy)
+└── audit/                          audit logs (currently stored inside the DB)
 ```
 
-`utils.paths.ensure_dirs()` 가 5개 디렉터리 모두를 idempotent 하게 만듭니다.
+`utils.paths.ensure_dirs()` creates all five directories idempotently.
 
-## 데이터베이스 스키마
+## Database schema
 
-v1 의 단일 Alembic 마이그레이션 ([src/outo_models/db/migrations/versions/0001_initial.py](../src/outo_models/db/migrations/versions/0001_initial.py)) 이 다음 테이블을 만듭니다.
+The single Alembic migration in v1
+([src/outo_models/db/migrations/versions/0001_initial.py](../src/outo_models/db/migrations/versions/0001_initial.py))
+creates the following tables.
 
-| 테이블 | 핵심 컬럼 | 비고 |
+| Table | Key columns | Notes |
 | --- | --- | --- |
-| `users` | `id`, `username` (UNIQUE), `email` (UNIQUE), `password_hash`, `role` (`user`/`admin`), `status` (`pending`/`approved`/`denied`/`banned`), `display_name`, `approved_at`, `approved_by_id` | `status` 가 가입 흐름의 상태 머신 |
+| `users` | `id`, `username` (UNIQUE), `email` (UNIQUE), `password_hash`, `role` (`user`/`admin`), `status` (`pending`/`approved`/`denied`/`banned`), `display_name`, `approved_at`, `approved_by_id` | `status` is the signup-flow state machine |
 | `repos` | `id`, `owner_id` FK, `name`, `kind` (`model`/`dataset`/`space`), `visibility`, `description`, `default_branch`, `size_bytes`, `path` | UNIQUE `(owner_id, kind, name)` |
-| `revisions` | `id`, `repo_id` FK, `commit_sha`, `branch`, `author_id` FK, `message`, `size_bytes` | push 후 git smart-HTTP 가 채움 |
-| `personal_access_tokens` | `id`, `user_id` FK, `name`, `fingerprint_hash` (argon2id), `prefix`, `scopes` (JSON), `expires_at`, `last_used_at` | 평문 토큰은 저장하지 않음 |
-| `approvals` | `id`, `user_id` FK UNIQUE, `decision`, `reason`, `decided_by_id` FK, `decided_at` | 가입 결정 추적 |
-| `user_quotas` | `id`, `user_id` FK UNIQUE, `max_bytes` | 운영자가 설정 |
-| `user_usages` | `id`, `user_id` FK UNIQUE, `used_bytes` | reconcile 가 채움 |
-| `audit_logs` | `id`, `actor_id` FK, `action`, `target_type`, `target_id`, `detail`, `ip`, `created_at` | 모든 관리 동작 / push / signup 기록 |
-| `web_settings` | `id`, `key` UNIQUE, `value`, `created_at`, `updated_at` | GPU 할당 등 자유 형식 키/값 |
+| `revisions` | `id`, `repo_id` FK, `commit_sha`, `branch`, `author_id` FK, `message`, `size_bytes` | populated by git smart-HTTP after a push |
+| `personal_access_tokens` | `id`, `user_id` FK, `name`, `fingerprint_hash` (argon2id), `prefix`, `scopes` (JSON), `expires_at`, `last_used_at` | raw tokens are not stored |
+| `approvals` | `id`, `user_id` FK UNIQUE, `decision`, `reason`, `decided_by_id` FK, `decided_at` | signup decision trail |
+| `user_quotas` | `id`, `user_id` FK UNIQUE, `max_bytes` | operator-set |
+| `user_usages` | `id`, `user_id` FK UNIQUE, `used_bytes` | populated by reconcile |
+| `audit_logs` | `id`, `actor_id` FK, `action`, `target_type`, `target_id`, `detail`, `ip`, `created_at` | every admin action / push / signup |
+| `web_settings` | `id`, `key` UNIQUE, `value`, `created_at`, `updated_at` | free-form keys/values (e.g. GPU assignment) |
 
-## 요청 흐름
+## Request flow
 
-### 외부 클라이언트 → Caddy → uvicorn
+### External client → Caddy → uvicorn
 
 ```
-브라우저 / git CLI
+browser / git CLI
         │  HTTPS (80 → Caddy, 443 → Caddy)
         ▼
 Caddy (in-container) :80/:443
-        │  - ACME 발급/갱신 (HTTP-01 또는 DNS-01 cloudflare)
-        │  - TLS 종료
+        │  - ACME issuance/renewal (HTTP-01 or DNS-01 cloudflare)
+        │  - TLS termination
         │  - reverse_proxy 127.0.0.1:8000
         ▼
 uvicorn (127.0.0.1:8000) ← outo-models serve
         │  lifespan: run_migrations + TaskScheduler.start
         │
-        ├── /api/*                       FastAPI 라우터 (auth/users/repos/spaces/admin/webhooks)
+        ├── /api/*                       FastAPI routers (auth/users/repos/spaces/admin/webhooks)
         │       │
         │       └── SecurityHeadersMiddleware (HSTS / CSP / X-Frame-Options ...)
         │       └── SlowAPIMiddleware (rate limit)
         │       └── get_current_user / require_admin deps
         │
-        ├── /, /login, /signup, /admin/*  UI 라우터 (Jinja2 + CSRF double-submit)
+        ├── /, /login, /signup, /admin/*  UI routers (Jinja2 + CSRF double-submit)
         │
         └── /{owner}/{name}.git/...      GitSmartService (root mount)
                 │
-                ├── if rest == info/lfs/*  → lfs_dispatch (별도 흐름, 아래 참고)
+                ├── if rest == info/lfs/*  → lfs_dispatch (separate flow, see below)
                 ├── resolve Repo + owner from DB
                 ├── resolve_git_identity (Basic <b64(username:PAT)>)
                 ├── authorize(user, repo, owner, action)
@@ -162,11 +164,12 @@ uvicorn (127.0.0.1:8000) ← outo-models serve
                 └── on PUSH success: per-repo lock + record Revision + AuditLog
 ```
 
-### LFS 요청 흐름
+### LFS request flow
 
-`/<owner>/<name>.git/info/lfs/*` 경로는 위 흐름에서 dulwich 로 가지 않고
-[`git_smart/lfs.py`](../src/outo_models/git_smart/lfs.py) 의 `lfs_dispatch`
-로 빠집니다.
+The path `/{owner}/{name}.git/info/lfs/*` is dispatched to
+`lfs_dispatch` in
+[`git_smart/lfs.py`](../src/outo_models/git_smart/lfs.py) instead of going
+through dulwich.
 
 ```
 git-lfs client
@@ -182,8 +185,8 @@ lfs_dispatch(scope, receive, send, ...)
         │
         ├── POST /info/lfs/objects/batch
         │       │  _handle_batch
-        │       ├── Accept / Content-Type 검사 (406 / 415)
-        │       ├── 본문 ≤ 1 MiB (413)
+        │       ├── Accept / Content-Type check (406 / 415)
+        │       ├── body ≤ 1 MiB (413)
         │       ├── parse_batch_body → BatchRequest (422 on shape)
         │       ├── _load_repo(owner, repo)
         │       ├── resolve_git_identity(Basic ...)
@@ -195,75 +198,79 @@ lfs_dispatch(scope, receive, send, ...)
         │       │           (data_dir/lfs/<aa>/<bb>/<oid> + same-origin href)
         │       │       │
         │       │       └── OUTO_LFS_BACKEND=s3    → S3ObjectStore
-        │       │           (presigned URL via 자체 SigV4, path-style)
+        │       │           (presigned URL via in-house SigV4, path-style)
         │       │
-        │       └── handle_batch → entries 를 객체별로 누적
-        │           ├─ 이미 존재 → actions 없이 응답
+        │       └── handle_batch → entries per object
+        │           ├─ already exists → respond without actions
         │           ├─ size > lfs_max_object_bytes → per-object error(code=413)
         │           ├─ check_push_allowed (over quota) → per-object error(code=413)
-        │           └─ 정상 → store.make_upload_action / make_download_action
+        │           └─ OK → store.make_upload_action / make_download_action
         │
         ├── PUT /info/lfs/objects/{oid}
-        │       │  _handle_put (LocalObjectStore 일 때만)
+        │       │  _handle_put (LocalObjectStore only)
         │       ├── Content-Length > lfs_max_object_bytes → 413
-        │       ├── check_push_allowed (사용자 단위 쿼터) → 413
-        │       ├── LocalObjectStore.write_object (sha256 + size 검증, 원자적 rename)
+        │       ├── check_push_allowed (per-user quota) → 413
+        │       ├── LocalObjectStore.write_object (sha256 + size verify, atomic rename)
         │       ├── add_usage(owner, written)
         │       └── AuditLog(action="lfs.upload")
         │
         ├── GET /info/lfs/objects/{oid}
-        │       │  _handle_get (LocalObjectStore 일 때만)
-        │       ├── 가시성 검사 (public 익명 허용, private owner/admin)
-        │       └── LocalObjectStore.read_object → 64 KiB 청크 스트림
+        │       │  _handle_get (LocalObjectStore only)
+        │       ├── visibility check (public anonymous OK, private owner/admin)
+        │       └── LocalObjectStore.read_object → 64 KiB chunk stream
         │
         └── /info/lfs/locks*  →  lfs_not_supported (501 + JSON)
 ```
 
-핵심:
+Key points:
 
-- **per-object errors**: 한 객체의 실패 (사이즈 초과 / 쿼터 초과 / 404) 가 batch
-  전체를 망치지 않습니다. `error.code` 는 LFS 스펙대로 정수 (`413`, `404`).
-- **S3 백엔드**: 클라이언트가 presigned URL 로 직접 S3 와 통신하므로 서버는
-  PUT/GET 핸들러로 트래픽을 받지도, 사용량 카운트도 하지 않습니다. (서버의
-  PUT/GET 핸들러는 `local` 백엔드 전용. S3 백엔드인 상태에서 호출되면 `501` 로
-  거절 — `local` 백엔드와 `s3` 백엔드는 라우트가 다르다는 걸 명확히 합니다.)
-- **로컬 백엔드의 symlink 차단**: `LocalObjectStore` 는 `_object_path` 의
-  모든 segment 가 symlink 이면 쓰기/읽기 모두 거부합니다. `oid` 는 64자 hex
-  만 받기 때문에 path traversal 은 입구에서 잘립니다.
-- **쿼터 결합**: `check_push_allowed` 가 batch 단계 + PUT 단계 두 번 호출되어
-  batch 의 quota 예측과 본 업로드 사이의 변경도 안전합니다.
+- **Per-object errors**: a single object's failure (size cap, quota, 404)
+  does not fail the whole batch. `error.code` is an integer per the LFS
+  spec (`413`, `404`).
+- **S3 backend**: the client talks to S3 directly through the presigned
+  URL, so the server never receives the PUT/GET traffic and never
+  increments usage. The server's PUT/GET handlers are `local`-backend
+  only — if invoked with `OUTO_LFS_BACKEND=s3`, they return `501` (the
+  `local` and `s3` paths are explicitly separate).
+- **Local-backend symlink guard**: `LocalObjectStore` rejects both reads
+  and writes if any segment of `_object_path` is a symlink. `oid` only
+  accepts 64-char hex, so path traversal is cut off at the entry point.
+- **Quota coupling**: `check_push_allowed` is invoked twice — at the batch
+  stage and at the PUT stage — to stay safe against quota drift between
+  the batch prediction and the actual upload.
 
-### ObjectStore 프로토콜
+### ObjectStore protocol
 
-`ObjectStore` ([`objectstore/base.py`](../src/outo_models/objectstore/base.py))
-는 다음 5개 메서드를 노출합니다 — 핸들러가 의존하는 단 한 가지 인터페이스.
+`ObjectStore`
+([`objectstore/base.py`](../src/outo_models/objectstore/base.py)) exposes
+the five methods handlers depend on — the only interface they rely on.
 
-| 메서드 | 반환 / 동작 |
+| Method | Return / behavior |
 | --- | --- |
 | `make_upload_action(*, owner, repo, oid, size)` | `LfsAction` (href / headers / expires_in) |
 | `make_download_action(*, owner, repo, oid, size)` | `LfsAction` |
-| `has_object(oid)` | `bool` — symlink 은 항상 False |
-| `object_size(oid)` | `int \| None` — 없거나 symlink 이면 None |
-| `delete_object(oid)` | 멱등 삭제 |
+| `has_object(oid)` | `bool` — symlinks always return False |
+| `object_size(oid)` | `int \| None` — None if missing or symlinked |
+| `delete_object(oid)` | idempotent deletion |
 
-`LocalObjectStore` 는 추가로 서버 측 helper `write_object` / `read_object` 를
-제공해 PUT/GET 핸들러가 직접 사용합니다. `S3ObjectStore` 는 이 helper 없이
-presigned URL 만 노출합니다.
+`LocalObjectStore` additionally exposes the server-side helpers
+`write_object` / `read_object` for the PUT/GET handlers. `S3ObjectStore`
+has no such helpers — it only returns presigned URLs.
 
-### Spaces 런타임 흐름
+### Spaces runtime flow
 
 ```
-사용자  ─ POST /api/spaces/<owner>/<name>/start ─▶  Caddy → uvicorn
+user  ─ POST /api/spaces/<owner>/<name>/start ─▶  Caddy → uvicorn
                                                           │
                                                           ▼
                                               routers/spaces.py: start_space
                                                           │
                                                           ├── _ensure_runtime_enabled
                                                           ├── get_space
-                                                          ├── owner/admin 검증
+                                                          ├── owner/admin check
                                                           ├── _load_owner_gpu_ids  (web_settings)
                                                           ├── SpaceRuntimeManager(settings)
-                                                          └── _run_lifecycle (REPO_lockS 직렬화)
+                                                          └── _run_lifecycle (REPO_LOCKS serialize)
                                                               │
                                                               ├── sdk="static"
                                                               │     └─ export_static_site(owner, name,
@@ -271,13 +278,13 @@ presigned URL 만 노출합니다.
                                                               │
                                                               └── sdk ∈ {gradio, streamlit, docker}
                                                                     │
-                                                                    ├─ docker SDK: Dockerfile/Containerfile 존재?
-                                                                    │     └─ 없으면 ValidationFailedError
+                                                                    ├─ docker SDK: Dockerfile/Containerfile present?
+                                                                    │     └─ missing → ValidationFailedError
                                                                     │
                                                                     ├─ manager.build_image(owner, name)
-                                                                    │     ├─ make_build_context (dulwich 트리 → tar)
+                                                                    │     ├─ make_build_context (dulwich tree → tar)
                                                                     │     └─ POST /v4.0.0/libpod/build?t=<tag>
-                                                                    │         └─ 실패 → 502 space_build_failed
+                                                                    │         └─ failure → 502 space_build_failed
                                                                     │
                                                                     ├─ manager._allocate_host_port  (20000..21000)
                                                                     │
@@ -287,7 +294,7 @@ presigned URL 만 노출합니다.
                                                                           │     + body.PortBindings[8000/tcp]
                                                                           │     + hostConfig.devices: CDI GPU
                                                                           ├─ POST /v4.0.0/libpod/containers/{name}/start
-                                                                          └─ (container_id, host_port) 반환
+                                                                          └─ return (container_id, host_port)
                                                           │
                                                           ▼
                                               runtime_status_async(inspect)
@@ -296,8 +303,8 @@ presigned URL 만 노출합니다.
                                               JSON { state, message, url, container_id, port }
 ```
 
-`/spaces/<owner>/<name>/run/{path}` 로 들어오는 모든 트래픽은 같은 라이프사이클이
-허용할 때만 컨테이너로 위임됩니다 (`proxy_router`).
+All traffic to `/spaces/<owner>/<name>/run/{path}` is delegated to the
+container only when the lifecycle allows it (`proxy_router`).
 
 ```
 GET /spaces/<owner>/<name>/run/foo/bar
@@ -311,133 +318,147 @@ GET /spaces/<owner>/<name>/run/foo/bar
         │     └── not "running" → 503 space_not_running
         │
         └── _stream_proxy_response(GET, http://127.0.0.1:<host_port>/foo/bar, ...)
-                ├── hop-by-hop 헤더 제거
+                ├── strip hop-by-hop headers
                 ├── httpx.AsyncClient.request(...)
                 └── StreamingResponse(upstream.body, upstream.status_code, cleaned headers)
 ```
 
 ### CI/CD
 
-`.github/workflows/` 는 두 개의 워크플로우로 구성됩니다.
+`.github/workflows/` contains two workflows.
 
-#### `ci.yml` — main / PR 트리거
+#### `ci.yml` — main / PR trigger
 
-PR 과 `main` 푸시마다 다음을 강제합니다.
+Forced on every PR and push to `main`:
 
 1. `uv sync --frozen`
 2. `ruff check .` + `ruff format --check .`
 3. `mypy src`
-4. `pytest` (단위 + 통합)
-5. `bash scripts/check-docs.sh` — 문서 ↔ 코드 일치 (CLI 명령, `OUTO_*` 환경
-   변수, index.md TOC 모두 강제). 이 단계가 실패하면 머지 불가.
+4. `pytest` (unit + integration)
+5. `bash scripts/check-docs.sh` — docs ↔ code parity (CLI commands,
+   `OUTO_*` environment variables, and the index.md TOC). This gate must
+   pass before merging.
 
-#### `release-image.yml` — 태그 트리거
+#### `release-image.yml` — tag trigger
 
-`vX.Y.Z-stable` 또는 `vX.Y.Z-dev` 패턴의 Git 태그 push 가 트리거입니다.
+A Git tag matching `vX.Y.Z-stable` or `vX.Y.Z-dev` triggers the workflow.
 
 ```
 vX.Y.Z-stable  →  IMAGE_FLAVOR=stable  →  ghcr.io/<repo>:X.Y.Z-stable
                                               ghcr.io/<repo>:stable
-                                              ghcr.io/<repo>:latest      (stable 한정)
+                                              ghcr.io/<repo>:latest      (stable only)
 vX.Y.Z-dev     →  IMAGE_FLAVOR=dev     →  ghcr.io/<repo>:X.Y.Z-dev
                                               ghcr.io/<repo>:dev
 ```
 
-워크플로우 본체는 `test` 잡 (`pytest` + `check-docs.sh`) 통과 후에만 `image` 잡이
-실행됩니다. 빌드는 `podman build --build-arg IMAGE_FLAVOR=<flavor> --tag ...`
-한 번에 두 태그 (`X.Y.Z-<flavor>` + `<flavor>`) 를 붙이고, `stable` 인 경우에만
-`:latest` 도 push 합니다.
+The workflow runs the `test` job (`pytest` + `check-docs.sh`) before the
+`image` job. The build runs
+`podman build --build-arg IMAGE_FLAVOR=<flavor> --tag ...` once and tags
+two images (`X.Y.Z-<flavor>` + `<flavor>`); the `stable` flavor also
+pushes `:latest`.
 
-> **태그 컨벤션은 AGENTS.md §6.6 의 권고입니다.** 다른 형식의 태그는 workflow 가
-> `Tag '...' must match vX.Y.Z-stable or vX.Y.Z-dev` 로 거절합니다.
+> **The tag convention is recommended by AGENTS.md §6.6.** Any other tag
+> format is rejected with `Tag '...' must match vX.Y.Z-stable or vX.Y.Z-dev`.
 
-### CLI 호출 흐름 (호스트)
+### CLI invocation flow (host)
 
 ```
 outo-models <subcommand>
         │
         ▼
-Typer app (cli/main.py) — OutoError → 한국어 1줄 + exit 1
+Typer app (cli/main.py) — OutoError → English one-liner + exit 1
         │
         ├── setup / update / start / stop / restart / status
         │       │
-        │       └── setup → _collect (프롬프트) → _effect (config.yaml, DNS, firewall, DB, admin)
+        │       └── setup → _collect (prompts) → _effect (config.yaml, DNS, firewall, DB, admin)
         │       └── update → container/scripts/update.sh
-        │       └── start  → podman run (config.yaml 기반)
-        │       └── stop/restart/status → podman 호출
+        │       └── start  → podman run (config.yaml driven)
+        │       └── stop/restart/status → podman calls
         │
         └── admin → _commands → _local_db (SQL) | AdminApiClient (HTTP)
 ```
 
-## 쿼터 모델
+## Quota model
 
-- `UserQuota.max_bytes` — 운영자가 설정 (기본 `OUTO_DEFAULT_QUOTA_BYTES`)
-- `UserUsage.used_bytes` — push 후 즉시 증가 / 삭제 시 즉시 감소
-- 매시간 `quota_reconcile_job` 이 모든 사용자에 대해 `disk_usage` 를 다시
-  측정해 `UserUsage.used_bytes` 를 정정 (드리프트 보정)
-- `check_push_allowed` 는 `used + incoming > max` 면 `QuotaExceededError` 로
-  `413` 응답을 반환해 push 자체를 거부
-- `Repo.size_bytes` 는 push 후 `disk_usage(repo_fs_path)` 결과로 갱신
+- `UserQuota.max_bytes` — set by the operator (default
+  `OUTO_DEFAULT_QUOTA_BYTES`)
+- `UserUsage.used_bytes` — increases immediately after push, decreases
+  immediately on delete
+- The hourly `quota_reconcile_job` re-measures `disk_usage` for every
+  user and corrects `UserUsage.used_bytes` (drift correction)
+- `check_push_allowed` raises `QuotaExceededError` (413) when
+  `used + incoming > max`, so the push itself is rejected
+- `Repo.size_bytes` is refreshed after a push from
+  `disk_usage(repo_fs_path)`
 
-자세한 코드 위치: [src/outo_models/repos/quota.py](../src/outo_models/repos/quota.py),
+Code locations:
+[src/outo_models/repos/quota.py](../src/outo_models/repos/quota.py),
 [src/outo_models/tasks/jobs/quota_reconcile.py](../src/outo_models/tasks/jobs/quota_reconcile.py).
 
-## 스케줄러 잡
+## Scheduler jobs
 
-`TaskScheduler` (APScheduler 래퍼) 가 세 가지 잡을 등록합니다. 모두
-`max_instances=1`, `coalesce=True`, `misfire_grace_time=3600` 으로 겹침
-방지 / 지연 흡수.
+`TaskScheduler` (an APScheduler wrapper) registers three jobs. Each one
+runs with `max_instances=1`, `coalesce=True`, and
+`misfire_grace_time=3600` to avoid overlap and absorb delay.
 
-| ID | 트리거 | 본체 | 무엇을 하나 |
+| ID | Trigger | Body | What it does |
 | --- | --- | --- | --- |
-| `cert_renewal` | 매일 00:00 UTC | `cert_renewal_job` | 도메인:443 TLS 핸드셰이크 → `CertHealth` → 비정상이고 Caddy 도 reachable 이면 Caddy reload 로 nudge |
-| `quota_reconcile` | 매 1시간 | `quota_reconcile_job` | 모든 사용자에 대해 `disk_usage` 재측정 → `UserUsage` 정정 |
-| `audit_prune` | 매일 02:00 UTC | `prune_audit_logs` | 90일 이전 `AuditLog` 행 삭제 (기본 보존 90일) |
+| `cert_renewal` | daily 00:00 UTC | `cert_renewal_job` | TLS handshake on `<domain>:443` → `CertHealth`; if unhealthy and Caddy is reachable, nudge Caddy with a reload |
+| `quota_reconcile` | hourly | `quota_reconcile_job` | re-measure `disk_usage` for every user and correct `UserUsage` |
+| `audit_prune` | daily 02:00 UTC | `prune_audit_logs` | delete `AuditLog` rows older than 90 days (default retention: 90 days) |
 
-세 잡 모두 절대 raise 하지 않습니다. 일시적 오류는 structlog warning 으로
-남기고 다음 틱에서 재시도합니다.
+None of the three jobs ever raise. Transient errors are logged as structlog
+warnings and retried on the next tick.
 
-## 이미지 플레이버
+## Image flavors
 
-`Containerfile` 의 `IMAGE_FLAVOR` ARG 가 두 최종 타겟을 결정합니다.
+The `IMAGE_FLAVOR` ARG in the `Containerfile` selects one of two final
+targets.
 
-- `outo-models:stable` — 운영용. `OUTO_ENV=production`. debugpy / ipython 없음.
-- `outo-models:dev` — 개발용. `OUTO_ENV=development`. debugpy + ipython 포함.
+- `outo-models:stable` — production. `OUTO_ENV=production`. No debugpy /
+  ipython.
+- `outo-models:dev` — development. `OUTO_ENV=development`. Includes
+  debugpy + ipython.
 
-엔트리포인트 (`/usr/local/bin/outo-entrypoint.sh`) 가 다음 가드를 강제합니다
-(AGENTS.md §4).
+The entrypoint (`/usr/local/bin/outo-entrypoint.sh`) enforces the
+following guard (AGENTS.md §4):
 
-> `IMAGE_FLAVOR=dev` + `OUTO_ENV=production` 조합은 거부하고 exit 1.
+> The `IMAGE_FLAVOR=dev` + `OUTO_ENV=production` combination is rejected
+> and exits 1.
 
-이외 동작은 양 플레이버가 동일합니다 (패키지 / 네트워크 정책 / 디스크
-레이아웃 등 모두 같음).
+Otherwise both flavors behave identically (packages, network policy, disk
+layout, etc.).
 
-### Quadlet 예시
+### Quadlet example
 
 [container/examples/quadlet/outo-models.container](../container/examples/quadlet/outo-models.container)
-는 podman systemd quadlet 유닛 예시입니다. 운영 시에는 다음만 조정하면 됩니다.
+is a podman systemd quadlet example. In production, only the following
+need adjustment:
 
-- `Image=` — `outo-models:stable` (운영) 또는 `:dev` (테스트)
-- `PublishPort=` — 80, 443 그대로 (loopback 매핑은 [troubleshooting.md](troubleshooting.md) 참고)
-- `Volume=outo-models-data:/var/lib/outo-models` — 이름 변경 금지 (정적 테스트가 검사)
-- `Environment=OUTO_ENV=production` 외에 시크릿은 `systemd-creds` 등 외부 저장소 사용
+- `Image=` — `outo-models:stable` (production) or `:dev` (test)
+- `PublishPort=` — keep 80, 443 (see [troubleshooting.md](troubleshooting.md)
+  for loopback mapping notes)
+- `Volume=outo-models-data:/var/lib/outo-models` — do not rename (static
+  test enforces the name)
+- Beyond `Environment=OUTO_ENV=production`, keep secrets in `systemd-creds`
+  or another external secret store
 
-## 부팅 시 방화벽 자동 개방 (opt-in)
+## Boot-time firewall auto-open (opt-in)
 
-[container/systemd/outo-models-host.service](../container/systemd/outo-models-host.service) 는
-컨테이너를 띄우기 전 호스트 측에서 80 / 443 을 자동으로 열어 주는 opt-in
-헬퍼입니다.
+[container/systemd/outo-models-host.service](../container/systemd/outo-models-host.service)
+is an opt-in helper that opens 80 / 443 on the host side at boot, before
+the container is launched.
 
 ```bash
 sudo cp container/systemd/outo-models-host.service /etc/systemd/system/
-sudo systemctl edit outo-models-host.service   # OUTO_FIREWALL_KIND 실제 값으로
+sudo systemctl edit outo-models-host.service   # adjust OUTO_FIREWALL_KIND
 sudo systemctl enable --now outo-models-host.service
 ```
 
-기본은 `disabled` 상태입니다. 필요 없다면 그대로 두세요.
+It defaults to `disabled`. Leave it alone if you don't need it.
 
-## 다음 단계
+## Next steps
 
-- [security.md](security.md) — 인증 / 토큰 / 레이트리밋 정책
-- [git-repos.md](git-repos.md) — git 요청의 세부 처리
-- [testing.md](testing.md) — 어떤 테스트가 어떤 흐름을 검증하는지
+- [security.md](security.md) — authentication, tokens, rate limits
+- [git-repos.md](git-repos.md) — git request handling in detail
+- [testing.md](testing.md) — which tests verify which flow

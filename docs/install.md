@@ -1,134 +1,144 @@
-# 설치
+# Install
 
-`outo-models` 는 **단일 Podman 이미지**로 배포됩니다. 컨테이너 안에서 FastAPI
-앱과 Caddy가 함께 실행되며, 데이터 디렉터리와 설정 파일만 호스트에 남습니다.
-이 페이지에서는 이미지 빌드부터 첫 컨테이너 실행까지의 전 과정을 다룹니다.
+`outo-models` ships as a **single Podman image**. The FastAPI app and Caddy
+both run inside the container; only the data directory and config file live
+on the host. This page walks you from image build all the way to the first
+container run.
 
-> **개발 환경에서는 podman 이 없습니다** (AGENTS.md §4). 빌드와 실제 컨테이너
-> 동작 검증은 별도의 테스트 머신에서 수행해 주세요. 본 저장소의 개발 환경
-> 에서는 `uv sync` → `make lint` → `make typecheck` → `make test` 까지만
-> 보장합니다.
+> **The development environment does not have podman** (AGENTS.md §4). Build
+> and verify the container on a separate test machine. In this repo's dev
+> environment we only guarantee `uv sync` → `make lint` → `make typecheck` →
+> `make test`.
 
-## 1. 사전 준비
+## 1. Prerequisites
 
-운영 환경에 해당하는 서버 호스트에서 다음을 확인하세요.
+Check the following on the server host that will run the production
+deployment.
 
-- **podman** 4.x 이상 (`podman --version` 으로 확인)
-- **firewalld / ufw / nftables** 중 하나 (없으면 [troubleshooting.md](troubleshooting.md)
-  의 "방화벽 미감지 호스트" 섹션 참고)
-- 80 / 443 포트 외부 노출 가능 (클라우드 보안 그룹 포함)
-- DNS 위임이 끝난 도메인 (예: `models.example.com`)
-- 선택: ACME 발급을 위한 연락 받을 이메일
-- 선택: DNS 자동 모드를 쓸 Cloudflare API 토큰 (권한: `Zone.DNS:Edit`)
+- **podman** 4.x or later (check with `podman --version`)
+- One of **firewalld / ufw / nftables** (see the "Firewall not detected"
+  section of [troubleshooting.md](troubleshooting.md) if none are present)
+- Outbound access for ports 80 / 443 (cloud security groups included)
+- A delegated DNS name (e.g. `models.example.com`)
+- Optional: an email contact for ACME issuance
+- Optional: a Cloudflare API token for DNS automation (permission
+  `Zone.DNS:Edit`)
 
-## 2. 이미지 가져오기
+## 2. Pulling the image
 
-두 가지 경로가 있습니다 — 운영자가 둘 중 하나만 채택해 주세요.
+Two paths — pick exactly one.
 
-### 2-A. ghcr.io 에서 미리 빌드된 이미지 pull (권장)
+### 2-A. Pull the prebuilt image from ghcr.io (recommended)
 
-릴리즈는 [`.github/workflows/release-image.yml`](../.github/workflows/release-image.yml)
-이 자동으로 발행하므로, 자체 빌드 도구 없이 그대로 받을 수 있습니다.
+The release workflow in
+[`.github/workflows/release-image.yml`](../.github/workflows/release-image.yml)
+publishes these tags automatically, so no build tooling is required.
 
-| 태그 | 의미 | 언제 쓰나 |
+| Tag | Meaning | When to use |
 | --- | --- | --- |
-| `:X.Y.Z-stable` | 버전 고정 stable 이미지 (예: `0.2.0-stable`) | 운영 환경에서 특정 버전으로 잠그고 싶을 때 |
-| `:stable` | 가장 최근의 stable 릴리즈로 moving | 운영 환경의 기본 |
-| `:latest` | 가장 최근의 **stable** 릴리즈 | 운영 환경의 기본 (`:stable` 과 동기) |
-| `:X.Y.Z-dev` | 버전 고정 dev 이미지 (debugpy / ipython 포함) | 테스트 머신, 디버깅 |
-| `:dev` | 가장 최근의 dev 릴리즈 | 테스트 머신, 디버깅 |
+| `:X.Y.Z-stable` | Pinned stable image (e.g. `0.2.0-stable`) | Production, locked to a specific version |
+| `:stable` | Rolling stable release | Default for production |
+| `:latest` | Latest **stable** release | Default for production (in sync with `:stable`) |
+| `:X.Y.Z-dev` | Pinned dev image (includes debugpy / ipython) | Test machines, debugging |
+| `:dev` | Most recent dev release | Test machines, debugging |
 
 ```bash
-# 운영 서버 호스트 (컨테이너 안에 들어갈 이미지를 가져올 때)
+# Production server host (pulling the image to run)
 sudo podman pull ghcr.io/<owner>/outo-models:stable
 
-# 또는 특정 버전으로 핀
+# Or pin to a specific version
 sudo podman pull ghcr.io/<owner>/outo-models:0.2.0-stable
 
-# 테스트 머신 (dev 이미지)
+# Test machine (dev image)
 sudo podman pull ghcr.io/<owner>/outo-models:dev
 ```
 
-`<owner>` 는 GitHub 사용자 / 조직 이름입니다. 본 저장소를 그대로 fork 했다면
-`<owner>/outo-models` 의 `<owner>` 가 그대로 레지스트리 경로가 됩니다.
+`<owner>` is the GitHub user or organization that owns the image. If you
+forked this repo as-is, the same `<owner>/outo-models` becomes the registry
+path.
 
-### 2-B. 로컬에서 직접 빌드 (이미지 변형이 필요할 때)
+### 2-B. Build locally (when you need a custom variant)
 
-이미지에 운영 정책 패치를 넣어야 하거나 air-gapped 환경이라면
-[Containerfile](../Containerfile) 로 직접 빌드합니다. 빌드 인자 `IMAGE_FLAVOR`
-가 `stable` 또는 `dev` 가 아니면 빌드가 즉시 실패합니다.
+If you need to patch the image with your own operational policy or you are
+running in an air-gapped environment, build directly from
+[Containerfile](../Containerfile). The build fails immediately if
+`IMAGE_FLAVOR` is anything other than `stable` or `dev`.
 
 ```bash
-# 운영용 (비특권, 디버그 도구 없음)
+# Production build (non-root, no debug tooling)
 make build-stable
 
-# 개발용 (debugpy / ipython 포함, OUTO_ENV=development)
+# Development build (includes debugpy / ipython, OUTO_ENV=development)
 make build-dev
 ```
 
-`make` 는 내부적으로 다음을 실행합니다.
+Internally `make` runs:
 
 ```bash
 podman build --build-arg IMAGE_FLAVOR=stable -t outo-models:stable .
 podman build --build-arg IMAGE_FLAVOR=dev    -t outo-models:dev    .
 ```
 
-빌드 단계는 [Containerfile](../Containerfile) 에 정의되어 있습니다. 핵심은
-다음과 같습니다.
+The build steps are defined in [Containerfile](../Containerfile). Key points:
 
-- `uv sync --frozen --no-dev --no-editable` 로 의존성 잠금
-- `xcaddy build --with github.com/caddy-dns/cloudflare` 로 Caddy + DNS-01 플러그인
-- `runtime-base` 단계에서 `IMAGE_FLAVOR` 검증 + 비특권 사용자 (uid/gid 1000) 생성
-- `stable` / `dev` 단계에서 환경 변수 / 추가 패키지 분기
+- `uv sync --frozen --no-dev --no-editable` to lock dependencies
+- `xcaddy build --with github.com/caddy-dns/cloudflare` to build Caddy plus
+  the DNS-01 plugin
+- The `runtime-base` stage validates `IMAGE_FLAVOR` and creates the
+  non-root user (uid/gid 1000)
+- The `stable` / `dev` stages branch environment variables and extra
+  packages
 
-`dev` 플레이버를 프로덕션에 배포하지 마세요. 엔트리포인트가
-`IMAGE_FLAVOR=dev` + `OUTO_ENV=production` 조합은 거부합니다 (AGENTS.md §4).
+Do not deploy the `dev` flavor to production. The entrypoint rejects
+`IMAGE_FLAVOR=dev` + `OUTO_ENV=production` (AGENTS.md §4).
 
-### 어떤 경로를 선택할까
+### Choosing a path
 
-- **공식 릴리즈 + 자동 업데이트**: ghcr.io `:stable` 사용
-- **공식 릴리즈 + 버전 핀 (롤백 가능성)**: ghcr.io `:X.Y.Z-stable` 사용
-- **운영 정책 패치가 있거나 air-gapped**: 자체 빌드 (`make build-stable` 등)
-- **테스트 / 디버깅**: ghcr.io `:dev` 또는 `make build-dev`
+- **Official release + auto-update**: use `:stable` from ghcr.io
+- **Official release + version pinning (rollback)**: use `:X.Y.Z-stable`
+  from ghcr.io
+- **Operational patches or air-gapped**: build locally (e.g.
+  `make build-stable`)
+- **Testing / debugging**: use `:dev` from ghcr.io or `make build-dev`
 
-## 3. 컨테이너 외부 데이터 디렉터리
+## 3. Container-external data directory
 
-기본 데이터 디렉터리는 `/var/lib/outo-models` 입니다. 호스트에 미리 만들고
-권한을 잡아 주세요.
+The default data directory is `/var/lib/outo-models`. Create it on the host
+and set permissions ahead of time.
 
 ```bash
 sudo mkdir -p /var/lib/outo-models
 sudo chown -R 1000:1000 /var/lib/outo-models
 ```
 
-`setup` 위저드가 이 디렉터리에 `db.sqlite3`, `repos/`, `spaces/`, `certs/`,
-`audit/` 를 만듭니다. 자세한 내용은
-[architecture.md](architecture.md#데이터-레이아웃) 를 보세요.
+The `setup` wizard will populate this directory with `db.sqlite3`, `repos/`,
+`spaces/`, `certs/`, and `audit/`. See
+[architecture.md](architecture.md#data-layout) for details.
 
-## 4. 첫 실행: 설정 마법사
+## 4. First run: the setup wizard
 
-이미지를 빌드한 직후, 설정 파일을 만들기 위해 한 번 **호스트에서** 마법사를
-실행합니다.
+Right after pulling or building the image, run the wizard **on the host
+once** to create the config file.
 
 ```bash
 sudo outo-models setup
 ```
 
-이 명령은 다음을 차례로 수행합니다.
+This command runs the following steps in order:
 
-1. 도메인 / ACME 이메일 입력
-2. DNS 제공자 선택 (`cloudflare` / `manual`)
-3. 공개 IPv4 입력 (또는 자동 감지)
-4. 관리자 계정 생성
-5. `config.yaml` 작성 (mode `0o600`)
-6. DNS A 레코드 생성 (또는 수동 안내)
-7. 호스트 방화벽에 80 / 443 개방
-8. DB 마이그레이션 + 관리자 비밀번호 해시 저장
-9. Caddyfile 렌더링
+1. Prompt for domain and ACME email
+2. Select the DNS provider (`cloudflare` / `manual`)
+3. Prompt for the public IPv4 (or auto-detect)
+4. Create the admin account
+5. Write `config.yaml` (mode `0o600`)
+6. Create the DNS A record (or print manual instructions)
+7. Open ports 80 / 443 on the host firewall
+8. Run DB migrations and store the hashed admin password
+9. Render the Caddyfile
 
-전체 흐름은 [setup-wizard.md](setup-wizard.md) 에 있습니다.
+The full flow lives in [setup-wizard.md](setup-wizard.md).
 
-비대화형 모드로 자동화하려면 다음 예시처럼 플래그를 지정합니다.
+For unattended automation, pass the flags instead of using prompts:
 
 ```bash
 sudo outo-models setup --non-interactive \
@@ -138,22 +148,22 @@ sudo outo-models setup --non-interactive \
   --public-ipv4 203.0.113.10 \
   --admin-username admin \
   --admin-email admin@example.com \
-  --admin-password '<운영자가 직접 생성한 안전한 비밀번호>' \
+  --admin-password '<a strong password you generated>' \
   --yes
 ```
 
-Cloudflare 모드에서는 `--admin-password` 와 같은 방식으로 토큰이 필요합니다.
-`OUTO_CLOUDFLARE_API_TOKEN` 환경 변수가 우선 적용됩니다.
+Cloudflare mode also needs a token. `OUTO_CLOUDFLARE_API_TOKEN` takes
+precedence over `--admin-password`-style flags.
 
-## 5. 컨테이너 시작
+## 5. Start the container
 
-설정이 끝났으면 호스트에서 다음 한 줄로 컨테이너를 띄울 수 있습니다.
+Once setup completes, start the container with one host-side command:
 
 ```bash
 sudo outo-models start
 ```
 
-내부적으로 다음을 실행합니다.
+Internally this runs:
 
 ```bash
 podman run -d --name outo-models \
@@ -161,53 +171,53 @@ podman run -d --name outo-models \
   -e OUTO_SECRET_KEY=... \
   -e OUTO_DOMAIN=models.example.com \
   -e OUTO_REQUIRE_APPROVAL=true \
-  -e OUTO_DB_URL=... (선택) \
+  -e OUTO_DB_URL=... (optional) \
   -v outo-models-data:/var/lib/outo-models \
   --cap-add NET_BIND_SERVICE \
   -p 80:80 -p 443:443 \
   outo-models:stable
 ```
 
-`start` 명령은 `/etc/outo-models/config.yaml` 의 `image`, `volume`, `ports`
-키를 읽어 그대로 전달합니다. 컨테이너 내부 엔트리포인트
-(`/usr/local/bin/outo-entrypoint.sh`) 는 한국어 배너를 출력한 뒤
-`outo-models serve` 로 `exec` 합니다. 자세한 요청 흐름은
-[architecture.md](architecture.md#요청-흐름) 를 보세요.
+`start` reads the `image`, `volume`, and `ports` keys from
+`/etc/outo-models/config.yaml` and forwards them. The in-container
+entrypoint (`/usr/local/bin/outo-entrypoint.sh`) prints the banner and then
+`exec`s `outo-models serve`. See the request flow in
+[architecture.md](architecture.md#request-flow).
 
-이상이 없으면 다음 명령으로 컨테이너가 떠 있는지 확인합니다.
+Confirm the container is up:
 
 ```bash
 outo-models status
-# [상태] 실행 중: outo-models
+# [status] running: outo-models
 ```
 
-이제 `https://models.example.com/` 으로 접속할 수 있고, 첫 로그인은
-`setup` 단계에서 만든 관리자 계정으로 하면 됩니다.
+You can now browse to `https://models.example.com/`. Log in with the admin
+account you created during `setup`.
 
-## 6. 설치 후 점검
+## 6. Post-install checks
 
-운영 시작 전 다음을 점검하세요.
+Run through these before going live:
 
-- `https://<도메인>/admin` 페이지가 보임 (관리자 로그인 필요)
-- `https://<도메인>/api/admin/users` 가 admin PAT 으로 200 응답
-- `git clone https://<도메인>/<관리자>/test.git` 후 첫 push 가 통과
-  ([git-repos.md](git-repos.md) 참고)
-- `outo-models status` 가 `[상태] 실행 중` 으로 표시
+- `https://<domain>/admin` renders (admin login required)
+- `https://<domain>/api/admin/users` returns 200 with an admin PAT
+- `git clone https://<domain>/<admin>/test.git` then a first push succeeds
+  (see [git-repos.md](git-repos.md))
+- `outo-models status` reports `[status] running`
 
-문제가 있다면 [troubleshooting.md](troubleshooting.md) 를 참고하세요.
+If anything looks off, head to [troubleshooting.md](troubleshooting.md).
 
-## 7. 업그레이드
+## 7. Upgrading
 
-`outo-models update` 한 줄로 새 이미지를 받아 마이그레이션 후 컨테이너를
-재시작합니다. 자세한 흐름은 [cli.md](cli.md#update) 와
-[architecture.md](architecture.md#이미지-플레이버) 를 보세요.
+`outo-models update` pulls the new image, runs migrations, and restarts
+the container. See [cli.md](cli.md#update) and
+[architecture.md](architecture.md#image-flavors) for the full flow.
 
 ```bash
 sudo outo-models update --image outo-models:stable
 ```
 
-## 다음 단계
+## Next steps
 
-- [setup-wizard.md](setup-wizard.md) — 마법사가 어떤 일을 하는지 정확하게
-- [admin.md](admin.md) — 가입 승인 / 쿼터 / GPU 운영
-- [architecture.md](architecture.md) — 데이터 레이아웃과 요청 흐름
+- [setup-wizard.md](setup-wizard.md) — exactly what the wizard does
+- [admin.md](admin.md) — signup approval, quotas, GPU management
+- [architecture.md](architecture.md) — data layout and request flow

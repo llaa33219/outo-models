@@ -2,111 +2,121 @@
 # outo-models — example configuration
 # =============================================================================
 #
-# 이 파일은 /etc/outo-models/config.yaml 의 템플릿입니다. 컨테이너 이미지에
-# 들어 있는 원본을 그대로 복사한 뒤 값을 채워 넣어 주세요. 운영 환경에서는
-# `outo-models setup` 위저드가 이 파일을 생성합니다.
+# This file is the template for /etc/outo-models/config.yaml. Copy the
+# original from the container image as-is, then fill in the values. In
+# production, the `outo-models setup` wizard generates this file.
 #
-# 최상위 키는 outo_models.config.Settings 의 필드 이름과 1:1로 대응합니다.
-# 새 필드를 Settings 에 추가할 때 이 파일도 함께 갱신해야 합니다 — 정적 테스트가
-# 이 일치를 검사합니다.
+# The top-level keys map 1:1 to the fields of outo_models.config.Settings.
+# When you add a new field to Settings, update this file in lockstep — a
+# static test verifies the match.
 #
-# 비밀값(secret_key, 데이터베이스 비밀번호 등)은 이 파일에 직접 적지 마세요.
-# OUTO_SECRET_KEY 같은 환경 변수로 주입하거나, 운영 환경에서는 vault/KMS를
-# 사용하세요.
+# Do not write secrets (secret_key, database password, etc.) directly
+# here. Inject them through environment variables like OUTO_SECRET_KEY,
+# or use a vault / KMS in production.
 
 # -----------------------------------------------------------------------------
-# 런타임 설정
+# Runtime settings
 # -----------------------------------------------------------------------------
 
-# 데이터 디렉터리. DB(SQLite), git 저장소, Caddy 상태, 캐시가 모두 여기에
-# 저장됩니다. 도커 볼륨은 보통 /var/lib/outo-models 로 마운트합니다.
+# Data directory. The DB (SQLite), git repositories, Caddy state, and
+# cache all live here. Docker volumes are usually mounted at
+# /var/lib/outo-models.
 data_dir: /var/lib/outo-models
 
-# 서비스가 응답할 공개 도메인. localhost / 127.0.0.1 이면 http, 그 외에는
-# https 로 자동 판단합니다 (Settings.base_url).
+# Public domain the service responds on. localhost / 127.0.0.1 picks
+# http automatically; everything else picks https (Settings.base_url).
 domain: hub.example.com
 
-# 데이터베이스 URL. 비워 두면 `${data_dir}/db.sqlite3` 으로 자동 결정됩니다.
-# PostgreSQL 예시: postgresql+asyncpg://outo:secret@db:5432/outo
+# Database URL. Empty (null) means `${data_dir}/db.sqlite3` is chosen
+# automatically.
+# PostgreSQL example: postgresql+asyncpg://outo:secret@db:5432/outo
 db_url: null
 
-# 세션/토큰 서명 키. production 에서는 반드시 32바이트 이상이어야 하며
-# Settings.validate_for_production() 이 이를 강제합니다.
-# 운영에서는 OUTO_SECRET_KEY 환경 변수로 주입하세요.
+# Session / token signing key. In production it must be at least 32
+# bytes; Settings.validate_for_production() enforces this.
+# In production, inject it via the OUTO_SECRET_KEY environment variable.
 secret_key: ""
 
-# 런타임 환경. development | production 둘 중 하나만 허용됩니다 (Literal).
-# 컨테이너 이미지 플레이버(stable/dev)와 무관하게 동작을 제어합니다.
+# Runtime environment. Only `development` or `production` are allowed
+# (Literal). Controls runtime behavior independently of the container
+# image flavor (stable/dev).
 env: production
 
-# 신규 가입에 관리자 승인이 필요한지 여부. false 면 self-service 가입.
+# Whether new signups require admin approval. When false, signup is
+# self-service.
 require_approval: true
 
-# 신규 사용자에게 부여하는 기본 저장공간 (바이트). 10 GiB = 10737418240.
+# Default storage quota granted to new users (bytes). 10 GiB =
+# 10737418240.
 default_quota_bytes: 10737418240
 
 # -----------------------------------------------------------------------------
-# Git LFS 오브젝트 스토리지
+# Git LFS object storage
 # -----------------------------------------------------------------------------
 
-# LFS 오브젝트 백엔드. local 은 `${data_dir}/lfs/` 에 저장하고, s3 는
-# S3 호환 엔드포인트(MinIO, AWS S3 등)에 presigned URL 로 업/다운로드합니다.
+# LFS object backend. `local` stores objects under
+# `${data_dir}/lfs/`; `s3` uses an S3-compatible endpoint (MinIO,
+# AWS S3, etc.) with presigned URL upload / download.
 lfs_backend: local
 
-# LFS 오브젝트 1개의 최대 크기 (바이트). 5 GiB = 5368709120.
+# Maximum size of a single LFS object (bytes). 5 GiB = 5368709120.
 lfs_max_object_bytes: 5368709120
 
-# S3 백엔드 설정 (lfs_backend: s3 일 때만 사용).
-# 엔드포인트 예시: https://s3.ap-northeast-2.amazonaws.com 또는 MinIO URL.
+# S3 backend settings (only used when lfs_backend: s3).
+# Endpoint example: https://s3.ap-northeast-2.amazonaws.com or a MinIO URL.
 s3_endpoint: ""
 s3_bucket: ""
 s3_region: us-east-1
-# 접근 키는 이 파일에 직접 적지 말고 OUTO_S3_ACCESS_KEY / OUTO_S3_SECRET_KEY
-# 환경 변수로 주입하세요.
+# Do not write access keys directly here — inject OUTO_S3_ACCESS_KEY /
+# OUTO_S3_SECRET_KEY via environment variables instead.
 s3_access_key: ""
 s3_secret_key: ""
-# 버킷 안 오브젝트 키 접두사.
+# Object-key prefix inside the bucket.
 s3_prefix: lfs
-# presigned URL 유효 시간 (초).
+# Presigned URL lifetime (seconds).
 s3_presign_ttl_seconds: 3600
 
 # -----------------------------------------------------------------------------
-# Spaces 런타임 (v2)
+# Spaces runtime (v2)
 # -----------------------------------------------------------------------------
 
-# Space 를 컨테이너로 실행할지 여부. Podman API 소켓이 필요합니다.
+# Whether to run Spaces as containers. Requires the Podman API socket.
 spaces_runtime_enabled: false
 
-# Podman API 소켓 경로. 컨테이너 안에서는 호스트 소켓을 마운트해 주세요
-# (예: -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock).
+# Podman API socket path. Inside the container, mount the host socket
+# (e.g. -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock).
 podman_socket: /run/podman/podman.sock
 
-# Space 컨테이너에 배정할 호스트 포트 범위.
+# Host port range to assign to Space containers.
 spaces_runtime_port_range_start: 20000
 spaces_runtime_port_range_end: 21000
 
 # -----------------------------------------------------------------------------
-# DNS / TLS 설정
+# DNS / TLS configuration
 # -----------------------------------------------------------------------------
-# outo_models.tls.caddy_manager.TlsConfig 가 사용하는 값들은 Settings 필드가
-# 아니라 별도 환경 변수로 주입됩니다 (OUTO_TLS_DNS_PROVIDER,
-# OUTO_TLS_ACME_EMAIL, OUTO_TLS_STAGING, CLOUDFLARE_API_TOKEN). 따라서 이
-# 파일에는 최상위 YAML 키로 등장하지 않습니다 — 참고용 주석으로만 표기합니다.
+# Values consumed by outo_models.tls.caddy_manager.TlsConfig are
+# injected through separate environment variables (OUTO_TLS_DNS_PROVIDER,
+# OUTO_TLS_ACME_EMAIL, OUTO_TLS_STAGING, CLOUDFLARE_API_TOKEN) rather
+# than Settings fields, so they do not appear as top-level YAML keys
+# here — this comment exists for reference only.
 #
-# 필요한 환경 변수 예시 (그대로 쓰지 마세요):
+# Example environment variables (do not use verbatim):
 #
-#   # ACME 계정 연락처 — Let's Encrypt 가 만료 경고를 보낼 주소
+#   # ACME account contact — the address Let's Encrypt sends expiry
+#   # warnings to
 #   OUTO_TLS_ACME_EMAIL=admin@example.com
 #
-#   # DNS-01 챌린지 제공자. cloudflare 면 caddy-dns/cloudflare 플러그인을,
-#   # 비우면 HTTP-01 챌린지를 사용합니다.
+#   # DNS-01 challenge provider. `cloudflare` uses the
+#   # caddy-dns/cloudflare plugin; empty falls back to HTTP-01.
 #   OUTO_TLS_DNS_PROVIDER=cloudflare
 #
-#   # Cloudflare API 토큰은 Caddy 프로세스의 환경 변수에서 읽습니다
-#   # ({env.CLOUDFLARE_API_TOKEN}). 이 파일에 절대 직접 적지 마세요.
+#   # The Cloudflare API token is read from the Caddy process's
+#   # environment ({env.CLOUDFLARE_API_TOKEN}). Never paste it directly
+#   # into this file.
 #   CLOUDFLARE_API_TOKEN=<your-token>
 #
-#   # true 면 Let's Encrypt 스테이징 CA 를 사용합니다. 첫 셋업에서 도메인
-#   # 오타로 인한 rate-limit 손실을 막기 위한 임시 플래그입니다.
+#   # When true, use the Let's Encrypt staging CA. Intended as a
+#   # temporary flag during first setup to avoid rate-limit losses from
+#   # a typo'd domain.
 #   OUTO_TLS_STAGING=false
 #

@@ -101,10 +101,10 @@ for f in "${ON_DISK[@]}"; do
 done
 
 if (( ${#missing_files[@]} > 0 )); then
-    fail "docs/index.md 가 가리키는 파일이 디스크에 없습니다: ${missing_files[*]}"
+    fail "files referenced from docs/index.md are missing on disk: ${missing_files[*]}"
 fi
 if (( ${#unlinked_files[@]} > 0 )); then
-    fail "docs/*.md 파일이 docs/index.md 의 목차에서 누락되었습니다: ${unlinked_files[*]}"
+    fail "docs/*.md files are not listed in the docs/index.md table of contents: ${unlinked_files[*]}"
 fi
 
 # --- (b) CLI command names → docs/cli.md -------------------------------
@@ -160,11 +160,11 @@ mapfile -t CLI_NAMES < <(printf '%s\n' "${CLI_NAMES[@]}" | sorted_uniq)
 # Sanity: we expect a non-trivial CLI surface. If the extractor missed
 # everything, that is itself a bug worth surfacing.
 if (( ${#CLI_NAMES[@]} == 0 )); then
-    fail "CLI 명령 추출 결과가 비어 있습니다 — 정규식이 손상되지 않았지 확인하세요."
+    fail "CLI command extraction returned no results — verify the regex is intact."
 fi
 
 CLI_DOC="${DOCS_DIR}/cli.md"
-[[ -f "${CLI_DOC}" ]] || fail "docs/cli.md 가 없습니다 — (b) 검사를 수행할 수 없습니다."
+[[ -f "${CLI_DOC}" ]] || fail "docs/cli.md is missing — cannot run check (b)."
 
 missing_cmds=()
 for name in "${CLI_NAMES[@]}"; do
@@ -177,7 +177,7 @@ for name in "${CLI_NAMES[@]}"; do
 done
 
 if (( ${#missing_cmds[@]} > 0 )); then
-    fail "docs/cli.md 에 다음 CLI 명령이 누락되었습니다: ${missing_cmds[*]}"
+    fail "the following CLI commands are missing from docs/cli.md: ${missing_cmds[*]}"
 fi
 
 # --- (c) OUTO_* env vars → docs/*.md ----------------------------------
@@ -253,7 +253,7 @@ fi
 mapfile -t ENVVARS < <(printf '%s\n' "${ENVVARS[@]}" | sorted_uniq)
 
 if (( ${#ENVVARS[@]} == 0 )); then
-    fail "OUTO_* 환경 변수 추출 결과가 비어 있습니다 — 정규식이 손상되지 않았는지 확인하세요."
+    fail "OUTO_* environment variable extraction returned no results — verify the regex is intact."
 fi
 
 # Every docs/*.md is a valid target — concatenate once for efficiency.
@@ -269,7 +269,7 @@ for var in "${ENVVARS[@]}"; do
 done
 
 if (( ${#missing_vars[@]} > 0 )); then
-    fail "어떤 docs/*.md 에도 다음 OUTO_* 환경 변수가 등장하지 않습니다: ${missing_vars[*]}"
+    fail "the following OUTO_* environment variables do not appear in any docs/*.md file: ${missing_vars[*]}"
 fi
 
 # --- all checks passed -------------------------------------------------

@@ -1,237 +1,267 @@
-# 변경 이력
+# Changelog
 
-`outo-models` 의 모든 공개 인터페이스 변경은 이 파일에 기록합니다. AGENTS.md §2.8
-에 따라 CLI 플래그 / REST 엔드포인트 / 환경 변수는 하위 호환을 유지하고,
-깨야 할 때는 마이그레이션 가이드를 함께 제공합니다.
+Every public-interface change to `outo-models` is recorded here. Per
+AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
+backwards-compatible, and breaking changes ship with a migration guide.
 
-## v0.2.0 — LFS · S3 · Spaces 런타임
+## v0.2.0 — LFS · S3 · Spaces runtime
 
-출시일: 2026-09-01
+Release date: 2026-09-01
 
-v1 의 메타데이터 중심 스코프를 실제 운영 가능한 수준으로 끌어올린 v2 릴리즈입니다.
-기존 v0.1.0 의 모든 공개 인터페이스는 그대로 동작합니다.
+The v2 release lifts v1's metadata-only scope into something operationally
+useful. All v0.1.0 public interfaces continue to work as before.
 
-### 추가된 기능
+### Added features
 
-#### Git LFS 정식 지원
+#### Full Git LFS support
 
-이전 버전에서 501 스텬이던 LFS 가 완전한 구현으로 교체되었습니다.
+The previous version returned a 501 stub for LFS; this release replaces
+it with a complete implementation.
 
-- 4개 엔드포인트 동작:
-  - `POST /{owner}/{name}.git/info/lfs/objects/batch` — 업로드/다운로드 action URL
-    발급
-  - `PUT /{owner}/{name}.git/info/lfs/objects/{oid}` — 스트리밍 업로드
-  - `GET /{owner}/{name}.git/info/lfs/objects/{oid}` — 64 KiB 청크 스트리밍
-- 인증: 일반 clone/push 와 같은 Basic PAT 재사용 (`git-lfs` 가 자동으로 처리)
-- per-object 에러: 한 객체의 실패 (사이즈 / 쿼터 / 404) 가 batch 전체를
-  실패시키지 않음 — LFS 스펙 그대로
-- SHA256 + 사이즈 검증 후 원자적 rename (`os.replace`)
-- symlink 차단: `_object_path` 의 어떤 segment 라도 symlink 이면 읽기/쓰기
-  거부 (path traversal 의 입구 차단)
-- `/info/lfs/locks*` 만 501 유지 — v3 작업
-- 자세한 흐름: [git-repos.md §LFS 사용법](git-repos.md#lfs-사용법-v2)
+- Four endpoints are live:
+  - `POST /{owner}/{name}.git/info/lfs/objects/batch` — issues
+    upload / download action URLs
+  - `PUT /{owner}/{name}.git/info/lfs/objects/{oid}` — streaming upload
+  - `GET /{owner}/{name}.git/info/lfs/objects/{oid}` — 64 KiB chunked
+    streaming
+- Authentication: reuses the Basic PAT from regular clone/push (handled
+  by `git-lfs` automatically)
+- Per-object errors: a single object's failure (size / quota / 404)
+  does not fail the whole batch — per the LFS spec
+- sha256 + size verification, then atomic rename via `os.replace`
+- Symlink guard: if any segment of `_object_path` is a symlink, both
+  reads and writes are rejected (cuts off path traversal at the entry
+  point)
+- Only `/info/lfs/locks*` remains a 501 — coming in v3
+- Full flow: [git-repos.md §LFS usage](git-repos.md#lfs-usage-v2)
 
-#### LFS 백엔드: `local` / `s3` 선택 가능
+#### LFS backend: `local` / `s3`
 
-[`OUTO_LFS_BACKEND`](cli.md#환경-변수) 로 두 백엔드를 선택할 수 있습니다.
+[`OUTO_LFS_BACKEND`](cli.md#environment-variables) selects between two
+backends.
 
-- `local` (기본): `OUTO_DATA_DIR` 의 `lfs/<aa>/<bb>/<oid>` 에 샤딩 저장. 별도
-  인프라 없이 동작.
-- `s3`: AWS S3 / MinIO / R2 등 S3 호환 스토리지에 presigned URL 로 직접
-  업/다운로드. 자체 구현 SigV4 (path-style, MinIO 호환) — `boto3` /
-  `aioboto3` 의존성 없음. 자세한 설정:
-  [git-repos.md §백엔드 설정](git-repos.md#백엔드-설정-outo_lfs_backend),
-  [security.md §`s3` 백엔드의 presigned URL](security.md#s3-백엔드의-presigned-url).
+- `local` (default): shards objects to `OUTO_DATA_DIR/lfs/<aa>/<bb>/<oid>`.
+  No additional infrastructure required.
+- `s3`: AWS S3 / MinIO / R2 / other S3-compatible stores. Direct upload /
+  download through presigned URLs. In-house SigV4 implementation
+  (path-style, MinIO compatible) — no `boto3` / `aioboto3` dependency.
+  Configuration details:
+  [git-repos.md §Backend configuration](git-repos.md#backend-configuration-outo_lfs_backend),
+  [security.md §`s3` backend presigned URLs](security.md#s3-backend-presigned-urls).
 
-추가 환경 변수:
+New environment variables:
 
-- `OUTO_LFS_MAX_OBJECT_BYTES` (기본 5 GiB)
-- `OUTO_S3_ENDPOINT`, `OUTO_S3_BUCKET`, `OUTO_S3_REGION` (기본 `us-east-1`)
+- `OUTO_LFS_MAX_OBJECT_BYTES` (default 5 GiB)
+- `OUTO_S3_ENDPOINT`, `OUTO_S3_BUCKET`, `OUTO_S3_REGION` (default
+  `us-east-1`)
 - `OUTO_S3_ACCESS_KEY`, `OUTO_S3_SECRET_KEY`
-- `OUTO_S3_PREFIX` (기본 `lfs`)
-- `OUTO_S3_PRESIGN_TTL_SECONDS` (기본 3600)
+- `OUTO_S3_PREFIX` (default `lfs`)
+- `OUTO_S3_PRESIGN_TTL_SECONDS` (default 3600)
 
-#### Spaces 런타임 (Podman)
+#### Spaces runtime (Podman)
 
-[`src/outo_models/spaces/`](../src/outo_models/spaces) 의 v2 런타임:
+The v2 runtime in [`src/outo_models/spaces/`](../src/outo_models/spaces):
 
-- 기본 비활성. `OUTO_SPACES_RUNTIME_ENABLED=true` 로 명시적 활성화.
-- `OUTO_PODMAN_SOCKET` (기본 `/run/podman/podman.sock`) 로 Podman REST API 에
-  접속. 컨테이너 안에서 Unix 도메인 소켓 (`httpx.AsyncHTTPTransport(uds=...)`) 으로
-  통신.
-- 라이프사이클: `start` / `stop` / `restart` / `status` + 감사 로그
+- Disabled by default. Enable explicitly with
+  `OUTO_SPACES_RUNTIME_ENABLED=true`.
+- `OUTO_PODMAN_SOCKET` (default `/run/podman/podman.sock`) connects to
+  the Podman REST API. Inside the container the socket is reached over a
+  Unix domain socket (`httpx.AsyncHTTPTransport(uds=...)`).
+- Lifecycle: `start` / `stop` / `restart` / `status`, with audit logs
   (`space.start` / `space.stop` / `space.restart`).
-- 컨테이너 이름 규칙 `outo-space-<owner>-<name>`, 이미지 태그
-  `localhost/outo-space-<owner>-<name>:latest`, 레이블 `outo.managed=true` +
-  `outo.space=<owner>/<name>`.
-- 호스트 포트는 `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` (기본 20000..21000)
-  에서 순차 할당. 컨테이너 안 포트는 `8000/tcp` 으로 고정, `127.0.0.1` 바인딩
-  (외부 노출 금지).
-- GPU: `web_settings(key="gpu:<username>")` 의 JSON 배열을
-  `nvidia.com/gpu=<id>` CDI 디바이스로 부착.
-- SDK 별 동작:
-  - `static` — 컨테이너 없이 dulwich 트리를 `spaces/<owner>/<name>/site/` 에
-    풀어 `FileResponse` 로 서빙.
-  - `gradio` / `streamlit` — 사용자가 저장소 안에 베이스 이미지를 정의한다는
-    약속; 코드 측은 docker SDK 와 동일.
-  - `docker` — 저장소 루트에 `Dockerfile` 또는 `Containerfile` 이 **없으면**
-    `ValidationFailedError` 로 거절.
-- 프록시 `/spaces/<owner>/<name>/run/{path}` — 5개 메서드 (GET/POST/PUT/
-  PATCH/DELETE) 모두 지원. 컨테이너 running 일 때만 `http://127.0.0.1:<port>/<path>`
-  로 위임. hop-by-hop 헤더 제거.
+- Container naming `outo-space-<owner>-<name>`, image tag
+  `localhost/outo-space-<owner>-<name>:latest`, labels
+  `outo.managed=true` + `outo.space=<owner>/<name>`.
+- Host ports allocated sequentially from
+  `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` (default 20000..21000).
+  The in-container port is fixed at `8000/tcp` and bound to `127.0.0.1`
+  (no external exposure).
+- GPUs: the JSON array under `web_settings(key="gpu:<username>")` is
+  attached as `nvidia.com/gpu=<id>` CDI devices.
+- Per-SDK behavior:
+  - `static` — no container; the dulwich tree is unpacked into
+    `spaces/<owner>/<name>/site/` and served through `FileResponse`.
+  - `gradio` / `streamlit` — the user supplies the base image inside the
+    container; the code side mirrors the `docker` SDK.
+  - `docker` — rejected with `ValidationFailedError` if the repo root is
+    missing a `Dockerfile` or `Containerfile`.
+- Proxy `/spaces/<owner>/<name>/run/{path}` — supports all five methods
+  (GET/POST/PUT/PATCH/DELETE). Only proxies when the container is
+  running, to `http://127.0.0.1:<port>/<path>`. Hop-by-hop headers are
+  stripped.
 
-#### 라이선스
+#### License
 
-[LICENSE](../LICENSE) (Apache-2.0) 추가. v0.1.0 까지는 라이선스 파일이 없어서
-재배포가 모호했는데, v0.2.0 부터 Apache-2.0 으로 명확히 합니다.
+[LICENSE](../LICENSE) (Apache-2.0) added. v0.1.0 had no license file,
+which made redistribution ambiguous; v0.2.0 makes the terms explicit
+under Apache-2.0.
 
-#### CI / 이미지 릴리즈 워크플로우
+#### CI / image-release workflows
 
-두 개의 GitHub Actions 가 추가되었습니다.
+Two GitHub Actions are added.
 
-- `.github/workflows/ci.yml` — main / PR 트리거. ruff + mypy + pytest +
-  `scripts/check-docs.sh` 까지 강제.
-- `.github/workflows/release-image.yml` — `vX.Y.Z-stable` / `vX.Y.Z-dev` 태그
-  트리거. tests 통과 후 `podman build --build-arg IMAGE_FLAVOR=stable|dev ...`
-  로 빌드하고 `ghcr.io/<repo>:X.Y.Z-<flavor>`, `:stable` / `:dev`, 그리고
-  stable 인 경우 `:latest` 까지 push. 자세한 태그 컨벤션:
+- `.github/workflows/ci.yml` — main / PR trigger. Enforces ruff + mypy
+  + pytest + `scripts/check-docs.sh`.
+- `.github/workflows/release-image.yml` — `vX.Y.Z-stable` /
+  `vX.Y.Z-dev` tag trigger. After tests pass, runs
+  `podman build --build-arg IMAGE_FLAVOR=stable|dev ...` and pushes
+  `ghcr.io/<repo>:X.Y.Z-<flavor>`, `:stable` / `:dev`, and (for stable
+  only) `:latest`. Tag convention:
   [architecture.md §CI/CD](architecture.md#cicd).
 
-### 추가된 환경 변수 요약
+### New environment variables summary
 
 `OUTO_LFS_BACKEND`, `OUTO_LFS_MAX_OBJECT_BYTES`, `OUTO_S3_ENDPOINT`,
-`OUTO_S3_BUCKET`, `OUTO_S3_REGION`, `OUTO_S3_ACCESS_KEY`, `OUTO_S3_SECRET_KEY`,
-`OUTO_S3_PREFIX`, `OUTO_S3_PRESIGN_TTL_SECONDS`, `OUTO_SPACES_RUNTIME_ENABLED`,
-`OUTO_PODMAN_SOCKET`, `OUTO_SPACES_RUNTIME_PORT_RANGE_START`,
-`OUTO_SPACES_RUNTIME_PORT_RANGE_END`. 모두 기본값이 있어 마이그레이션 없이
-업그레이드 가능합니다.
+`OUTO_S3_BUCKET`, `OUTO_S3_REGION`, `OUTO_S3_ACCESS_KEY`,
+`OUTO_S3_SECRET_KEY`, `OUTO_S3_PREFIX`, `OUTO_S3_PRESIGN_TTL_SECONDS`,
+`OUTO_SPACES_RUNTIME_ENABLED`, `OUTO_PODMAN_SOCKET`,
+`OUTO_SPACES_RUNTIME_PORT_RANGE_START`,
+`OUTO_SPACES_RUNTIME_PORT_RANGE_END`. All have defaults, so upgrading
+requires no migration.
 
-### 마이그레이션 가이드
+### Migration guide
 
-v0.2.0 으로의 업그레이드는 **마이그레이션 절차가 필요 없습니다**. 모든 새 환경
-변수의 기본값은 v0.1.0 의 동작과 호환됩니다 (LFS 는 여전히 v0.1.0 의 501 +
-로드맵 안내를 그대로 반환하지 않으며, v0.2.0 부터는 실제 LFS 가 동작합니다 —
-이는 **기능 추가** 이고 기존 동작의 변경은 아닙니다).
+Upgrading to v0.2.0 **requires no migration steps**. The defaults for
+every new environment variable preserve the v0.1.0 behavior (and LFS no
+longer returns the v0.1.0 501 + roadmap message — it actually works in
+v0.2.0; this is a **feature addition**, not a behavior change).
 
-> **주의**: v0.1.0 의 LFS 501 응답에 의존하던 클라이언트 (예: 자체 작성한
-> 다운로드 스크립트) 는 v0.2.0 에서 정상 LFS 응답을 받게 됩니다. LFS 비활성화가
-> 필요한 운영 환경은 `OUTO_LFS_BACKEND` 를 빈 문자열 대신 `local` 로 두고
-> 프록시에서 차단해 주세요. LFS 자체를 끄는 플래그는 제공하지 않습니다.
+> **Note**: any client that depended on v0.1.0's LFS 501 response (e.g.
+> custom download scripts) will start receiving real LFS responses in
+> v0.2.0. Operators that need LFS disabled should leave
+> `OUTO_LFS_BACKEND` set to `local` and block it at the proxy. There is
+> no flag to disable LFS itself.
 
-새 컨테이너를 띄울 때 Spaces 런타임을 활성화하지 않으면 (기본값) 모든 Space 는
-v0.1.0 처럼 동작합니다 — `runtime.state = "disabled"`, `/run/` 접근 시
-`503 runtime_disabled`.
+When you launch a new container without enabling the Spaces runtime (the
+default), every Space behaves like v0.1.0 — `runtime.state = "disabled"`,
+`/run/` returns `503 runtime_disabled`.
 
-## v0.1.0 — 첫 출시
+## v0.1.0 — Initial release
 
-출시일: 2026-08-31
+Release date: 2026-08-31
 
-v1 의 첫 번째 출시. Hugging Face / ModelScope 스타일의 git 기반 모델 허브를
-자체 호스팅하기 위한 모든 핵심 기능이 포함되어 있습니다.
+The first release of v1. Contains every core feature needed to
+self-host a Hugging Face / ModelScope-style, git-based model hub.
 
-### 설치 / 운영
+### Install / operations
 
-- `outo-models` Typer 콘솔 스크립트 단일 진입점 (`pyproject.toml` 의
-  `console_scripts`)
-- 대화형 / 비대화형 설정 마법사 (`outo-models setup`)
-- 컨테이너 라이프사이클: `start` / `stop` / `restart` / `status`
-- 이미지 갱신 + DB 마이그레이션 + 재시작 (`outo-models update`)
-- `outo-models reset` 의 3회 `yes` 게이트 (dry-run 기본, `OUTO_DESTRUCTIVE=1`
-  필요)
-- Podman 단일 이미지 (`outo-models:stable`, `outo-models:dev`) — 비특권 실행
-- AGENTS.md §4 강제: `dev + production` 조합 거부
-- quadlet systemd 유닛 예시 + 호스트 측 방화벽 자동 개방 유닛 (opt-in)
-- 호스트 측 스크립트 (`firewall-open.sh`, `update.sh`, `reset.sh`)
+- Single `outo-models` Typer console script entry point (`console_scripts`
+  in `pyproject.toml`)
+- Interactive / non-interactive setup wizard (`outo-models setup`)
+- Container lifecycle: `start` / `stop` / `restart` / `status`
+- Image refresh + DB migration + restart (`outo-models update`)
+- Three-`yes` gate on `outo-models reset` (dry-run by default, requires
+  `OUTO_DESTRUCTIVE=1`)
+- Podman single image (`outo-models:stable`, `outo-models:dev`) — runs
+  non-root
+- AGENTS.md §4 enforcement: rejects the `dev + production` combination
+- Quadlet systemd unit example + opt-in host-side firewall auto-open
+  unit
+- Host-side scripts (`firewall-open.sh`, `update.sh`, `reset.sh`)
 
 ### DNS / TLS
 
-- DNS 제공자 추상화 + Cloudflare / Manual 구현체
-- Cloudflare 모드: DNS A 레코드 자동 생성 + DNS-01 ACME 챌린지
-- 수동 모드: 한국어 안내 + 운영자 확인 대기
-- Caddy (in-container, 80/443) + 자동 ACME 발급 / 갱신
-- `acme-staging-v02.api.letsencrypt.org/directory` 로의 스테이징 전환 지원
-  (`TlsConfig.staging = True`)
-- 매일 `cert_renewal_job` (00:00 UTC) 가 인증서 점검 + Caddy nudge
+- DNS provider abstraction + Cloudflare / Manual implementations
+- Cloudflare mode: automatic DNS A record creation + DNS-01 ACME
+  challenge
+- Manual mode: English instructions + operator confirmation prompt
+- Caddy (in-container, 80/443) + automatic ACME issuance / renewal
+- Staging switch supported via
+  `acme-staging-v02.api.letsencrypt.org/directory` (`TlsConfig.staging = True`)
+- Daily `cert_renewal_job` (00:00 UTC) checks certs and nudges Caddy
 
-### 데이터 / DB
+### Data / DB
 
-- SQLAlchemy 2.x async + aiosqlite (기본) / Postgres 호환 (DB URL 만 변경)
-- Alembic 마이그레이션 (`alembic upgrade head`)
-- 9개 테이블: `users`, `repos`, `revisions`, `personal_access_tokens`,
-  `approvals`, `user_quotas`, `user_usages`, `audit_logs`, `web_settings`
-- per-repo `asyncio.Lock` 으로 동시 푸시 직렬화
-- 매시간 `quota_reconcile_job` 으로 사용자 사용량 보정
-- 매일 `audit_prune_job` (02:00 UTC) 으로 90일 이전 감사 로그 삭제
+- SQLAlchemy 2.x async + aiosqlite (default) / Postgres-compatible
+  (only swap the DB URL)
+- Alembic migrations (`alembic upgrade head`)
+- 9 tables: `users`, `repos`, `revisions`, `personal_access_tokens`,
+  `approvals`, `user_quotas`, `user_usages`, `audit_logs`,
+  `web_settings`
+- Per-repo `asyncio.Lock` serializes concurrent pushes
+- Hourly `quota_reconcile_job` corrects per-user usage
+- Daily `audit_prune_job` (02:00 UTC) deletes audit logs older than 90
+  days
 
-### 인증 / 권한
+### Authentication / authorization
 
-- argon2id 비밀번호 해시 (`time_cost=3`, `memory_cost=64 MiB`)
-- PASETO v4 local PAT (평문 미저장, argon2id 지문만 저장)
-- itsdangerous URLSafeTimedSerializer 세션 쿠키 (`outo_session`)
-- 7일 세션 + 로그인마다 rotation
-- CSRF double-submit 쿠키 (UI 폼)
-- slowapi 레이트 리밋: login `5/minute`, signup `3/minute`, git push/pull,
-  API 모두 per-IP / per-user 버킷
-- 보안 헤더 자동 부착: HSTS, CSP, X-Frame-Options, Permissions-Policy 등
+- argon2id password hash (`time_cost=3`, `memory_cost=64 MiB`)
+- PASETO v4 local PAT (plaintext never stored, only argon2id
+  fingerprint)
+- itsdangerous `URLSafeTimedSerializer` session cookie (`outo_session`)
+- 7-day session, rotated on every login
+- CSRF double-submit cookie (UI forms)
+- slowapi rate limits: login `5/minute`, signup `3/minute`, git push /
+  pull, API — all per-IP / per-user buckets
+- Security headers auto-applied: HSTS, CSP, X-Frame-Options,
+  Permissions-Policy, etc.
 
 ### git / REST
 
-- FastAPI + REST 라우터: `auth`, `users`, `repos`, `spaces`, `admin`,
+- FastAPI + REST routers: `auth`, `users`, `repos`, `spaces`, `admin`,
   `webhooks`, UI
-- dulwich 기반 git smart-HTTP — URL: `https://<도메인>/<owner>/<name>.git`
+- dulwich-backed git smart-HTTP — URL:
+  `https://<domain>/<owner>/<name>.git`
 - HTTP Basic auth = username + PAT
-- 권한 매트릭스: PUSH 는 owner / admin 만, PULL 은 public 은 익명,
-  private 은 owner / admin
-- 쿼터 초과 → `413`, LFS → `501` (스텁 + 로드맵 링크)
-- 푸시 후 `Revision` 기록 + `Repo.size_bytes` 갱신 + `UserUsage` 정합 +
-  `AuditLog(action="repo.push")` 기록
+- Authorization matrix: PUSH is owner / admin only; PULL allows anonymous
+  for public, owner / admin for private
+- Quota overflow → `413`, LFS → `501` (stub + roadmap link)
+- After push: record `Revision`, refresh `Repo.size_bytes`, reconcile
+  `UserUsage`, log `AuditLog(action="repo.push")`
 
-### 모델 / 데이터셋 / Spaces
+### Models / datasets / Spaces
 
 - `RepoKind`: `model` / `dataset` / `space`
 - `Visibility`: `public` / `private`
-- Spaces v1: 메타데이터 + 정적 페이지 + `SUPPORTED_SDKS = {static, gradio,
-  streamlit, docker}`. 런타임은 `preview_unavailable` (v2 로드맵)
+- Spaces v1: metadata + static pages + `SUPPORTED_SDKS = {static, gradio,
+  streamlit, docker}`. Runtime reports `preview_unavailable` (v2 roadmap)
 
-### 관리 기능
+### Admin features
 
-- 가입 흐름: `pending` → `approved` / `denied` (+ `unban` 으로 `banned` →
-  `approved`)
+- Signup flow: `pending` → `approved` / `denied` (+ `unban` to take
+  `banned` back to `approved`)
 - `admin list` / `pending` / `approve` / `deny` / `ban` / `unban` /
   `reset-password`
-- 사용자별 저장 용량 쿼터 (`quota show` / `set`; `10GiB` 형식 입력)
-- GPU ID 자유 라벨 할당 (`gpu show` / `assign` / `clear`)
-- `--api-url` + `--token` 으로 원격 서버의 `/api/admin/*` 위임 (단,
-  `reset-password` 는 로컬 전용)
+- Per-user storage quota (`quota show` / `set`; accepts `10GiB`-style
+  input)
+- Free-form GPU ID labels (`gpu show` / `assign` / `clear`)
+- Remote delegation via `--api-url` + `--token` against
+  `/api/admin/*` (except `reset-password`, which is local-only)
 
-### 문서 / 자동화
+### Docs / automation
 
-- `docs/` 디렉터리의 한국어 문서 (본 변경 이력 포함)
-- `scripts/check-docs.sh` 가 CLI 명령 / 환경 변수 / 문서 일치를 자동 검증
-  (`make lint` 처럼 CI 게이트로 사용 가능)
-- 758+ pytest 케이스 (단위 + 통합, 컨테이너 없이 실행)
-- ruff + mypy strict + bandit 정적 분석
+- English docs under `docs/` (including this changelog)
+- `scripts/check-docs.sh` automatically verifies CLI commands /
+  environment variables / docs consistency (usable as a CI gate like
+  `make lint`)
+- 750+ pytest cases (unit + integration, no containers required)
+- ruff + mypy strict + bandit static analysis
 
-### 알려진 제약
+### Known limitations
 
-- LFS (`git lfs`) 는 501 스텁만 — 대용량 객체는 별도 분할 권장
-- Spaces 컨테이너 런타임 미지원 — `runtime.state` 항상 `preview_unavailable`
-- Webhook 엔드포인트는 `/api/webhooks/test` 만 — 정식 통합은 v2
-- `dev` 이미지의 `debugpy` / `ipython` 노출은 의도적 (개발용 이미지에서만)
-- 자동 업데이트는 quadlet 의 `AutoUpdate=registry` 정책에 의존 — 호스트의
-  `podman-auto-update.timer` 활성화 필요
+- LFS (`git lfs`) is a 501 stub only — split large objects manually for
+  now
+- Spaces container runtime not supported — `runtime.state` always
+  reports `preview_unavailable`
+- Webhook endpoints only expose `/api/webhooks/test` — formal integrations
+  land in v2
+- `debugpy` / `ipython` exposure on the `dev` image is intentional
+  (development image only)
+- Auto-updates rely on the quadlet `AutoUpdate=registry` policy — the
+  host's `podman-auto-update.timer` must be active
 
-### 마이그레이션 가이드
+### Migration guide
 
-v0.1.0 은 첫 출시이므로 별도 마이그레이션 절차는 없습니다. v0.0.x 가
-존재하지 않습니다.
+This is the first release, so there is no prior version to migrate from.
+v0.0.x does not exist.
 
-## 다음 버전의 방향 (로드맵)
+## Next-version roadmap
 
-- LFS 정식 지원 (`git lfs` API + 청크 저장소)
-- Spaces v2 런타임 (컨테이너 격리 + 빌드 큐 + 자원 제한)
-- Webhook 정식 통합 (push / repo.created / user.signup 이벤트)
-- 메트릭 / Prometheus exporter
-- 자동 업데이트 안정화 (in-place 마이그레이션)
+- Full LFS support (`git lfs` API + chunked object store)
+- Spaces v2 runtime (container isolation + build queue + resource
+  limits)
+- Formal webhook integration (push / repo.created / user.signup events)
+- Metrics / Prometheus exporter
+- Auto-update stabilization (in-place migration)
 
-각 항목이 출시될 때 본 변경 이력에 마이너 / 메이저 버전을 올려 추가합니다.
+Each item bumps the minor / major version here when it ships.

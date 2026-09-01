@@ -1,20 +1,20 @@
-# git 저장소 사용법
+# git repository usage
 
-`outo-models` 의 저장소는 git 만으로 사용할 수 있습니다 — `git clone`,
-`git push`, `git pull` 이 곧 사용자 인터페이스입니다. 본 문서는
-[src/outo_models/git_smart](../src/outo_models/git_smart) 와
-[src/outo_models/repos](../src/outo_models/repos) 가 실제로 어떻게 동작하는지를
-운영자 / 사용자 관점에서 정리합니다.
+Every outo-models repository is operated with plain git — `git clone`,
+`git push`, and `git pull` are the user interface. This page describes how
+[src/outo_models/git_smart](../src/outo_models/git_smart) and
+[src/outo_models/repos](../src/outo_models/repos) actually behave, from
+both the operator's and the user's perspective.
 
-## URL 형식
+## URL format
 
-저장소 URL 은 Hugging Face 스타일을 따릅니다.
+Repository URLs follow the Hugging Face style.
 
 ```
-https://<도메인>/<소유자>/<이름>.git
+https://<domain>/<owner>/<name>.git
 ```
 
-예시:
+Examples:
 
 ```bash
 git clone https://models.example.com/alice/ll-7b.git
@@ -22,57 +22,60 @@ git clone https://models.example.com/bob/wiki-en-dataset.git
 git clone https://models.example.com/alice/demo-space.git
 ```
 
-`.git` 접미사는 선택입니다 — 서버는 둘 다 받아서 동일한 bare repo 로
-라우팅합니다 (`git_smart.service._parse_path` 에서 정규화).
+The `.git` suffix is optional — the server normalizes both forms to the
+same bare repo (in `git_smart.service._parse_path`).
 
-## 인증: Basic Auth = username + PAT
+## Authentication: Basic Auth = username + PAT
 
-서버는 HTTP Basic 인증을 받습니다. **비밀번호 칸에는 개인 액세스 토큰
-(PAT) 을 넣어야 합니다** — 일반 로그인 비밀번호는 git endpoint 에서 받지
-않습니다.
+The server accepts HTTP Basic auth. **The password slot must contain a
+Personal Access Token (PAT)** — regular login passwords are not accepted
+on git endpoints.
 
 ```bash
-# 한 번만 자격 증명을 저장
+# Cache credentials once
 git config --global credential.helper store
 git clone https://alice:<PAT>@models.example.com/alice/ll-7b.git
-# 또는 매번 프롬프트
+# Or be prompted every time
 git clone https://models.example.com/alice/ll-7b.git
 # Username: alice
 # Password: <PAT>
 ```
 
-PAT 발급 절차:
+PAT issuance:
 
-1. 웹 UI 로그인 → 사용자 메뉴 → **Tokens**
-2. **Create token** → 이름 / scopes (`read`, `write`) / 만료일 입력
-3. 응답에 평문이 한 번만 표시됨 — 즉시 저장
-4. 또는 API: `POST /api/auth/tokens` (`name`, `scopes`, `ttl_days`)
+1. Log into the web UI → user menu → **Tokens**
+2. Click **Create token** → enter the name, scopes (`read`, `write`),
+   and expiration
+3. The response shows the plaintext once — save it immediately
+4. Or via API: `POST /api/auth/tokens` (`name`, `scopes`, `ttl_days`)
 
-생성된 토큰은 PASETO v4 local 형식이며 90일 (기본) 후에 만료됩니다. 자세한
-내용은 [security.md](security.md#personal-access-token-pat) 참고.
+The generated token is PASETO v4 local and expires 90 days after issuance
+by default. See [security.md](security.md#personal-access-token-pat) for
+the full picture.
 
-## 저장소 종류 (`kind`)
+## Repository kind
 
-`Repo.kind` 는 셋 중 하나입니다 (SQL `model` / `dataset` / `space`).
+`Repo.kind` is one of three values (SQL `model` / `dataset` / `space`).
 
-| 종류 | 용도 | REST 엔드포인트 |
+| Kind | Purpose | REST endpoint |
 | --- | --- | --- |
-| `model` | 모델 가중치 + 모델 카드 | `POST/GET/PATCH/DELETE /api/repos` |
-| `dataset` | 데이터셋 파일 + README | `POST/GET/PATCH/DELETE /api/repos` |
-| `space` | Spaces 메타데이터 (v1, 정적 페이지) | `POST/GET/PATCH/DELETE /api/spaces` |
+| `model` | model weights + model card | `POST/GET/PATCH/DELETE /api/repos` |
+| `dataset` | dataset files + README | `POST/GET/PATCH/DELETE /api/repos` |
+| `space` | Spaces metadata (v1, static page) | `POST/GET/PATCH/DELETE /api/spaces` |
 
-같은 owner 가 같은 이름으로 `model` 과 `dataset` 을 동시에 가질 수 있습니다
-(UNIQUE 제약이 `(owner_id, kind, name)` 이라 kind 가 다르면 충돌하지 않음).
+The same owner can have a `model` and a `dataset` with the same name —
+the UNIQUE constraint is `(owner_id, kind, name)`, so different `kind`
+values don't collide.
 
-생성 예시:
+Create examples:
 
 ```bash
-# 모델
+# Model
 curl -X POST -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"name":"ll-7b","kind":"model","visibility":"private","description":"... "}' \
   https://models.example.com/api/repos
 
-# 데이터셋
+# Dataset
 curl -X POST ... -d '{"name":"wiki-en","kind":"dataset", ...}' \
   https://models.example.com/api/repos
 
@@ -81,25 +84,26 @@ curl -X POST ... -d '{"name":"demo","sdk":"gradio", ...}' \
   https://models.example.com/api/spaces
 ```
 
-`kind` 는 생성 후 변경할 수 없습니다 (`PATCH` 에는 visibility / description
-만 노출). Spaces 의 `sdk` 도 v1 에서는 변경 불가 (실제 런타임이 무엇인지에
-대한 약속이므로).
+`kind` cannot be changed after creation (`PATCH` only exposes
+`visibility` / `description`). A Space's `sdk` is also immutable in v1 —
+it is the contract about what runtime the repo expects.
 
-## 가시성 (`visibility`)
+## Visibility
 
-- `private` — owner 와 admin 만 읽기 / 쓰기 가능
-- `public` — 익명 포함 누구나 `git clone` 가능
+- `private` — only the owner and admins can read / write
+- `public` — anyone (including anonymous) can `git clone`
 
-익명 클라이언트는 다음만 가능합니다.
+Anonymous clients can only:
 
-- `public` 저장소의 `git clone` / `git pull` / `git fetch` (PULL 만)
-- REST 의 `GET /api/repos`, `GET /{owner}/{name}` 페이지 (404 leak 방지)
+- `git clone` / `git pull` / `git fetch` public repos (PULL only)
+- `GET /api/repos`, `GET /{owner}/{name}` pages (no 404 leakage)
 
-private 저장소를 익명으로 `clone` 하면 WWW-Authenticate 챌린지가 나옵니다.
-올바른 PAT 를 입력해도 owner 가 아니면 `403 Forbidden`. 자세한 매트릭스는
-[security.md](security.md) 와 [architecture.md](architecture.md) 참고.
+Anonymous `clone` against a private repo triggers a WWW-Authenticate
+challenge; even with a valid PAT, non-owners get `403 Forbidden`. See the
+visibility matrix in [security.md](security.md) and
+[architecture.md](architecture.md).
 
-## 첫 push
+## First push
 
 ```bash
 cd my-model
@@ -110,28 +114,31 @@ git commit -m "initial"
 git push -u origin main
 ```
 
-`git push` 가 서버에서 거치는 단계:
+Steps the server runs on `git push`:
 
-1. URL → `(owner, name)` → DB 의 `Repo` 행 조회 (없으면 `404`)
-2. `Authorization: Basic ...` → username / PAT 매칭 → `User` 획득
-3. `authorize(user, repo, owner, PUSH)` — owner 본인이거나 admin 이어야 통과
-4. `check_push_allowed(session, owner, Content-Length)` — 쿼터 초과 시 `413`
-5. WSGI↔ASGI 어댑터 → dulwich 가 pack 처리 → 응답
-6. 성공 (2xx) 시:
-   - `REPO_LOCKS.acquire(owner, name)` 로 per-repo 직렬화
-   - 새로 advance 한 `refs/heads/*` 각각에 대해 `Revision` 행 삽입
-   - `Repo.size_bytes` 갱신
-   - `UserUsage.used_bytes` += delta (음수면 0 클램프)
-   - `AuditLog(action="repo.push", detail=...)` 기록
+1. URL → `(owner, name)` → look up the `Repo` row (404 if missing)
+2. `Authorization: Basic ...` → match username / PAT → resolve the `User`
+3. `authorize(user, repo, owner, PUSH)` — must be the owner or an admin
+4. `check_push_allowed(session, owner, Content-Length)` — quota overflow
+   → 413
+5. WSGI↔ASGI adapter → dulwich handles the pack → response
+6. On success (2xx):
+   - Acquire `REPO_LOCKS.acquire(owner, name)` for per-repo serialization
+   - Insert a `Revision` row for each newly advanced `refs/heads/*`
+   - Refresh `Repo.size_bytes`
+   - Increment `UserUsage.used_bytes` by the delta (clamped to zero)
+   - Record `AuditLog(action="repo.push", detail=...)`
 
-LFS 요청은 위 일반 푸시 파이프라인으로 들어오지 않고 별도 디스패치
-([`git_smart/lfs.py`](../src/outo_models/git_smart/lfs.py)) 가 처리합니다 — 자세한
-흐름은 [LFS 사용법](#lfs-사용법-v2) 참고.
+LFS requests don't go through the regular push pipeline — they go through
+a separate dispatcher
+([`git_smart/lfs.py`](../src/outo_models/git_smart/lfs.py)). See
+[LFS usage](#lfs-usage-v2) below.
 
-## 쿼터 413
+## Quota 413
 
-`check_push_allowed` 가 `used + incoming > max_bytes` 를 감지하면 즉시 413을
-반환합니다. 응답 본문은 평문 한국어 메시지 (`QuotaExceededError`) 입니다.
+`check_push_allowed` returns 413 immediately when
+`used + incoming > max_bytes`. The response body is a plain-text English
+message (`QuotaExceededError`).
 
 ```
 HTTP/1.1 413 Request Entity Too Large
@@ -140,58 +147,62 @@ Content-Type: text/plain; charset=utf-8
 quota exceeded: used=12582912000 + incoming=2147483648 > max=10737418240
 ```
 
-해결 방법:
+Resolutions:
 
-- 사용하지 않는 저장소를 삭제 (`DELETE /api/repos/<owner>/<name>` 또는 UI)
-- 운영자에게 쿼터 상향 요청 (`outo-models admin quota set <name> 50GiB`)
-- `quota_reconcile_job` 이 매시간 정확성을 다시 측정하므로, 디스크 회수
-  후 다음 틱을 기다릴 필요는 없음 (push 가 다시 한 번 `add_usage` 로 보정)
+- Delete unused repos (`DELETE /api/repos/<owner>/<name>` or via the UI)
+- Ask the operator for a quota bump
+  (`outo-models admin quota set <name> 50GiB`)
+- The hourly `quota_reconcile_job` re-measures disk usage, so you don't
+  need to wait for the next tick after deleting files — the next push
+  re-runs `add_usage` and corrects the drift
 
-## LFS 사용법 (v2)
+## LFS usage (v2)
 
-v2 부터 `git lfs` 가 동작합니다 — 클라이언트는 변경 없이 `git lfs install`,
-`git lfs track "*.bin"`, `git lfs push` 하면 됩니다. 백엔드는
-`OUTO_LFS_BACKEND` 로 선택합니다 (`local` 기본, `s3`).
+From v2, `git lfs` is fully supported — the client workflow is unchanged
+(`git lfs install`, `git lfs track "*.bin"`, `git lfs push`). The backend
+is chosen via `OUTO_LFS_BACKEND` (`local` default, `s3`).
 
-### 동작 개요
+### Behavior summary
 
-| 엔드포인트 | 메서드 | 처리 | 비고 |
+| Endpoint | Method | Handler | Notes |
 | --- | --- | --- | --- |
-| `/{owner}/{name}.git/info/lfs/objects/batch` | `POST` | `git_smart/lfs.py` `_handle_batch` | 업로드/다운로드 action URLs 반환. 인증 + 쿼터 + 사이즈 cap 검사 |
-| `/{owner}/{name}.git/info/lfs/objects/{oid}` | `PUT` | `_handle_put` | `local` 백엔드만. 스트리밍 업로드, sha256 검증, `add_usage` |
-| `/{owner}/{name}.git/info/lfs/objects/{oid}` | `GET` | `_handle_get` | `local` 백엔드만. 64 KiB 청크 스트리밍 |
-| `/{owner}/{name}.git/info/lfs/locks*` | `*` | `lfs_not_supported` | **501** — 잠금은 v3 |
+| `/{owner}/{name}.git/info/lfs/objects/batch` | `POST` | `git_smart/lfs.py` `_handle_batch` | returns upload/download action URLs; auth + quota + size-cap checks |
+| `/{owner}/{name}.git/info/lfs/objects/{oid}` | `PUT` | `_handle_put` | `local` backend only; streaming upload, sha256 verify, `add_usage` |
+| `/{owner}/{name}.git/info/lfs/objects/{oid}` | `GET` | `_handle_get` | `local` backend only; 64 KiB chunked streaming |
+| `/{owner}/{name}.git/info/lfs/locks*` | `*` | `lfs_not_supported` | **501** — locks land in v3 |
 
-`local` 백엔드일 때 PUT/GET 은 **same-origin** 으로 처리되므로 `git-lfs` 가 원래
-클론/푸시에 쓰던 Basic 자격 증명을 그대로 재사용합니다 (별도 헤더 없이도 동작).
-`s3` 백엔드일 때는 batch 응답의 `actions.upload` / `actions.download` 가
-**presigned URL** 이라 클라이언트가 그 URL 로 직접 S3 호환 엔드포인트에 요청합니다
-— 이 경우 서버의 PUT/GET 핸들러는 호출되지 않고 (호출되더라도 `501` 로 거절)
-S3 가 트래픽을 받습니다.
+For the `local` backend, PUT/GET are handled **same-origin**, so `git-lfs`
+reuses the Basic credentials from the original clone/push with no extra
+headers. For the `s3` backend, the `actions.upload` / `actions.download`
+in the batch response are **presigned URLs**, so the client talks
+directly to the S3-compatible endpoint — the server's PUT/GET handlers
+are not invoked (and return `501` if they are), and S3 carries the
+traffic.
 
-### 클라이언트 사용
+### Client usage
 
 ```bash
-# 1) 한 번만 LFS 설치 + 추적 패턴 등록
+# 1) One-time LFS install + track patterns
 git lfs install
 git lfs track "*.safetensors"
 git lfs track "*.bin"
 git add .gitattributes
 
-# 2) 평소처럼 push — git-lfs 가 자동으로 batch API 를 호출합니다
+# 2) Push as usual — git-lfs automatically calls the batch API
 git push -u origin main
-# 3) 다른 머신에서 pull 할 때도 평소처럼
+# 3) Pull on another machine, also as usual
 git clone https://models.example.com/alice/ll-7b.git
 git lfs pull
 ```
 
-Basic 인증은 일반 clone/push 와 동일합니다 — username + PAT. 자세한 자격 증명
-방법은 [인증: Basic Auth = username + PAT](#인증-basic-auth--username--pat) 참고.
+Basic auth is identical to normal clone/push — username + PAT. See
+[Authentication: Basic Auth = username + PAT](#authentication-basic-auth--username--pat)
+for details.
 
-### 오류 코드
+### Error codes
 
-`/info/lfs/objects/batch` 는 거의 모든 오류를 **per-object** 로 표현합니다 — 한 객체가
-실패해도 batch 전체가 실패하지 않습니다. 응답 예시는 다음과 같습니다.
+`/info/lfs/objects/batch` expresses almost every error as **per-object**:
+one object's failure does not fail the whole batch. Example response:
 
 ```json
 {
@@ -207,21 +218,21 @@ Basic 인증은 일반 clone/push 와 동일합니다 — username + PAT. 자세
 }
 ```
 
-batch 엔드포인트 자체가 반환할 수 있는 상태 코드:
+Status codes the batch endpoint itself may return:
 
-| 코드 | 의미 | 트리거 |
+| Code | Meaning | Trigger |
 | --- | --- | --- |
-| `200` | 정상 — 클라이언트가 entries 를 순회하며 개별 결과를 확인 |
-| `406 Not Acceptable` | `Accept` 헤더에 `application/vnd.git-lfs+json` 가 없음 |
-| `415 Unsupported Media Type` | `Content-Type` 이 LFS 가 아님 |
-| `413 Payload Too Large` | batch 본문이 1 MiB cap 초과, 또는 PUT 의 `Content-Length` 가 `OUTO_LFS_MAX_OBJECT_BYTES` 초과 |
-| `422 Unprocessable Entity` | batch JSON 파싱 실패, oid 64자/16진 검증 실패, operation/`transfers` 값 이상 |
-| `401 Unauthorized` | Basic 자격 증명 누락/무효 |
-| `403 Forbidden` | 인증은 됐지만 권한 없음 (private 저장소 + non-owner) |
-| `404 Not Found` | 저장소 없음, 또는 `GET /objects/{oid}` 의 객체 없음 |
-| `500 Internal Server Error` | 설정 오류 (예: `OUTO_LFS_BACKEND=s3` 인데 OUTO_S3_ENDPOINT 가 비어 있음) |
+| `200` | OK — the client iterates the entries and inspects each result |
+| `406 Not Acceptable` | `Accept` header missing `application/vnd.git-lfs+json` |
+| `415 Unsupported Media Type` | `Content-Type` is not LFS |
+| `413 Payload Too Large` | batch body exceeds the 1 MiB cap, or PUT's `Content-Length` exceeds `OUTO_LFS_MAX_OBJECT_BYTES` |
+| `422 Unprocessable Entity` | batch JSON parse failure, oid not 64-char hex, bad operation/`transfers` |
+| `401 Unauthorized` | Basic credentials missing / invalid |
+| `403 Forbidden` | authenticated but not authorized (private repo + non-owner) |
+| `404 Not Found` | repo missing, or `GET /objects/{oid}` with a missing object |
+| `500 Internal Server Error` | configuration error (e.g. `OUTO_LFS_BACKEND=s3` with `OUTO_S3_ENDPOINT` empty) |
 
-locks 엔드포인트 (`/info/lfs/locks/*`) 는 v3 까지 항상:
+The locks endpoints (`/info/lfs/locks/*`) always respond with:
 
 ```
 HTTP/1.1 501 Not Implemented
@@ -231,47 +242,50 @@ Cache-Control: no-store
 {"error": "Git LFS locks are not supported yet", "docs": "/docs/git-lfs"}
 ```
 
-### 백엔드 설정 (`OUTO_LFS_BACKEND`)
+### Backend configuration (`OUTO_LFS_BACKEND`)
 
-기본은 `local` 입니다. `local` 은 `OUTO_DATA_DIR` 의 `lfs/<aa>/<bb>/<oid>` 로
-샤딩 저장합니다 — 별도 설정이 필요 없습니다. **MinIO 같은 S3 호환 스토리지를
-쓰려면** [`architecture.md`](architecture.md#lfs-request-flow) 의 S3 백엔드
-설명을 참고해 다음을 채워 주세요.
+Default is `local`. `local` shards objects to
+`OUTO_DATA_DIR/lfs/<aa>/<bb>/<oid>` — no extra setup. To use an
+S3-compatible store (such as MinIO), fill in the following per the S3
+backend description in [`architecture.md`](architecture.md#lfs-request-flow):
 
 ```yaml
-# /etc/outo-models/config.yaml (해당 키만 발췌)
+# /etc/outo-models/config.yaml (excerpt of the relevant keys)
 lfs_backend: s3
 s3_endpoint: http://minio.local:9000
 s3_bucket: outo-lfs
 s3_region: us-east-1
-# OUTO_S3_ACCESS_KEY / OUTO_S3_SECRET_KEY 는 YAML 이 아니라 환경 변수로 주입
+# Inject OUTO_S3_ACCESS_KEY / OUTO_S3_SECRET_KEY via env vars, not YAML
 s3_prefix: lfs
 s3_presign_ttl_seconds: 3600
 ```
 
-전환 절차:
+Migration steps:
 
-1. MinIO 에 `outo-lfs` 버킷을 생성하고 access key / secret key 를 발급
-2. 컨테이너의 `outo-models` 볼륨이 아니라 별도 호스트의 MinIO 데몬이 `s3_endpoint`
-   로 도달 가능해야 함 — 네트워크 구성은 호스트 측 책임
-3. `config.yaml` 의 `lfs_backend` 를 `s3` 로 바꾸고 `restart`
-4. 기존 local LFS 객체가 있다면 `mc cp --recursive` 로 MinIO 로 옮긴 뒤 oid 경로
-   그대로 `<s3_prefix>/<aa>/<bb>/<oid>` 에 두면 호환됩니다
+1. Create the `outo-lfs` bucket in MinIO and mint an access key / secret
+   key
+2. The MinIO daemon on a separate host must be reachable as `s3_endpoint`
+   from the `outo-models` container's network — the network setup is the
+   host's responsibility
+3. Set `lfs_backend: s3` in `config.yaml` and restart
+4. If you have existing local LFS objects, copy them to MinIO with
+   `mc cp --recursive` and keep the same oid layout at
+   `<s3_prefix>/<aa>/<bb>/<oid>` to stay compatible
 
-자세한 MinIO 세팅 절차는 [MinIO 공식 문서](https://min.io/docs/minio/linux/index.html) 와
-[security.md §LFS auth model](security.md#lfs-auth-model) 참고.
+See the [MinIO documentation](https://min.io/docs/minio/linux/index.html)
+and [security.md §LFS auth model](security.md#lfs-auth-model) for more.
 
-## 동시성
+## Concurrency
 
-- per-repo `asyncio.Lock` (`RepoLockRegistry.REPO_LOCKS`) 으로 같은 저장소의
-  동시 push 가 직렬화됨 — dulwich 의 on-disk 상태와 DB `Revision` /
-  `UserUsage` 사이의 일관성이 깨지지 않음
-- 다른 저장소의 push 는 병렬로 진행
-- `quota_reconcile_job` 이 매시간 모든 사용자에 대해 `disk_usage` 를 다시
-  측정해 `UserUsage` 의 드리프트 보정
+- Per-repo `asyncio.Lock` (`RepoLockRegistry.REPO_LOCKS`) serializes
+  concurrent pushes against the same repo — dulwich's on-disk state and
+  the DB's `Revision` / `UserUsage` stay consistent
+- Pushes against different repos proceed in parallel
+- The hourly `quota_reconcile_job` re-measures `disk_usage` for every user
+  and corrects any `UserUsage` drift
 
-## 다음 단계
+## Next steps
 
-- [spaces.md](spaces.md) — Space 저장소 생성
-- [admin.md](admin.md) — 쿼터 / 차단 운영
-- [security.md](security.md) — 인증 메커니즘 상세
+- [spaces.md](spaces.md) — creating a Space repo
+- [admin.md](admin.md) — quota / ban operations
+- [security.md](security.md) — authentication mechanisms in detail

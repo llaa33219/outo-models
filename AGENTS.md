@@ -1,156 +1,204 @@
-# AGENTS.md — outo-models 개발 지침
+# AGENTS.md — outo-models development guidelines
 
-이 파일은 이 저장소에서 작업하는 모든 개발자(사람 또는 AI 에이전트)가 **반드시** 따라야 하는
-규칙을 정의합니다.
+This file defines the rules that **every** developer (human or AI agent)
+working in this repository **must** follow.
 
-## 1. 프로젝트 특징
+## 1. Project characteristics
 
-- **outo-models**는 완전 오픈소스, 자체 호스팅 가능한 모델 허브 서버입니다.
-  Hugging Face / ModelScope와 유사한 기능을 목표로 하며, v2 범위는 **모델 공유 · 데이터셋 공유 ·
-  Spaces · Git LFS** 네 가지입니다.
-- Python 3.12 + FastAPI + SQLAlchemy(async) + dulwich(git smart-HTTP) + Caddy(자동 HTTPS/ACME)
-  로 구성되며, **Podman 단일 이미지**로 배포합니다.
-- 저장소는 모두 git으로 클론/푸시할 수 있습니다(`git clone https://<도메인>/<소유자>/<이름>.git`).
-- 서버 운영자는 `outo-models` CLI 하나로 서버를 관리합니다:
-  - `setup` — 최초 대화형 설정 (도메인, DNS 제공자, 관리자 계정, 포트)
+- **outo-models** is a fully open-source, self-hostable model hub server. It
+  targets Hugging Face / ModelScope parity, and the v2 scope is **model
+  sharing · dataset sharing · Spaces · Git LFS** — four features in total.
+- Built on Python 3.12 + FastAPI + SQLAlchemy (async) + dulwich (git
+  smart-HTTP) + Caddy (automated HTTPS/ACME). Shipped as a **single Podman
+  image**.
+- Every repository is git-cloneable and git-pushable
+  (`git clone https://<domain>/<owner>/<name>.git`).
+- Server operators manage everything through the `outo-models` CLI:
+  - `setup` — first-time interactive setup (domain, DNS provider, admin
+    account, ports)
   - `start` / `stop` / `restart` / `status`
-  - `reset` — 모든 데이터를 삭제하고 최초 설치 상태로 되돌림. **경고 후 "yes"를 정확히 3번
-    입력해야만 실행됩니다.** 이 안전장치는 어떤 이유로도 약화시키지 마세요.
-  - `update` — 이미지 갱신 + DB 마이그레이션 + 재시작을 자동 수행
-  - `admin ...` — 가입 승인/거절, 사용자 차단/해제, 저장공간 할당량, GPU 할당 등
-- "자동"이 이 프로젝트의 핵심 가치입니다. 설치 후 사용자가 수동으로 해야 하는 일이 새로
-  생기는 변경은 설계 결함으로 간주합니다.
+  - `reset` — wipe all data and return to a freshly-installed state. The
+    operator **must type "yes" exactly three times after the warning**. Do
+    not weaken this safety guard for any reason.
+  - `update` — pull the new image, run DB migrations, and restart
+    automatically.
+  - `admin ...` — approve/reject signup, ban/unban users, set storage
+    quotas, assign GPUs, etc.
+- "Automatic" is the project's core value. Any change that introduces a new
+  manual step after install is treated as a design defect.
 
-## 2. 개발 주의점
+## 2. Development notes
 
-1. **보안 타협 금지.** 비밀번호는 argon2, API 토큰은 PASETO v4, 토큰 원문은 절대 저장하지
-   않습니다(해시된 지문만 저장). `as any`/`type: ignore` 남발, 빈 `except`, 평문 시크릿 로깅은
-   모두 금지입니다.
-2. **reset 안전장치 불변.** 3회 "yes" 확인 로직과 dry-run 기본 동작을 변경하는 PR은 거부됩니다.
-3. **컨테이너는 비특권(non-root)으로 실행됩니다.** 방화벽 개방 등 호스트 권한이 필요한 작업은
-   컨테이너 남쪽이 아니라 **호스트 측 스크립트**(`container/scripts/`)가 CLI를 통해 수행합니다.
-4. **SQLite가 기본 DB**이지만 SQLAlchemy를 통해 Postgres 전환이 가능해야 합니다. DB 특화 SQL을
-   직접 쓰지 마세요.
-5. **동시 푸시**: 저장소 쓰기는 per-repo `asyncio.Lock`으로 직렬화하고, 사용자 사용량은
-   주기적 reconcile job으로 보정합니다.
-6. **LFS는 v2에서 실구현입니다.** `git lfs` 요청은 [`src/outo_models/git_smart/lfs.py`](src/outo_models/git_smart/lfs.py)
-   + [`lfs_api.py`](src/outo_models/git_smart/lfs_api.py) 의 4개 엔드포인트(`/info/lfs/objects/batch`,
-   `PUT/GET /info/lfs/objects/{oid}`)로 처리됩니다. 모든 LFS 객체는
-   [`src/outo_models/objectstore/`](src/outo_models/objectstore) 의 `ObjectStore` 프로토콜을 통해
-   저장되며, `OUTO_LFS_BACKEND` (`local` 기본 / `s3`) 가 구현체를 결정합니다.
-   - `local` 백엔드는 `data_dir/lfs/<aa>/<bb>/<oid>` 에 샤딩 저장하고, sha256 + 사이즈 검증 후
-     `os.replace` 로 원자적 교체. PUT/GET 은 컨테이너 안에서 직접 스트리밍 (Basic 인증 재사용).
-   - `s3` 백엔드는 자체 구현 SigV4 (path-style, MinIO 호환) 로 presigned URL 을 만들어
-     클라이언트가 직접 업로드/다운로드합니다. PUT/GET 핸들러는 S3 백엔드 사용 시 `501` 을
-     반환 (proxy 업로드는 v3).
-   - `OutoError("LFS locks are not supported yet")` 만 501 유지. `/info/lfs/locks*` 는 v3.
-   - `lfs_max_object_bytes` 와 사용자 쿼터가 batch 응답의 **per-object error** 로 표현되며,
-     한 객체의 실패가 전체 batch 를 실패시키지 않습니다.
-7. **Spaces v2 런타임**은 [`src/outo_models/spaces/runtime.py`](src/outo_models/spaces/runtime.py),
-   [`runtime_manager.py`](src/outo_models/spaces/runtime_manager.py),
-   [`build.py`](src/outo_models/spaces/build.py) 의 Podman REST 클라이언트를 통해 동작합니다.
-   - 기본은 **비활성** (`OUTO_SPACES_RUNTIME_ENABLED=false`). 활성화는 운영자가 명시적으로
-     해야 하며, 그 순간부터 컨테이너 안에서 Podman API 소켓
-     (`OUTO_PODMAN_SOCKET`, 기본 `/run/podman/podman.sock`) 이 도달 가능해야 합니다.
-   - 컨테이너는 **비특권** (uid 1000) 으로 실행되므로 Podman 소켓을 호스트에서 마운트
-     (`-v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro` 등) 해 주세요.
-     rootless Podman 의 user socket 이 표준 위치입니다.
-   - 호스트 포트는 `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` 범위에서 `list_managed()` 로
-     점유 검사 후 순차 할당. 컨테이너 안 포트 `8000/tcp` 만 호스트로 노출하고, IP 는
-     `127.0.0.1` 로 바인딩 (외부 노출 금지).
-   - 컨테이너 식별자는 `outo-space-<owner>-<name>`, 이미지는
-     `localhost/outo-space-<owner>-<name>:latest`, 레이블은 `outo.managed=true` +
-     `outo.space=<owner>/<name>`. 라이프사이클은 `podman rm -f` 와 직접 호환되지 않는
-     Podman REST 경로로만 (`v1/.../containers/{name}{create,start,stop,restart,remove,json}`).
-   - `static` SDK 는 컨테이너를 띄우지 않고 dulwich 트리를
-     `<spaces_dir>/<owner>/<name>/site/` 에 풀어 `FileResponse` 로 서빙합니다
-     (`make_build_context` 와 `export_static_site` 가 같은 `_iter_tree_blobs` 를 공유).
-   - `docker` SDK 는 저장소 루트에 `Dockerfile` 또는 `Containerfile` 이 **없으면
-     `ValidationFailedError`** 로 거절 (`build_image` 호출 전 검증).
-   - `gradio` / `streamlit` SDK 는 컨테이너 내부에서 사용자가 베이스 이미지를 정의한다는
-     약속만 잡고, 코드 측에는 `Dockerfile`/`Containerfile` 강제와 동일하게 동작합니다.
-   - GPU 는 `web_settings(key="gpu:<username>")` 의 JSON 배열을 읽어
-     `nvidia.com/gpu=<id>` CDI 디바이스로 컨테이너에 부착합니다. CDI 가 없는 환경에서는
-     Podman 이 디바이스를 거부하므로, 운영자가 호스트에 nvidia-container-toolkit + CDI
-     사양을 설치해야 합니다.
-   - 프록시 라우트 `/spaces/<owner>/<name>/run/{path}` 는 컨테이너가 running 일 때만
-     `http://127.0.0.1:<host_port>/<path>` 로 reverse-proxy 합니다. hop-by-hop 헤더와
-     `Content-Length` 를 제거하고, 실패 시 `503 space_not_running` / `504 proxy_unreachable`
-     으로 응답합니다.
-8. 모든 공개 인터페이스(CLI 플래그, REST 엔드포인트, 환경 변수)는 하위 호환성을 유지합니다.
-   깨야 한다면 `docs/changelog.md`에 마이그레이션 가이드를 함께 작성하세요.
+1. **No security compromises.** Passwords use argon2; API tokens use PASETO
+   v4; raw tokens are never stored (only hashed fingerprints are kept).
+   Spray-painting `as any` / `type: ignore`, empty `except` blocks, and
+   logging secrets in plaintext are all forbidden.
+2. **The `reset` safety guard is immutable.** Any PR that changes the
+   three-"yes" confirmation logic or the dry-run-by-default behavior will be
+   rejected.
+3. **The container runs non-root.** Anything requiring host privileges — such
+   as opening firewall ports — must be done by **host-side scripts**
+   (`container/scripts/`) invoked through the CLI, not from inside the
+   container.
+4. **SQLite is the default DB**, but the codebase must stay compatible with
+   Postgres through SQLAlchemy. Do not write DB-specific SQL.
+5. **Concurrent pushes**: repository writes are serialized with a per-repo
+   `asyncio.Lock`, and per-user usage is corrected by a periodic reconcile
+   job.
+6. **LFS is a real implementation in v2.** `git lfs` requests are handled by
+   [`src/outo_models/git_smart/lfs.py`](src/outo_models/git_smart/lfs.py)
+   plus [`lfs_api.py`](src/outo_models/git_smart/lfs_api.py), exposing four
+   endpoints (`/info/lfs/objects/batch`, `PUT/GET /info/lfs/objects/{oid}`).
+   All LFS objects are stored through the `ObjectStore` protocol in
+   [`src/outo_models/objectstore/`](src/outo_models/objectstore); the
+   implementation is selected by `OUTO_LFS_BACKEND` (`local` default /
+   `s3`).
+   - The `local` backend shards objects to `data_dir/lfs/<aa>/<bb>/<oid>`,
+     verifies sha256 + size, and atomically replaces via `os.replace`. PUT
+     and GET stream directly inside the container (reusing Basic auth).
+   - The `s3` backend builds presigned URLs using an in-house SigV4
+     implementation (path-style, MinIO compatible) so the client uploads
+     and downloads directly. The PUT/GET handlers return `501` when the S3
+     backend is in use (proxied uploads are a v3 feature).
+   - `OutoError("LFS locks are not supported yet")` remains a `501`. The
+     `/info/lfs/locks*` endpoints land in v3.
+   - `lfs_max_object_bytes` and the user's quota surface as **per-object
+     errors** in the batch response; one object's failure does not fail the
+     whole batch.
+7. **The Spaces v2 runtime** lives in
+   [`src/outo_models/spaces/runtime.py`](src/outo_models/spaces/runtime.py),
+   [`runtime_manager.py`](src/outo_models/spaces/runtime_manager.py), and
+   [`build.py`](src/outo_models/spaces/build.py), and runs over a Podman
+   REST client.
+   - It is **disabled by default** (`OUTO_SPACES_RUNTIME_ENABLED=false`).
+     Operators must opt in explicitly. Once enabled, the container must be
+     able to reach the Podman API socket (`OUTO_PODMAN_SOCKET`, default
+     `/run/podman/podman.sock`).
+   - The container runs **non-root** (uid 1000), so mount the Podman socket
+     from the host (e.g.
+     `-v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro`).
+     That's the standard location of a rootless Podman user socket.
+   - Host ports are allocated sequentially from
+     `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` after an occupancy check
+     via `list_managed()`. Only the in-container port `8000/tcp` is exposed
+     to the host, and the bind IP is `127.0.0.1` (no external exposure).
+   - Container identifier: `outo-space-<owner>-<name>`. Image:
+     `localhost/outo-space-<owner>-<name>:latest`. Labels:
+     `outo.managed=true` + `outo.space=<owner>/<name>`. Lifecycle is driven
+     through Podman REST endpoints only (`v1/.../containers/{name}{create,
+     start, stop, restart, remove, json}`), not `podman rm -f`.
+   - The `static` SDK does not start a container; it unpacks the dulwich
+     tree into `<spaces_dir>/<owner>/<name>/site/` and serves it through
+     `FileResponse` (`make_build_context` and `export_static_site` share
+     the same `_iter_tree_blobs`).
+   - The `docker` SDK rejects the space with `ValidationFailedError` if the
+     repo root is missing a `Dockerfile` or `Containerfile` (the check runs
+     before `build_image`).
+   - The `gradio` / `streamlit` SDKs only define the contract that the user
+     supplies the base image inside the container; the code side mirrors
+     the `Dockerfile` / `Containerfile` enforcement.
+   - GPUs are read from `web_settings(key="gpu:<username>")` as a JSON
+     array and attached to the container as `nvidia.com/gpu=<id>` CDI
+     devices. On hosts without CDI, Podman rejects the device, so operators
+     must install `nvidia-container-toolkit` plus the CDI specification on
+     the host.
+   - The proxy route `/spaces/<owner>/<name>/run/{path}` reverse-proxies to
+     `http://127.0.0.1:<host_port>/<path>` only when the container is
+     `running`. Hop-by-hop headers and `Content-Length` are stripped;
+     failures respond with `503 space_not_running` / `504
+     proxy_unreachable`.
+8. Every public interface (CLI flag, REST endpoint, environment variable)
+   must remain backwards-compatible. If a break is unavoidable, ship a
+   migration guide in `docs/changelog.md`.
 
-## 3. 문서 업데이트 지침 (중요)
+## 3. Documentation update guidelines (important)
 
-- **코드를 수정하면 같은 커밋/작업 단위에서 문서도 함께 수정합니다.** CLI 플래그 추가, 엔드포인트
-  변경, 설정 항목 추가 등은 `docs/cli.md`, `docs/admin.md`, 해당 도메인 문서에 즉시 반영합니다.
-- **문서와 코드가 불일치하면 문서가 틀린 것입니다.** 코드를 문서에 맞춰 되돌리지 말고 문서를
-  코드에 맞게 수정하세요. 단, 코드가 의도와 다르게 동작하는 버그라면 코드를 고치고 문서는
-  유지합니다 — 판단이 애매하면 이슈/논의를 남깁니다.
-- 문서는 한국어로 작성하되, 코드 식별자·명령어·플래그는 원문(영문)을 유지합니다.
-- `scripts/check-docs.sh` 는 CLI 명령, REST 라우터 심볼, `OUTO_*` 환경 변수가 문서에
-  존재하는지 검사합니다. 이 검사를 우회하지 마세요. CI 의 `Docs/code parity` 단계에서도
-  강제됩니다 (`.github/workflows/ci.yml`).
+- **When you change code, update the docs in the same commit or task.**
+   Adding a CLI flag, changing an endpoint, or adding a setting requires an
+   immediate update in `docs/cli.md`, `docs/admin.md`, and the relevant
+   domain doc.
+- **If docs and code disagree, the docs are wrong.** Do not roll back code to
+   match the docs; update the docs to match the code. Exception: if the code
+   is misbehaving relative to its intent, that is a bug — fix the code and
+   leave the docs as is. When in doubt, raise an issue or discussion.
+- Documentation is written in English. Code identifiers, command names, and
+  CLI flags stay verbatim (in English) — do not translate them. Korean,
+  Japanese, Chinese, or any other non-English prose in `docs/`,
+  `README.md`, `AGENTS.md`, the example config comments, the systemd /
+  quadlet examples, or the contract checker is a defect; translate it back
+  to English.
+- `scripts/check-docs.sh` verifies that every CLI command, REST router
+  symbol, and `OUTO_*` environment variable is documented. Do not bypass
+  this check. The `Docs/code parity` step in `.github/workflows/ci.yml`
+  enforces it in CI.
 
-## 4. 개발 환경과 테스트 환경의 분리 (중요)
+## 4. Separation of development and test environments (important)
 
-- **현재 작업 환경은 개발(development) 환경입니다.** 이 머신에는 podman이 없으며, 여기서
-  이미지를 빌드/실행해 "동작 확인"했다고 주장하지 마세요.
-- 개발 환경에서의 검증은 다음까지입니다: `uv sync`, `make lint`, `make typecheck`, `make test`
-  (단위/통합 테스트는 실제 `git` 바이너리와 `httpx` 기반으로 컨테이너 없이 실행됩니다).
-- **실제 배포 테스트는 별도의 테스트 컴퓨터에서 Podman 이미지로 진행합니다.** 개발 환경에서
-  `podman build/run`이 안 된다고 코드를 바꾸지 말고, Containerfile은 정적 검토(hadolint,
-  경로/권한 점검)로 검증합니다.
-- 이미지는 두 가지 플레이버로 존재합니다:
-  - `outo-models:stable` — 프로덕션용. 비특권 실행, 디버그 도구 없음.
-  - `outo-models:dev` — 개발용. debugpy/ipython 포함, `OUTO_ENV=development`.
-  - 빌드: `make build-stable` / `make build-dev` (테스트 머신에서 실행).
-- `dev` 이미지를 프로덕션에 배포하면 안 됩니다. entrypoint가
-  `IMAGE_FLAVOR=dev` + `OUTO_ENV=production` 조합을 거부하도록 유지하세요.
+- **The current working environment is the development environment.** This
+  machine does not have podman, and you must not claim to have verified
+  behavior by building or running images here.
+- Verification in the development environment stops at: `uv sync`,
+  `make lint`, `make typecheck`, `make test` (the unit and integration
+  tests run without containers, against the real `git` binary and
+  `httpx`).
+- **Real deployment testing happens on a separate test machine, with the
+  Podman image.** If `podman build/run` does not work in the dev
+  environment, do not change the code; review the `Containerfile`
+  statically (hadolint, path/permission checks).
+- Two image flavors exist:
+  - `outo-models:stable` — production. Non-root, no debug tooling.
+  - `outo-models:dev` — development. Includes debugpy / ipython;
+    `OUTO_ENV=development`.
+  - Build with `make build-stable` / `make build-dev` (run on the test
+    machine).
+- Do not deploy the `dev` image to production. Keep the entrypoint guard
+  that rejects the `IMAGE_FLAVOR=dev` + `OUTO_ENV=production` combination.
 
-## 5. 코드베이스 지도
+## 5. Codebase map
 
 ```
 src/outo_models/
-  config.py, logging.py, exceptions.py   # 코어 인프라
-  utils/                                  # 경로, 슬러그, 시간, 해시 유틸
-  auth/                                   # argon2, 세션, PASETO PAT, 권한, 레이트리밋, 가입승인
-  db/                                     # SQLAlchemy 모델 + Alembic 마이그레이션
-  dns/                                    # DNSProvider 추상화 (cloudflare, manual)
-  firewall/                               # firewalld/ufw/nft 감지 + 호스트 스크립트 호출
-  tls/                                    # Caddyfile 렌더링 + 리로드 + 갱신 헬스체크
-  tasks/                                  # APScheduler 잡 (인증서, 쿼터 reconcile, 감사로그 정리)
-  repos/                                  # 저장소 디스크 레이아웃, 생성/삭제, 쿼터
-  spaces/                                 # Spaces 메타데이터 + v2 컨테이너 런타임
-    registry.py                            # SDK 사이드카 + CRUD
-    runtime.py                             # RuntimeState / Status 매핑
-    runtime_manager.py                     # Podman REST 클라이언트
-    build.py                               # dulwich 트리 → tar + 정적 사이트 export
-  objectstore/                             # LFS ObjectStore 프로토콜 + 백엔드
+  config.py, logging.py, exceptions.py   # core infrastructure
+  utils/                                  # paths, slugs, time, hashing helpers
+  auth/                                   # argon2, sessions, PASETO PAT, permissions, rate limit, signup approval
+  db/                                     # SQLAlchemy models + Alembic migrations
+  dns/                                    # DNSProvider abstraction (cloudflare, manual)
+  firewall/                               # firewalld / ufw / nft detection + host-script invocation
+  tls/                                    # Caddyfile rendering, reload, renewal healthcheck
+  tasks/                                  # APScheduler jobs (cert, quota reconcile, audit prune)
+  repos/                                  # repo disk layout, create / delete, quota
+  spaces/                                 # Spaces metadata + v2 container runtime
+    registry.py                            # SDK sidecar + CRUD
+    runtime.py                             # RuntimeState / Status mapping
+    runtime_manager.py                     # Podman REST client
+    build.py                               # dulwich tree → tar + static-site export
+  objectstore/                             # LFS ObjectStore protocol + backends
     base.py                                # ObjectStore + LfsAction
-    local.py                               # 디스크 백엔드 (스트리밍 PUT/GET)
-    s3.py                                  # S3 백엔드 (자체 SigV4, MinIO 호환)
-    factory.py                             # OUTO_LFS_BACKEND 디스패치
-  git_smart/                              # dulwich 기반 git smart-HTTP 서비스
-  server/                                 # FastAPI 앱, 라우터, 미들웨어, Jinja 템플릿
+    local.py                               # disk backend (streaming PUT/GET)
+    s3.py                                  # S3 backend (in-house SigV4, MinIO compatible)
+    factory.py                             # OUTO_LFS_BACKEND dispatch
+  git_smart/                              # dulwich-backed git smart-HTTP service
+  server/                                 # FastAPI app, routers, middleware, Jinja templates
   cli/                                    # `outo-models` Typer CLI
-  cli_remote/                             # CLI → 관리 REST 클라이언트
-container/                                # rootfs, Caddyfile 템플릿, 호스트 스크립트, systemd 예시
-docs/                                     # 한국어 상세 문서
+  cli_remote/                             # CLI → admin REST client
+container/                                # rootfs, Caddyfile template, host scripts, systemd examples
+docs/                                     # English reference documentation
 tests/                                    # unit / integration / fixtures
 ```
 
-## 6. 작업 절차
+## 6. Workflow
 
-1. 변경 전 관련 문서(docs/)를 먼저 읽는다.
-2. 테스트를 먼저 쓰거나(TDD) 최소한 같은 커밋에 테스트를 포함한다.
-3. `make lint typecheck test` 통과 + `.github/workflows/ci.yml` 의 `Docs/code parity`
-   단계(`bash scripts/check-docs.sh`) 통과를 확인한다.
-4. 문서 불일치가 생겼다면 **문서를** 수정한다 (§3). 새 `OUTO_*` 환경 변수나 CLI 플래그를
-   추가했다면 `scripts/check-docs.sh` 가 강제하는 문서 표기 위치도 함께 갱신한다.
-5. 사용자가 명시하기 전까지 git commit/push는 하지 않는다.
-6. **이미지 릴리즈는 `.github/workflows/release-image.yml` 의 태그 컨벤션을 따른다.**
-   `vX.Y.Z-stable` 태그 → `ghcr.io/<repo>:X.Y.Z-stable` + `:stable` + `:latest` (stable
-   만), `vX.Y.Z-dev` 태그 → `ghcr.io/<repo>:X.Y.Z-dev` + `:dev`. 컨테이너 빌드는
-   `podman build --build-arg IMAGE_FLAVOR=stable|dev ...` 만 사용한다 (AGENTS.md §4 의
-   dev/prod 조합 가드를 우회하지 말 것).
+1. Read the relevant docs (`docs/`) before making changes.
+2. Write tests first (TDD), or at least include them in the same commit.
+3. Confirm `make lint typecheck test` and the `Docs/code parity` step from
+   `.github/workflows/ci.yml` (`bash scripts/check-docs.sh`) both pass.
+4. If docs drift, fix the **docs** (§3). When you add a new `OUTO_*` env var
+   or CLI flag, update the documentation location that
+   `scripts/check-docs.sh` enforces.
+5. Do not run `git commit` / `git push` until the user explicitly asks.
+6. **Image releases follow the tag convention in
+   `.github/workflows/release-image.yml`.** A `vX.Y.Z-stable` tag maps to
+   `ghcr.io/<repo>:X.Y.Z-stable` + `:stable` + `:latest` (stable only); a
+   `vX.Y.Z-dev` tag maps to `ghcr.io/<repo>:X.Y.Z-dev` + `:dev`. Container
+   builds use `podman build --build-arg IMAGE_FLAVOR=stable|dev ...` only.
+   Do not bypass the dev/prod combination guard from AGENTS.md §4.

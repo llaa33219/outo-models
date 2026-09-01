@@ -1,181 +1,187 @@
-# 테스트
+# Testing
 
-`outo-models` 는 **개발 환경** 과 **테스트 환경** 을 의도적으로 분리합니다
-(AGENTS.md §4). 이 페이지에서는 그 분리가 왜 필요한지, 어떤 명령으로 무엇을
-검증하는지를 정리합니다.
+`outo-models` deliberately separates the **development environment** from
+the **test environment** (AGENTS.md §4). This page explains why that split
+exists and what each command verifies.
 
-## 1. 개발 환경 vs 테스트 환경
+## 1. Development environment vs test environment
 
-### 개발 환경 (현재 작업 머신)
+### Development environment (the current working machine)
 
-- podman 이 **없음** — 이미지 빌드 / 컨테이너 실행 불가
-- 통합 테스트는 **컨테이너 없이** 실행됨 — 실제 `git` 바이너리와 `httpx`
-  기반의 in-process 시뮬레이션
-- 검증 범위:
-  - `uv sync` — 의존성 잠금 일치
-  - `make lint` — ruff 린트 + 포맷
+- podman is **not installed** — image build / container run are not
+  possible
+- Integration tests run **without containers** — they exercise the real
+  `git` binary and `httpx` for an in-process simulation
+- Verification scope:
+  - `uv sync` — dependency lock matches
+  - `make lint` — ruff lint + format
   - `make typecheck` — mypy strict
-  - `make test` — 단위 + 통합 테스트 (911+)
+  - `make test` — unit + integration tests (900+)
 
-### 테스트 환경 (별도 머신)
+### Test environment (separate machine)
 
-- podman 4.x 설치
-- 실제 컨테이너 안에서 `setup` → `start` → `update` → `reset` 흐름 수행
-- `make build-stable` / `make build-dev` 로 이미지 빌드 검증
-- `hadolint` 등 정적 검증 ([Containerfile](../Containerfile) 의 정적 검토
-  코멘트 참고)
+- podman 4.x is installed
+- Run the full `setup` → `start` → `update` → `reset` flow inside a real
+  container
+- Validate the image build with `make build-stable` / `make build-dev`
+- Static checks like `hadolint` (see the static-review comments in
+  [Containerfile](../Containerfile))
 
-## 2. `make` 명령
+## 2. `make` commands
 
-[Makefile](../Makefile) 의 모든 타겟:
+Targets from [Makefile](../Makefile):
 
-| 명령 | 무엇을 하나 |
+| Command | What it does |
 | --- | --- |
-| `make sync` | `uv sync --frozen` — 의존성 잠금 재설치 |
+| `make sync` | `uv sync --frozen` — reinstall the locked dependencies |
 | `make lint` | `ruff check .` + `ruff format --check .` |
 | `make format` | `ruff format .` + `ruff check --fix .` |
-| `make typecheck` | `mypy src` (strict 모드) |
-| `make test` | `pytest` (단위 + 통합) |
+| `make typecheck` | `mypy src` (strict mode) |
+| `make test` | `pytest` (unit + integration) |
 | `make smoke` | `pytest tests/integration/test_e2e_smoke.py -v` |
 | `make build-stable` | `podman build --build-arg IMAGE_FLAVOR=stable -t outo-models:stable .` |
 | `make build-dev` | `podman build --build-arg IMAGE_FLAVOR=dev -t outo-models:dev .` |
 
-CI 에서는 최소한 `lint`, `typecheck`, `test` 를 항상 통과해야 합니다.
-`smoke` 는 통합 테스트의 일부이지만 시간이 더 걸리므로 CI 에서 분리해
-실행해도 됩니다.
+CI must always pass `lint`, `typecheck`, and `test`. `smoke` is a subset
+of the integration tests but takes longer, so it can run separately in
+CI.
 
-## 3. 테스트 디렉토리 구조
+## 3. Test directory layout
 
 ```
 tests/
-├── conftest.py                    전역 픽스처 (Settings, async engine, tmp dirs)
+├── conftest.py                    global fixtures (Settings, async engine, tmp dirs)
 ├── unit/
 │   ├── test_config.py             Settings + env vars
-│   ├── test_passwords.py          argon2id 래퍼
+│   ├── test_passwords.py          argon2id wrapper
 │   ├── test_tokens.py             PASETO v4 + fingerprint
-│   ├── test_sessions.py           itsdangerous 세션
-│   ├── test_rate_limit.py         slowapi 키 함수 + 한도
+│   ├── test_sessions.py           itsdangerous sessions
+│   ├── test_rate_limit.py         slowapi key functions + limits
 │   ├── test_hashing.py            utils.hashing
 │   ├── test_paths.py              utils.paths
 │   ├── test_slug.py               utils.slug
 │   ├── test_time.py               utils.time
-│   ├── test_logging.py            structlog 설정
+│   ├── test_logging.py            structlog setup
 │   ├── test_dns_base.py           DNSProvider ABC
-│   ├── test_dns_cloudflare.py     CloudflareProvider (respx 기반 mock)
-│   ├── test_dns_factory.py        create_provider 디스패치
+│   ├── test_dns_cloudflare.py     CloudflareProvider (respx-based mock)
+│   ├── test_dns_factory.py        create_provider dispatch
 │   ├── test_dns_manual.py         ManualProvider
 │   ├── test_firewall_detect.py    detect_firewall / is_port_open
-│   ├── test_firewall_open_ports.py  open_ports + argv 빌드
-│   ├── test_caddy_manager.py      Caddyfile 렌더링 + reload
+│   ├── test_firewall_open_ports.py  open_ports + argv building
+│   ├── test_caddy_manager.py      Caddyfile rendering + reload
 │   ├── test_tls_renewal.py        check_cert_health + renewal_job
 │   ├── test_audit_prune.py        prune_audit_logs
-│   ├── test_models_*.py           각 ORM 모델
-│   ├── test_spaces_runtime.py     RuntimeState / Status 매핑
-│   ├── test_spaces_build.py       dulwich 트리 → tar, _iter_tree_blobs
+│   ├── test_models_*.py           each ORM model
+│   ├── test_spaces_runtime.py     RuntimeState / Status mapping
+│   ├── test_spaces_build.py       dulwich tree → tar, _iter_tree_blobs
 │   ├── test_spaces_runtime_manager.py  Podman REST MockTransport
 │   ├── test_repos_*.py            create, delete, quota, reflog, storage
-│   ├── test_git_smart_auth.py     Basic auth + authorize 매트릭스
-│   ├── test_git_smart_lfs.py      LFS dispatch (locks 501 포함)
-│   ├── test_lfs_batch_api.py      batch API 파싱 + per-object 결정
-│   ├── test_lfs_transfer.py       PUT/GET 핸들러 HTTP-level 라운드트립
-│   ├── test_objectstore_local.py  LocalObjectStore (sha256 검증 + symlink 차단)
+│   ├── test_git_smart_auth.py     Basic auth + authorize matrix
+│   ├── test_git_smart_lfs.py      LFS dispatch (locks 501 included)
+│   ├── test_lfs_batch_api.py      batch API parsing + per-object decisions
+│   ├── test_lfs_transfer.py       PUT/GET handler HTTP-level round-trip
+│   ├── test_objectstore_local.py  LocalObjectStore (sha256 verify + symlink guard)
 │   ├── test_objectstore_s3.py     S3ObjectStore (presign + sign_request)
-│   ├── test_sigv4.py              AWS SigV4 벡터 (path-style, presign, header)
+│   ├── test_sigv4.py              AWS SigV4 vectors (path-style, presign, header)
 │   ├── test_permissions.py        Scope / ROLE_SCOPES
-│   └── test_container_static.py   Containerfile 의 정적 검증
+│   └── test_container_static.py   Static checks for the Containerfile
 ├── integration/
-│   ├── test_app_factory.py        FastAPI create_app 부팅
-│   ├── test_alembic_migrations.py 마이그레이션 round-trip
+│   ├── test_app_factory.py        FastAPI create_app boot
+│   ├── test_alembic_migrations.py migration round-trip
 │   ├── test_db_session.py         session_scope commit/rollback
-│   ├── test_cli_*.py              Typer CLI 의 CliRunner 기반
-│   ├── test_routers_*.py          각 REST 라우터
-│   ├── test_ui_pages.py           Jinja 렌더링 + CSRF
-│   ├── test_security_headers.py   응답 헤더
-│   ├── test_scheduler_jobs.py     APScheduler 의 잡 본체
+│   ├── test_cli_*.py              Typer CLI via CliRunner
+│   ├── test_routers_*.py          each REST router
+│   ├── test_ui_pages.py           Jinja rendering + CSRF
+│   ├── test_security_headers.py   response headers
+│   ├── test_scheduler_jobs.py     APScheduler job bodies
 │   ├── test_approval_flow.py      signup → approve → login
 │   ├── test_repo_lifecycle.py     create → quota → push → reconcile
-│   ├── test_spaces_registry.py    Spaces CRUD + 사이드카
-│   ├── test_spaces_runtime_api.py Spaces lifecycle + /run/ 프록시
-│   ├── test_lfs_flow.py           ASGI 통합: batch → PUT → audit + add_usage
-│   ├── test_git_smart_http.py     실제 git 바이너리 round-trip
-│   └── test_e2e_smoke.py          `make smoke` 가 실행
-└── fixtures/                      정적 응답 / 인증서 / git 저장소
+│   ├── test_spaces_registry.py    Spaces CRUD + sidecar
+│   ├── test_spaces_runtime_api.py Spaces lifecycle + /run/ proxy
+│   ├── test_lfs_flow.py           ASGI integration: batch → PUT → audit + add_usage
+│   ├── test_git_smart_http.py     real git binary round-trip
+│   └── test_e2e_smoke.py          run by `make smoke`
+└── fixtures/                      static responses / certificates / git repos
     ├── certs/
     ├── dns_responses/
     └── git_repos/
 ```
 
-## 4b. v2 가 추가한 테스트 범위
+## 4b. Test coverage added in v2
 
-LFS / S3 / Spaces 런타임이 추가되면서 컨테이너 없이도 충분히 검증할 수 있도록
-새 테스트 파일이 들어왔습니다. **git-lfs 바이너리는 필요하지 않습니다** — 모두
-`httpx` 와 in-process 시뮬레이션으로 동작합니다.
+LFS / S3 / Spaces runtime required new test files so everything could be
+verified without a container. **The `git-lfs` binary is not required** —
+every flow runs on `httpx` and an in-process simulation.
 
 ### LFS
 
-| 파일 | 무엇을 하나 |
+| File | What it covers |
 | | --- |
-| `tests/unit/test_git_smart_lfs.py` | `lfs_dispatch` 라우팅, locks 501 응답, 메서드 매트릭스 |
-| `tests/unit/test_lfs_batch_api.py` | `parse_batch_body` 의 422 케이스, `dedup_objects`, `handle_batch` 의 per-object error (413 / 404 / 401) |
-| `tests/unit/test_lfs_transfer.py` | `_handle_put` / `_handle_get` 의 HTTP-level 라운드트립 (sha256 / size mismatch, Content-Length cap, quota 413, 404) |
-| `tests/integration/test_lfs_flow.py` | ASGI 통합: `POST batch` → presigned URL/streaming PUT → `UserUsage` 증가 + `AuditLog("lfs.upload")` 검증 |
+| `tests/unit/test_git_smart_lfs.py` | `lfs_dispatch` routing, locks 501 response, method matrix |
+| `tests/unit/test_lfs_batch_api.py` | `parse_batch_body` 422 cases, `dedup_objects`, `handle_batch` per-object errors (413 / 404 / 401) |
+| `tests/unit/test_lfs_transfer.py` | `_handle_put` / `_handle_get` HTTP-level round-trip (sha256 / size mismatch, Content-Length cap, quota 413, 404) |
+| `tests/integration/test_lfs_flow.py` | ASGI integration: `POST batch` → presigned URL/streaming PUT → `UserUsage` increment + `AuditLog("lfs.upload")` |
 
 ### ObjectStore
 
-| 파일 | 무엇을 하나 |
+| File | What it covers |
 | | --- |
-| `tests/unit/test_objectstore_local.py` | `LocalObjectStore` 의 `has_object` / `object_size` / `write_object` / `read_object` — sha256 mismatch, size mismatch, symlink 차단, 64 KiB 청크 스트림 |
-| `tests/unit/test_objectstore_s3.py` | `S3ObjectStore` 의 `presign_url` / `sign_request` + `aclose()` 라이프사이클, `__repr__` 가 secret 을 노출하지 않음 |
-| `tests/unit/test_sigv4.py` | AWS SigV4 reference vector 기반 검증 — canonical request / string-to-sign / signing key / presign query parameter 순서까지 확인 |
+| `tests/unit/test_objectstore_local.py` | `LocalObjectStore`'s `has_object` / `object_size` / `write_object` / `read_object` — sha256 mismatch, size mismatch, symlink guard, 64 KiB chunked stream |
+| `tests/unit/test_objectstore_s3.py` | `S3ObjectStore`'s `presign_url` / `sign_request` + `aclose()` lifecycle; `__repr__` does not leak secrets |
+| `tests/unit/test_sigv4.py` | AWS SigV4 reference vectors — canonical request / string-to-sign / signing key / presign query parameter order |
 
-### Spaces 런타임
+### Spaces runtime
 
-| 파일 | 무엇을 하나 |
+| File | What it covers |
 | | --- |
-| `tests/unit/test_spaces_runtime.py` | Podman inspect 결과 → `RuntimeStatus` 매핑 (running / building / stopped / failed) |
-| `tests/unit/test_spaces_runtime_manager.py` | `httpx.MockTransport` 으로 `/libpod/...` 호출을 가로채서 `start` / `stop` / `restart` / `inspect` / `list_managed` / `_allocate_host_port` 모두 검증. Podman 바이너리 불필요 |
-| `tests/unit/test_spaces_build.py` | `_iter_tree_blobs` 가 `.git` / `.hg` / `__pycache__` 제외, `_make_tar_bytes` 가 gzipped tar 생성, `_resolve_tree_sha` 가 빈 repo 에도 동작 |
-| `tests/integration/test_spaces_runtime_api.py` | REST lifecycle: `POST /api/spaces` → push Dockerfile → `POST /start` → `POST /stop` → `POST /restart`, `/run/` 프록시의 hop-by-hop 제거, `static` SDK 가 컨테이너 없이 동작 |
+| `tests/unit/test_spaces_runtime.py` | Podman inspect → `RuntimeStatus` mapping (running / building / stopped / failed) |
+| `tests/unit/test_spaces_runtime_manager.py` | `httpx.MockTransport` intercepts `/libpod/...` calls and verifies `start` / `stop` / `restart` / `inspect` / `list_managed` / `_allocate_host_port`. No Podman binary needed |
+| `tests/unit/test_spaces_build.py` | `_iter_tree_blobs` excludes `.git` / `.hg` / `__pycache__`, `_make_tar_bytes` produces gzipped tar, `_resolve_tree_sha` works on empty repos |
+| `tests/integration/test_spaces_runtime_api.py` | REST lifecycle: `POST /api/spaces` → push Dockerfile → `POST /start` → `POST /stop` → `POST /restart`; `/run/` proxy strips hop-by-hop; the `static` SDK runs without a container |
 
-### 검증 포인트
+### Verification points
 
-- **Locks 501**: `tests/unit/test_git_smart_lfs.py` 가 dispatch 의 locks 분기를
-  고정합니다.
-- **per-object error**: 한 객체가 실패해도 batch 가 200 으로 반환되는지, 그리고
-  다른 정상 객체의 `actions.upload` 가 그대로 유효한지 확인합니다.
-- **Local vs S3 분기**: 같은 batch 가 `OUTO_LFS_BACKEND=local` 일 때는 same-origin
-  href, `s3` 일 때는 presigned URL 을 돌려주는지 확인합니다.
-- **Podman 가용성 가정 없음**: `SpaceRuntimeManager` 는 `client` 인자를 받아서
-  httpx `MockTransport` 를 주입할 수 있도록 설계되어 있습니다. 테스트는 그
-  경로로 모든 호출을 검증하므로 CI 에서 Podman 이 없어도 통과합니다.
-- **`docker` SDK 의 `Dockerfile` 강제**: `tests/integration/test_spaces_runtime_api.py`
-  가 저장소 루트에 Dockerfile 이 없으면 `ValidationFailedError` 가 나는지 검증합니다.
+- **Locks 501**: `tests/unit/test_git_smart_lfs.py` pins the locks branch
+  in the dispatcher.
+- **Per-object error**: confirms that one object's failure still leaves
+  the batch at 200, and that other healthy objects keep valid
+  `actions.upload`.
+- **Local vs S3 branching**: the same batch returns a same-origin href
+  for `OUTO_LFS_BACKEND=local` and a presigned URL for `s3`.
+- **No assumption of Podman availability**: `SpaceRuntimeManager` accepts
+  a `client` argument so an httpx `MockTransport` can be injected. Tests
+  exercise every call through that path, so CI passes without Podman.
+- **`docker` SDK Dockerfile enforcement**: `tests/integration/test_spaces_runtime_api.py`
+  verifies that a missing `Dockerfile` triggers `ValidationFailedError`.
 
-## 5. 실제 git round-trip (`test_git_smart_http`)
+## 5. Real git round-trip (`test_git_smart_http`)
 
-이 테스트는 컨테이너 없이도 실제 동작을 검증하는 핵심 통합 테스트입니다.
+This test is the key integration test that validates real behavior
+without containers.
 
-- `git` 바이너리로 임시 bare repo 와 클라이언트를 만듦
-- `GitSmartService` 를 ASGI 앱으로 띄움
-- `httpx.AsyncClient` 로 `/info/refs` 와 `git-receive-pack` 요청을 전송
-- 응답 헤더 / 푸시 성공 후 `Revision` 행 / `UserUsage` 증가를 모두 검증
+- Uses the `git` binary to create a temporary bare repo and a client
+- Boots `GitSmartService` as an ASGI app
+- Sends `/info/refs` and `git-receive-pack` requests through
+  `httpx.AsyncClient`
+- Verifies the response headers, the `Revision` row written after a
+  successful push, and the `UserUsage` increment
 
-`make smoke` 는 이 파일만 별도로 실행하므로 컨테이너가 없는 개발 머신에서도
-빠르게 통합 테스트를 돌릴 수 있습니다.
+`make smoke` runs only this file, so you can run a fast integration
+check on a development machine with no containers.
 
-## 6. 컨테이너 동작 테스트 (테스트 환경에서만)
+## 6. Container behavior tests (test environment only)
 
-별도 머신에서 다음을 확인하세요.
+On a separate machine:
 
 ```bash
-# 1) 이미지 빌드
+# 1) Build the image
 make build-stable
 
-# 2) 데이터 디렉터리 준비
+# 2) Prepare the data directory
 sudo mkdir -p /var/lib/outo-models
 sudo chown -R 1000:1000 /var/lib/outo-models
 
-# 3) 비대화형 setup (수동 DNS 모드 + skip-firewall)
+# 3) Non-interactive setup (manual DNS + skip-firewall)
 sudo outo-models setup --non-interactive \
   --domain models.example.com \
   --acme-email admin@example.com \
@@ -197,19 +203,21 @@ outo-models reset
 sudo outo-models update --image outo-models:stable
 ```
 
-## 7. 새로운 코드 변경 시 체크리스트
+## 7. Checklist for new code changes
 
-AGENTS.md §6 절차와 일치합니다.
+Matches AGENTS.md §6.
 
-1. 변경 전에 관련 `docs/*.md` 를 읽는다.
-2. `tests/unit/test_<module>.py` 또는 `tests/integration/test_<module>.py` 에
-   테스트를 먼저 / 동시에 추가한다.
-3. `make lint typecheck test` 통과를 확인한다.
-4. 문서 불일치가 생기면 **문서를** 수정한다.
-5. 사용자가 명시적으로 요청하기 전까지는 git commit / push 하지 않는다.
+1. Read the relevant `docs/*.md` before making changes.
+2. Add tests to `tests/unit/test_<module>.py` or
+   `tests/integration/test_<module>.py` first (or together with the
+   change).
+3. Verify `make lint typecheck test` passes.
+4. Fix the **docs** if drift appears.
+5. Do not run `git commit` / `git push` until the user explicitly asks.
 
-## 다음 단계
+## Next steps
 
-- [AGENTS.md §4](../AGENTS.md) — 개발 / 테스트 환경 분리 원칙
-- [architecture.md](architecture.md) — 코드 모듈 지도
-- [troubleshooting.md](troubleshooting.md) — 테스트 환경에서 자주 만나는 문제
+- [AGENTS.md §4](../AGENTS.md) — the dev / test environment separation
+- [architecture.md](architecture.md) — module map
+- [troubleshooting.md](troubleshooting.md) — issues you may hit in the
+  test environment

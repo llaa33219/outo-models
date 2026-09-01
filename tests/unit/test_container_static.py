@@ -290,7 +290,7 @@ class TestShellScriptsSyntax:
 
 class TestEntrypointContract:
     """The image entrypoint must enforce the AGENTS.md §4 dev/production gate
-    and emit a Korean banner with the package version."""
+    and emit an English banner with the package version."""
 
     def test_has_strict_bash_mode(self) -> None:
         # pipefail ensures a pipeline failure inside any helper still aborts us.
@@ -308,15 +308,13 @@ class TestEntrypointContract:
         # exit 1 must appear in the same file (the refuse branch).
         assert "exit 1" in ENTRYPOINT_TEXT
 
-    def test_prints_korean_version_banner(self) -> None:
+    def test_prints_version_banner(self) -> None:
         # The version is pulled from outo_models.version.__version__.
         assert "outo_models.version" in ENTRYPOINT_TEXT
         assert "__version__" in ENTRYPOINT_TEXT
-        # At least some Hangul in the banner — proves the banner is Korean.
+        # The operator-facing surface is English-only: no Hangul in the banner.
         hangul_count = sum(1 for ch in ENTRYPOINT_TEXT if 0xAC00 <= ord(ch) <= 0xD7A3)
-        assert hangul_count >= 10, (
-            f"expected Korean banner (>=10 Hangul chars), got {hangul_count}"
-        )
+        assert hangul_count == 0, f"expected English banner (0 Hangul chars), got {hangul_count}"
 
     def test_warns_about_unprivileged_ports(self) -> None:
         # Reads /proc/sys/net/ipv4/ip_unprivileged_port_start to detect the
