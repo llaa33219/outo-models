@@ -29,7 +29,10 @@ WORKDIR /app
 # pyproject.toml alone would force a re-resolve whenever either changed.
 COPY pyproject.toml uv.lock ./
 # src is required by `uv sync` (hatchling build / project metadata).
+# README.md + LICENSE are referenced by pyproject.toml (readme /
+# license-files) — hatchling fails the wheel build without them.
 COPY src ./src
+COPY README.md LICENSE ./
 # --no-editable keeps the wheel installed into /app/.venv instead of an .pth
 # shim, so the source tree does not need to be present at runtime.
 RUN uv sync --frozen --no-dev --no-editable
