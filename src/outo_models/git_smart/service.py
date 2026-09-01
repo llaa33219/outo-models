@@ -577,9 +577,6 @@ class GitSmartService:
     ) -> Callable[[dict[str, object], ASGIReceive, ASGISend], Awaitable[None]]:
         """Return the ASGI app callable WP-13 mounts under `/git`."""
         adapter = self._ensure_wsgi()
-        # Import the LFS handler lazily so an unused import doesn't slow
-        # down module import elsewhere.
-        from outo_models.git_smart.lfs import lfs_not_supported
 
         async def app(
             scope: dict[str, object],
@@ -604,14 +601,25 @@ class GitSmartService:
 
             # Reject WebDAV-style probes (PROPFIND, LOCK, MKACTIVITY, …) up
             # front so `git` learns the URL is NOT a regular directory and
-            # falls back to the smart-HTTP endpoints.
-            if method not in ("GET", "POST"):
+            # falls back to the smart-HTTP endpoints. PUT is allowed here
+            # because the LFS dispatcher uses it for object uploads.
+            if method not in ("GET", "POST", "PUT"):
                 await _send_405(send, "GET, POST", "method not allowed")
                 return
 
-            # LFS short-circuit (must run before auth/quota).
+            # LFS short-circuit (must run before dulwich).
             if _is_lfs(rest):
-                await lfs_not_supported(scope, receive, send)
+                from outo_models.git_smart.lfs import lfs_dispatch
+
+                await lfs_dispatch(
+                    scope,
+                    receive,
+                    send,
+                    settings=self._settings,
+                    owner_name=owner_name,
+                    repo_name=repo_name,
+                    rest=rest,
+                )
                 return
 
             action, _is_ad = _classify(

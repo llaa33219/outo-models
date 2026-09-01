@@ -11,18 +11,18 @@ outo-models는 Hugging Face / ModelScope 스타일의 git 기반 모델 허브�
 
 ## 목차
 
-- [설치](install.md) — 이미지 빌드와 첫 실행
+- [설치](install.md) — 이미지 pull / 빌드와 첫 실행
 - [설정 마법사](setup-wizard.md) — `outo-models setup` 의 모든 프롬프트와 자동 처리
 - [CLI 레퍼런스](cli.md) — 모든 명령·플래그·환경 변수의 단일 진실 공급원
 - [관리자 가이드](admin.md) — 가입 승인·차단·쿼터·GPU·원격 모드
-- [아키텍처](architecture.md) — 모듈 지도, 요청 흐름, 데이터 레이아웃
-- [보안](security.md) — argon2, PASETO PAT, 세션, CSRF, 레이트리밋
+- [아키텍처](architecture.md) — 모듈 지도, 요청 흐름, 데이터 레이아웃, CI/CD
+- [보안](security.md) — argon2, PASETO PAT, 세션, CSRF, 레이트리밋, LFS, Spaces 격리
 - [DNS 제공자](dns-providers.md) — Cloudflare 자동 모드와 수동 모드
-- [git 저장소 사용법](git-repos.md) — clone / push, PAT 사용, 쿼터·LFS 정책
-- [Spaces](spaces.md) — 메타데이터 v1 범위와 v2 런타임 로드맵
-- [문제 해결](troubleshooting.md) — 자주 부딪히는 운영 이슈
+- [git 저장소 사용법](git-repos.md) — clone / push, PAT 사용, 쿼터, LFS 정책
+- [Spaces](spaces.md) — v2 런타임 lifecycle, Podman 통합, GPU, 프록시
+- [문제 해결](troubleshooting.md) — 자주 부딪히는 운영 이슈 (Podman, LFS, S3 포함)
 - [테스트](testing.md) — `make lint/typecheck/test/smoke` 와 통합 테스트 범위
-- [변경 이력](changelog.md) — v0.1.0 의 첫 출시 노트
+- [변경 이력](changelog.md) — v0.1.0 · v0.2.0 릴리즈 노트
 
 ## 빠른 시작
 
@@ -30,9 +30,11 @@ outo-models는 Hugging Face / ModelScope 스타일의 git 기반 모델 허브�
 확인). 자세한 내용은 [install.md](install.md) 를 참고하세요.
 
 ```bash
-# 1) 이미지 빌드 (테스트 머신에서)
+# 1) 이미지 가져오기 (권장: ghcr.io 의 stable)
+sudo podman pull ghcr.io/<owner>/outo-models:stable
+
+# 또는 자체 빌드 (테스트 머신에서)
 make build-stable          # outo-models:stable
-# 또는
 make build-dev             # outo-models:dev (개발용)
 
 # 2) 초기 설정 (대화형 마법사)
@@ -60,13 +62,21 @@ outo-models reset --destroy      # OUTO_DESTRUCTIVE=1 과 함께
 
 | 변수 | 의미 | 기본값 |
 | --- | --- | --- |
-| `OUTO_DATA_DIR` | 데이터 디렉터리 (DB, git 저장소, 인증서 캐시) | `/var/lib/outo-models` |
+| `OUTO_DATA_DIR` | 데이터 디렉터리 (DB, git 저장소, LFS, 인증서 캐시) | `/var/lib/outo-models` |
 | `OUTO_DOMAIN` | 서비스가 응답할 공개 도메인 | `localhost` |
 | `OUTO_DB_URL` | DB URL (빈 값이면 `${OUTO_DATA_DIR}/db.sqlite3`) | (파생) |
-| `OUTO_SECRET_KEY` | 세션 / 토큰 서명 키 (production 에서 32자 이상 필수) | (없음) |
+| `OUTO_SECRET_KEY` | 세션 / 토큰 서명 키 (production 에서 32자 이상) | (없음) |
 | `OUTO_ENV` | 런타임 환경 (`development` / `production`) | `development` |
 | `OUTO_REQUIRE_APPROVAL` | 신규 가입 시 관리자 승인 필요 여부 | `true` |
 | `OUTO_DEFAULT_QUOTA_BYTES` | 신규 사용자에게 부여하는 기본 저장공간 | `10737418240` (10 GiB) |
+| `OUTO_LFS_BACKEND` | LFS 백엔드 (`local` / `s3`) | `local` |
+| `OUTO_LFS_MAX_OBJECT_BYTES` | LFS 단일 객체 최대 크기 | `5368709120` (5 GiB) |
+| `OUTO_S3_ENDPOINT` / `OUTO_S3_BUCKET` / `OUTO_S3_REGION` | S3 백엔드 endpoint, 버킷, region | (없음 / 없음 / `us-east-1`) |
+| `OUTO_S3_ACCESS_KEY` / `OUTO_S3_SECRET_KEY` | S3 자격 증명 — 환경 변수로만 주입 | (없음) |
+| `OUTO_S3_PREFIX` / `OUTO_S3_PRESIGN_TTL_SECONDS` | S3 객체 키 접두사, presign TTL | `lfs` / `3600` |
+| `OUTO_SPACES_RUNTIME_ENABLED` | Spaces 컨테이너 런타임 on/off | `false` |
+| `OUTO_PODMAN_SOCKET` | Podman REST API Unix 소켓 | `/run/podman/podman.sock` |
+| `OUTO_SPACES_RUNTIME_PORT_RANGE_START` / `_END` | Space 컨테이너 호스트 포트 범위 | `20000` / `21000` |
 | `OUTO_CONFIG` | YAML 설정 파일 경로 (CLI 호스트 측에서 사용) | `/etc/outo-models/config.yaml` |
 | `OUTO_DESTRUCTIVE` | `reset --destroy` 의 안전 게이트 통과 조건 | (없음) |
 | `OUTO_CLOUDFLARE_API_TOKEN` | Cloudflare 모드에서 DNS 레코드 생성에 사용 | (없음) |
@@ -77,6 +87,7 @@ outo-models reset --destroy      # OUTO_DESTRUCTIVE=1 과 함께
 
 - 처음 설치하는 운영자라면 → [install.md](install.md) → [setup-wizard.md](setup-wizard.md)
 - 사용자에게 권한·저장공간·GPU 를 부여하는 운영자라면 → [admin.md](admin.md)
-- git 저장소로 모델을 업로드하려는 사용자라면 → [git-repos.md](git-repos.md)
-- Spaces 를 만들고 싶다면 → [spaces.md](spaces.md)
-- 문제 상황에 부딪혔다면 → [troubleshooting.md](troubleshooting.md)
+- git 저장소로 모델을 업로드하려는 사용자라면 → [git-repos.md](git-repos.md) (LFS 사용법 포함)
+- Spaces 를 만들고 싶다면 → [spaces.md](spaces.md) (Podman 런타임)
+- 문제 상황에 부딪혔다면 → [troubleshooting.md](troubleshooting.md) (Podman / LFS / S3 포함)
+- 릴리즈 노트를 빠르게 훑어보고 싶다면 → [changelog.md](changelog.md)

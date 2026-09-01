@@ -389,13 +389,26 @@ outo-models admin reset-password <username>
 
 | 변수 | 대응 Settings 필드 | 기본값 | 의미 |
 | --- | --- | --- | --- |
-| `OUTO_DATA_DIR` | `data_dir` | `/var/lib/outo-models` | DB, git 저장소, 인증서 캐시의 루트 |
+| `OUTO_DATA_DIR` | `data_dir` | `/var/lib/outo-models` | DB, git 저장소, LFS, 인증서 캐시의 루트 |
 | `OUTO_DOMAIN` | `domain` | `localhost` | 공개 도메인 (loopback 이면 http, 그 외 https) |
 | `OUTO_DB_URL` | `db_url` | `null` (→ `sqlite+aiosqlite:///${OUTO_DATA_DIR}/db.sqlite3`) | SQLAlchemy URL |
 | `OUTO_SECRET_KEY` | `secret_key` | `""` | 세션 / 토큰 서명 키 (production 에서 32자 이상) |
 | `OUTO_ENV` | `env` | `development` | `development` 또는 `production` |
 | `OUTO_REQUIRE_APPROVAL` | `require_approval` | `true` | 가입 시 관리자 승인 필요 여부 |
 | `OUTO_DEFAULT_QUOTA_BYTES` | `default_quota_bytes` | `10737418240` (10 GiB) | 신규 사용자 기본 쿼터 |
+| `OUTO_LFS_BACKEND` | `lfs_backend` | `local` | LFS 백엔드 (`local` / `s3`) |
+| `OUTO_LFS_MAX_OBJECT_BYTES` | `lfs_max_object_bytes` | `5368709120` (5 GiB) | LFS 단일 객체 최대 크기 |
+| `OUTO_S3_ENDPOINT` | `s3_endpoint` | `""` | S3 호환 endpoint URL |
+| `OUTO_S3_BUCKET` | `s3_bucket` | `""` | S3 버킷 이름 |
+| `OUTO_S3_REGION` | `s3_region` | `us-east-1` | S3 region |
+| `OUTO_S3_ACCESS_KEY` | `s3_access_key` | `""` | S3 access key id |
+| `OUTO_S3_SECRET_KEY` | `s3_secret_key` | `""` | S3 secret access key |
+| `OUTO_S3_PREFIX` | `s3_prefix` | `lfs` | 버킷 안 객체 키 접두사 |
+| `OUTO_S3_PRESIGN_TTL_SECONDS` | `s3_presign_ttl_seconds` | `3600` | presigned URL 유효 시간 |
+| `OUTO_SPACES_RUNTIME_ENABLED` | `spaces_runtime_enabled` | `false` | Spaces 컨테이너 런타임 on/off |
+| `OUTO_PODMAN_SOCKET` | `podman_socket` | `/run/podman/podman.sock` | Podman REST API Unix 소켓 |
+| `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | `spaces_runtime_port_range_start` | `20000` | Space 컨테이너 호스트 포트 시작 |
+| `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | `spaces_runtime_port_range_end` | `21000` | Space 컨테이너 호스트 포트 끝 |
 
 그 외 운영 보조 환경 변수:
 

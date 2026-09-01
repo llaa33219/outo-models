@@ -1,97 +1,188 @@
 """Unit tests for `outo_models.spaces.runtime`.
 
-The v1 runtime is a deliberate stub: every space — public or private,
-fresh or 404 — reports `PREVIEW_UNAVAILABLE` with a Korean roadmap
-message and a pointer to the docs. The tests below lock that contract so
-later contributors cannot accidentally turn a metadata-only Spaces v1
-into a half-implemented runtime.
+The v2 runtime dispatcher `runtime_status(space, *, settings, manager)`
+must report one of five `RuntimeState` values for every codepath:
+
+    DISABLED  — runtime is off in settings.
+    STOPPED   — no container exists for the Space.
+    BUILDING  — podman reports `building`.
+    RUNNING   — podman reports `running`; URL is populated.
+    FAILED    — manager raised an error.
+
+The tests below pin each transition with a small `SpaceRuntimeManager`
+fake: we do not mock httpx here because the unit under test is the
+*dispatcher*, not the manager wire format — the manager itself is
+covered exhaustively in `test_spaces_runtime_manager.py`.
 """
 
 from __future__ import annotations
 
+import dataclasses
+from types import SimpleNamespace
+
+import pytest
+
+from outo_models.config import Settings, get_settings
 from outo_models.spaces import runtime as runtime_mod
-from outo_models.spaces.runtime import RuntimeState, RuntimeStatus, runtime_status
+from outo_models.spaces.runtime import (
+    RuntimeState,
+    RuntimeStatus,
+    runtime_status,
+)
 
 
-class TestRuntimeState:
-    """`RuntimeState` is the small enum the router matches against."""
+class _FakeManager:
+    """Single-method double that satisfies the dispatcher's `inspect` call."""
 
-    def test_only_preview_unavailable_is_defined(self) -> None:
-        assert set(RuntimeState.__members__) == {"PREVIEW_UNAVAILABLE"}
+    def __init__(
+        self,
+        inspect_return: object = None,
+        inspect_exc: BaseException | None = None,
+    ) -> None:
+        self._inspect_return = inspect_return
+        self._inspect_exc = inspect_exc
+        self.calls: list[tuple[str, str]] = []
 
-    def test_value_is_string(self) -> None:
-        # Routers serialize the state into JSON; the value MUST round-trip
-        # as a plain string for the API contract to hold.
-        assert RuntimeState.PREVIEW_UNAVAILABLE.value == "preview_unavailable"
-        assert RuntimeState.PREVIEW_UNAVAILABLE == "preview_unavailable"
+    async def inspect(self, owner: str, name: str) -> object:
+        self.calls.append((owner, name))
+        if self._inspect_exc is not None:
+            raise self._inspect_exc
+        return self._inspect_return
 
 
-class TestRuntimeStatusDataclass:
-    """`RuntimeStatus` is a frozen, slotted value object — nothing fancier."""
+def _settings(runtime_enabled: bool = True) -> Settings:
+    """Return a `Settings` whose runtime toggle matches the call site."""
+    get_settings.cache_clear()
+    settings = get_settings()
+    object.__setattr__(settings, "spaces_runtime_enabled", runtime_enabled)
+    return settings
 
+
+def _space(owner_username: str = "alice", name: str = "demo") -> SimpleNamespace:
+    """Build a bare `Repo`-shaped dummy.
+
+    The dispatcher only reads `.owner.username` and `.name`, so a plain
+    `SimpleNamespace` is enough — no ORM setup needed.
+    """
+    return SimpleNamespace(name=name, owner=SimpleNamespace(username=owner_username))
+
+
+class TestRuntimeStateMembers:
+    def test_members_present(self) -> None:
+        members = set(RuntimeState.__members__)
+        assert members == {
+            "DISABLED",
+            "STOPPED",
+            "BUILDING",
+            "RUNNING",
+            "FAILED",
+        }
+
+    def test_values_are_lowercase_strings(self) -> None:
+        assert RuntimeState.DISABLED.value == "disabled"
+        assert RuntimeState.STOPPED.value == "stopped"
+        assert RuntimeState.BUILDING.value == "building"
+        assert RuntimeState.RUNNING.value == "running"
+        assert RuntimeState.FAILED.value == "failed"
+
+    def test_string_equality_for_serialization(self) -> None:
+        assert RuntimeState.RUNNING == "running"
+        assert RuntimeState.STOPPED != "running"
+
+
+class TestRuntimeStatusShape:
     def test_is_frozen(self) -> None:
         status = RuntimeStatus(
-            state=RuntimeState.PREVIEW_UNAVAILABLE,
+            state=RuntimeState.STOPPED,
             message="m",
-            docs_url="/docs/spaces",
+            url=None,
         )
-        # `frozen=True` raises on attribute assignment.
-        import dataclasses
-
-        with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             status.message = "new"  # type: ignore[misc]
 
-
-class TestRuntimeStatus:
-    """`runtime_status(space)` always reports PREVIEW_UNAVAILABLE in v1."""
-
-    def test_returns_preview_unavailable_state(self) -> None:
-        # A bare `Repo()` instance is enough — the v1 stub ignores the row.
-        from outo_models.db.models.repo import Repo
-
-        space = Repo(name="demo", kind="space", visibility="private", path="x")
-        status = runtime_status(space)
-
-        assert isinstance(status, RuntimeStatus)
-        assert status.state is RuntimeState.PREVIEW_UNAVAILABLE
-
-    def test_message_is_korean_roadmap_notice(self) -> None:
-        from outo_models.db.models.repo import Repo
-
-        space = Repo(name="demo", kind="space", visibility="private", path="x")
-        status = runtime_status(space)
-
-        # The message MUST be in Korean and MUST mention that runtime
-        # execution is not supported in v1. The exact wording is allowed to
-        # evolve, but the gist is locked.
-        assert any(0xAC00 <= ord(ch) <= 0xD7A3 for ch in status.message), (
-            "runtime message must be in Korean"
+    def test_container_id_and_port_default_to_none(self) -> None:
+        status = RuntimeStatus(
+            state=RuntimeState.STOPPED,
+            message="m",
+            url=None,
         )
-        assert "런타임" in status.message
-        assert "v1" in status.message or "로드맵" in status.message
+        assert status.container_id is None
+        assert status.port is None
 
-    def test_docs_url_points_at_spaces_docs(self) -> None:
-        from outo_models.db.models.repo import Repo
-
-        space = Repo(name="demo", kind="space", visibility="private", path="x")
-        status = runtime_status(space)
-
-        assert status.docs_url == "/docs/spaces"
-
-    def test_status_is_independent_of_visibility(self) -> None:
-        # Both PUBLIC and PRIVATE spaces are equally "preview unavailable"
-        # in v1 — there is no runtime to gate on, so visibility is a no-op.
-        from outo_models.db.models.repo import Repo
-
-        public = Repo(
-            name="a", kind="space", visibility="public", path="x"
-        )
-        private = Repo(
-            name="b", kind="space", visibility="private", path="x"
-        )
-
-        assert runtime_status(public) == runtime_status(private)
-
-    def test_module_exports_match_documented_surface(self) -> None:
-        for name in ("RuntimeState", "RuntimeStatus", "runtime_status"):
+    def test_module_exports(self) -> None:
+        for name in (
+            "RuntimeState",
+            "RuntimeStatus",
+            "runtime_status",
+            "container_name_for",
+        ):
             assert hasattr(runtime_mod, name), f"runtime missing {name!r}"
+
+
+class TestDispatcher:
+    async def test_disabled_when_runtime_off(self) -> None:
+        settings = _settings(runtime_enabled=False)
+        manager = _FakeManager(inspect_return={"State": {"Status": "running"}})
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.DISABLED
+        assert status.url is None
+        assert "비활성화" in status.message
+        assert "OUTO_SPACES_RUNTIME_ENABLED" in status.message
+        assert manager.calls == []
+
+    async def test_stopped_when_manager_returns_none(self) -> None:
+        settings = _settings()
+        manager = _FakeManager(inspect_return=None)
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.STOPPED
+        assert status.url is None
+        assert "중지" in status.message
+
+    async def test_running_state_carries_url_and_port(self) -> None:
+        settings = _settings()
+        payload = {
+            "Id": "abc123",
+            "State": {"Status": "running"},
+            "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": "20123"}]}},
+        }
+        manager = _FakeManager(inspect_return=payload)
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.RUNNING
+        assert status.container_id == "abc123"
+        assert status.port == 20123
+        assert status.url is not None
+        assert status.url.endswith("/spaces/alice/demo/run/")
+
+    async def test_building_state_maps_to_runtime_state_building(self) -> None:
+        settings = _settings()
+        payload = {"State": {"Status": "building"}}
+        manager = _FakeManager(inspect_return=payload)
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.BUILDING
+        assert status.url is None
+
+    async def test_stopped_state_for_exited_container(self) -> None:
+        settings = _settings()
+        payload = {"State": {"Status": "exited"}}
+        manager = _FakeManager(inspect_return=payload)
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.STOPPED
+
+    async def test_failed_state_when_manager_raises(self) -> None:
+        settings = _settings()
+        manager = _FakeManager(inspect_exc=RuntimeError("container inspect failed"))
+        status = await runtime_status(_space(), settings=settings, manager=manager)
+        assert status.state is RuntimeState.FAILED
+        assert "container inspect failed" in status.message
+
+    async def test_failed_state_includes_passed_reason(self) -> None:
+        settings = _settings()
+        manager = _FakeManager(inspect_exc=RuntimeError("boom"))
+        status = await runtime_status(
+            _space(),
+            settings=settings,
+            manager=manager,
+            failed_reason="port-range exhausted",
+        )
+        assert status.state is RuntimeState.FAILED
+        assert "boom" in status.message

@@ -21,10 +21,42 @@
 - 선택: ACME 발급을 위한 연락 받을 이메일
 - 선택: DNS 자동 모드를 쓸 Cloudflare API 토큰 (권한: `Zone.DNS:Edit`)
 
-## 2. 이미지 빌드
+## 2. 이미지 가져오기
 
-이미지는 두 가지 플레이버로 빌드합니다. 빌드 인자 `IMAGE_FLAVOR` 가
-`stable` 또는 `dev` 가 아니면 빌드가 즉시 실패합니다.
+두 가지 경로가 있습니다 — 운영자가 둘 중 하나만 채택해 주세요.
+
+### 2-A. ghcr.io 에서 미리 빌드된 이미지 pull (권장)
+
+릴리즈는 [`.github/workflows/release-image.yml`](../.github/workflows/release-image.yml)
+이 자동으로 발행하므로, 자체 빌드 도구 없이 그대로 받을 수 있습니다.
+
+| 태그 | 의미 | 언제 쓰나 |
+| --- | --- | --- |
+| `:X.Y.Z-stable` | 버전 고정 stable 이미지 (예: `0.2.0-stable`) | 운영 환경에서 특정 버전으로 잠그고 싶을 때 |
+| `:stable` | 가장 최근의 stable 릴리즈로 moving | 운영 환경의 기본 |
+| `:latest` | 가장 최근의 **stable** 릴리즈 | 운영 환경의 기본 (`:stable` 과 동기) |
+| `:X.Y.Z-dev` | 버전 고정 dev 이미지 (debugpy / ipython 포함) | 테스트 머신, 디버깅 |
+| `:dev` | 가장 최근의 dev 릴리즈 | 테스트 머신, 디버깅 |
+
+```bash
+# 운영 서버 호스트 (컨테이너 안에 들어갈 이미지를 가져올 때)
+sudo podman pull ghcr.io/<owner>/outo-models:stable
+
+# 또는 특정 버전으로 핀
+sudo podman pull ghcr.io/<owner>/outo-models:0.2.0-stable
+
+# 테스트 머신 (dev 이미지)
+sudo podman pull ghcr.io/<owner>/outo-models:dev
+```
+
+`<owner>` 는 GitHub 사용자 / 조직 이름입니다. 본 저장소를 그대로 fork 했다면
+`<owner>/outo-models` 의 `<owner>` 가 그대로 레지스트리 경로가 됩니다.
+
+### 2-B. 로컬에서 직접 빌드 (이미지 변형이 필요할 때)
+
+이미지에 운영 정책 패치를 넣어야 하거나 air-gapped 환경이라면
+[Containerfile](../Containerfile) 로 직접 빌드합니다. 빌드 인자 `IMAGE_FLAVOR`
+가 `stable` 또는 `dev` 가 아니면 빌드가 즉시 실패합니다.
 
 ```bash
 # 운영용 (비특권, 디버그 도구 없음)
@@ -51,6 +83,13 @@ podman build --build-arg IMAGE_FLAVOR=dev    -t outo-models:dev    .
 
 `dev` 플레이버를 프로덕션에 배포하지 마세요. 엔트리포인트가
 `IMAGE_FLAVOR=dev` + `OUTO_ENV=production` 조합은 거부합니다 (AGENTS.md §4).
+
+### 어떤 경로를 선택할까
+
+- **공식 릴리즈 + 자동 업데이트**: ghcr.io `:stable` 사용
+- **공식 릴리즈 + 버전 핀 (롤백 가능성)**: ghcr.io `:X.Y.Z-stable` 사용
+- **운영 정책 패치가 있거나 air-gapped**: 자체 빌드 (`make build-stable` 등)
+- **테스트 / 디버깅**: ghcr.io `:dev` 또는 `make build-dev`
 
 ## 3. 컨테이너 외부 데이터 디렉터리
 

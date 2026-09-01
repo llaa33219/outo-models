@@ -4,6 +4,124 @@
 에 따라 CLI 플래그 / REST 엔드포인트 / 환경 변수는 하위 호환을 유지하고,
 깨야 할 때는 마이그레이션 가이드를 함께 제공합니다.
 
+## v0.2.0 — LFS · S3 · Spaces 런타임
+
+출시일: 2026-09-01
+
+v1 의 메타데이터 중심 스코프를 실제 운영 가능한 수준으로 끌어올린 v2 릴리즈입니다.
+기존 v0.1.0 의 모든 공개 인터페이스는 그대로 동작합니다.
+
+### 추가된 기능
+
+#### Git LFS 정식 지원
+
+이전 버전에서 501 스텬이던 LFS 가 완전한 구현으로 교체되었습니다.
+
+- 4개 엔드포인트 동작:
+  - `POST /{owner}/{name}.git/info/lfs/objects/batch` — 업로드/다운로드 action URL
+    발급
+  - `PUT /{owner}/{name}.git/info/lfs/objects/{oid}` — 스트리밍 업로드
+  - `GET /{owner}/{name}.git/info/lfs/objects/{oid}` — 64 KiB 청크 스트리밍
+- 인증: 일반 clone/push 와 같은 Basic PAT 재사용 (`git-lfs` 가 자동으로 처리)
+- per-object 에러: 한 객체의 실패 (사이즈 / 쿼터 / 404) 가 batch 전체를
+  실패시키지 않음 — LFS 스펙 그대로
+- SHA256 + 사이즈 검증 후 원자적 rename (`os.replace`)
+- symlink 차단: `_object_path` 의 어떤 segment 라도 symlink 이면 읽기/쓰기
+  거부 (path traversal 의 입구 차단)
+- `/info/lfs/locks*` 만 501 유지 — v3 작업
+- 자세한 흐름: [git-repos.md §LFS 사용법](git-repos.md#lfs-사용법-v2)
+
+#### LFS 백엔드: `local` / `s3` 선택 가능
+
+[`OUTO_LFS_BACKEND`](cli.md#환경-변수) 로 두 백엔드를 선택할 수 있습니다.
+
+- `local` (기본): `OUTO_DATA_DIR` 의 `lfs/<aa>/<bb>/<oid>` 에 샤딩 저장. 별도
+  인프라 없이 동작.
+- `s3`: AWS S3 / MinIO / R2 등 S3 호환 스토리지에 presigned URL 로 직접
+  업/다운로드. 자체 구현 SigV4 (path-style, MinIO 호환) — `boto3` /
+  `aioboto3` 의존성 없음. 자세한 설정:
+  [git-repos.md §백엔드 설정](git-repos.md#백엔드-설정-outo_lfs_backend),
+  [security.md §`s3` 백엔드의 presigned URL](security.md#s3-백엔드의-presigned-url).
+
+추가 환경 변수:
+
+- `OUTO_LFS_MAX_OBJECT_BYTES` (기본 5 GiB)
+- `OUTO_S3_ENDPOINT`, `OUTO_S3_BUCKET`, `OUTO_S3_REGION` (기본 `us-east-1`)
+- `OUTO_S3_ACCESS_KEY`, `OUTO_S3_SECRET_KEY`
+- `OUTO_S3_PREFIX` (기본 `lfs`)
+- `OUTO_S3_PRESIGN_TTL_SECONDS` (기본 3600)
+
+#### Spaces 런타임 (Podman)
+
+[`src/outo_models/spaces/`](../src/outo_models/spaces) 의 v2 런타임:
+
+- 기본 비활성. `OUTO_SPACES_RUNTIME_ENABLED=true` 로 명시적 활성화.
+- `OUTO_PODMAN_SOCKET` (기본 `/run/podman/podman.sock`) 로 Podman REST API 에
+  접속. 컨테이너 안에서 Unix 도메인 소켓 (`httpx.AsyncHTTPTransport(uds=...)`) 으로
+  통신.
+- 라이프사이클: `start` / `stop` / `restart` / `status` + 감사 로그
+  (`space.start` / `space.stop` / `space.restart`).
+- 컨테이너 이름 규칙 `outo-space-<owner>-<name>`, 이미지 태그
+  `localhost/outo-space-<owner>-<name>:latest`, 레이블 `outo.managed=true` +
+  `outo.space=<owner>/<name>`.
+- 호스트 포트는 `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` (기본 20000..21000)
+  에서 순차 할당. 컨테이너 안 포트는 `8000/tcp` 으로 고정, `127.0.0.1` 바인딩
+  (외부 노출 금지).
+- GPU: `web_settings(key="gpu:<username>")` 의 JSON 배열을
+  `nvidia.com/gpu=<id>` CDI 디바이스로 부착.
+- SDK 별 동작:
+  - `static` — 컨테이너 없이 dulwich 트리를 `spaces/<owner>/<name>/site/` 에
+    풀어 `FileResponse` 로 서빙.
+  - `gradio` / `streamlit` — 사용자가 저장소 안에 베이스 이미지를 정의한다는
+    약속; 코드 측은 docker SDK 와 동일.
+  - `docker` — 저장소 루트에 `Dockerfile` 또는 `Containerfile` 이 **없으면**
+    `ValidationFailedError` 로 거절.
+- 프록시 `/spaces/<owner>/<name>/run/{path}` — 5개 메서드 (GET/POST/PUT/
+  PATCH/DELETE) 모두 지원. 컨테이너 running 일 때만 `http://127.0.0.1:<port>/<path>`
+  로 위임. hop-by-hop 헤더 제거.
+
+#### 라이선스
+
+[LICENSE](../LICENSE) (Apache-2.0) 추가. v0.1.0 까지는 라이선스 파일이 없어서
+재배포가 모호했는데, v0.2.0 부터 Apache-2.0 으로 명확히 합니다.
+
+#### CI / 이미지 릴리즈 워크플로우
+
+두 개의 GitHub Actions 가 추가되었습니다.
+
+- `.github/workflows/ci.yml` — main / PR 트리거. ruff + mypy + pytest +
+  `scripts/check-docs.sh` 까지 강제.
+- `.github/workflows/release-image.yml` — `vX.Y.Z-stable` / `vX.Y.Z-dev` 태그
+  트리거. tests 통과 후 `podman build --build-arg IMAGE_FLAVOR=stable|dev ...`
+  로 빌드하고 `ghcr.io/<repo>:X.Y.Z-<flavor>`, `:stable` / `:dev`, 그리고
+  stable 인 경우 `:latest` 까지 push. 자세한 태그 컨벤션:
+  [architecture.md §CI/CD](architecture.md#cicd).
+
+### 추가된 환경 변수 요약
+
+`OUTO_LFS_BACKEND`, `OUTO_LFS_MAX_OBJECT_BYTES`, `OUTO_S3_ENDPOINT`,
+`OUTO_S3_BUCKET`, `OUTO_S3_REGION`, `OUTO_S3_ACCESS_KEY`, `OUTO_S3_SECRET_KEY`,
+`OUTO_S3_PREFIX`, `OUTO_S3_PRESIGN_TTL_SECONDS`, `OUTO_SPACES_RUNTIME_ENABLED`,
+`OUTO_PODMAN_SOCKET`, `OUTO_SPACES_RUNTIME_PORT_RANGE_START`,
+`OUTO_SPACES_RUNTIME_PORT_RANGE_END`. 모두 기본값이 있어 마이그레이션 없이
+업그레이드 가능합니다.
+
+### 마이그레이션 가이드
+
+v0.2.0 으로의 업그레이드는 **마이그레이션 절차가 필요 없습니다**. 모든 새 환경
+변수의 기본값은 v0.1.0 의 동작과 호환됩니다 (LFS 는 여전히 v0.1.0 의 501 +
+로드맵 안내를 그대로 반환하지 않으며, v0.2.0 부터는 실제 LFS 가 동작합니다 —
+이는 **기능 추가** 이고 기존 동작의 변경은 아닙니다).
+
+> **주의**: v0.1.0 의 LFS 501 응답에 의존하던 클라이언트 (예: 자체 작성한
+> 다운로드 스크립트) 는 v0.2.0 에서 정상 LFS 응답을 받게 됩니다. LFS 비활성화가
+> 필요한 운영 환경은 `OUTO_LFS_BACKEND` 를 빈 문자열 대신 `local` 로 두고
+> 프록시에서 차단해 주세요. LFS 자체를 끄는 플래그는 제공하지 않습니다.
+
+새 컨테이너를 띄울 때 Spaces 런타임을 활성화하지 않으면 (기본값) 모든 Space 는
+v0.1.0 처럼 동작합니다 — `runtime.state = "disabled"`, `/run/` 접근 시
+`503 runtime_disabled`.
+
 ## v0.1.0 — 첫 출시
 
 출시일: 2026-08-31

@@ -1,70 +1,187 @@
-"""Spaces runtime status — v1 stub.
-
-Spaces v1 ships the metadata layer only; container runtime is a roadmap
-(v2) item. Every space — public or private, brand-new or stale —
-therefore reports `PREVIEW_UNAVAILABLE` with a Korean notice and a
-pointer at `/docs/spaces`. The stub is intentionally not a placeholder
-that can be silently re-shaped into a real implementation: the
-`RuntimeState` enum has a single member today and the runtime module
-imports nothing that would let a `Repo` leak past the boundary.
-
-The next milestone that adds a real runtime will introduce new
-`RuntimeState` members and branch on them inside `runtime_status`; the
-public shape (`RuntimeStatus(state, message, docs_url)`) is locked so
-that routers do not need to change.
-"""
+"""Spaces runtime status (v2 — Podman-backed states)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 
+from outo_models.config import Settings
 from outo_models.db import Repo
+from outo_models.spaces.runtime_manager import (
+    SpaceRuntimeManager,
+)
+from outo_models.spaces.runtime_manager import (
+    container_name as _container_name,
+)
 
 
 class RuntimeState(StrEnum):
-    """Lifecycle state the router matches against when rendering a Space.
-
-    `StrEnum` so the value serializes directly into the JSON payload the
-    public API exposes. Adding a new state is a deliberate, schema-visible
-    change: every router branch must opt into handling it.
-    """
-
-    PREVIEW_UNAVAILABLE = "preview_unavailable"
+    DISABLED = "disabled"
+    STOPPED = "stopped"
+    BUILDING = "building"
+    RUNNING = "running"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStatus:
-    """What the router renders on the Space detail page.
-
-    `state` drives the template branch; `message` is shown to the user
-    (Korean today, but the type stays a plain `str` so i18n can layer on
-    later); `docs_url` points at the always-relevant `/docs/spaces` page.
-    """
-
     state: RuntimeState
     message: str
-    docs_url: str
+    url: str | None
+    container_id: str | None = None
+    port: int | None = None
 
 
-def runtime_status(space: Repo) -> RuntimeStatus:
-    """Return the runtime status for `space`.
+_KO_DISABLED = "런타임이 비활성화되어 있습니다."
+_KO_DISABLED_HINT = (
+    "관리자가 OUTO_SPACES_RUNTIME_ENABLED=true 로 설정하고 "
+    "Podman 소켓을 마운트한 뒤 다시 시도해 주세요."
+)
+_KO_STOPPED = "스페이스가 중지된 상태입니다."
+_KO_BUILDING = "스페이스를 빌드 중입니다."
+_KO_RUNNING = "스페이스가 실행 중입니다."
+_KO_FAILED_PREFIX = "마지막 실행이 실패했습니다: "
 
-    In v1 the result is constant: every space is `PREVIEW_UNAVAILABLE`
-    with a Korean roadmap notice. `space` is accepted so the signature
-    matches what v2 will need; it is currently unused. Marked explicitly
-    so a future reviewer can see the dependency is on purpose, not an
-    oversight — the `Repo` import exists to keep the type signature
-    honest (a function that pretended to take a `Repo` but accepted
-    `object` would be a wire the next contributor would cut).
-    """
-    del space  # Unused in v1; reserved for v2's runtime dispatch.
+
+def _make_disabled(_settings: Settings) -> RuntimeStatus:
     return RuntimeStatus(
-        state=RuntimeState.PREVIEW_UNAVAILABLE,
-        # Korean: "v1 런타임 미지원 — 컨테이너 실행은 로드맵(v2) 항목입니다."
-        message="v1에서는 런타임이 지원되지 않습니다. 컨테이너 실행은 로드맵(v2) 항목입니다.",
-        docs_url="/docs/spaces",
+        state=RuntimeState.DISABLED,
+        message=f"{_KO_DISABLED} {_KO_DISABLED_HINT}",
+        url=None,
     )
 
 
-__all__ = ["RuntimeState", "RuntimeStatus", "runtime_status"]
+def _run_url(settings: Settings, owner: str, name: str) -> str:
+    return f"{settings.base_url}/spaces/{owner}/{name}/run/"
+
+
+def _podman_state(podman_status: str | None) -> RuntimeState:
+    if podman_status is None:
+        return RuntimeState.STOPPED
+    lowered = podman_status.lower()
+    if lowered == "running":
+        return RuntimeState.RUNNING
+    if lowered == "building":
+        return RuntimeState.BUILDING
+    return RuntimeState.STOPPED
+
+
+def _podman_host_port(inspect: dict[str, object] | None) -> int | None:
+    if inspect is None:
+        return None
+    ns = inspect.get("NetworkSettings")
+    if not isinstance(ns, dict):
+        return None
+    ports = ns.get("Ports")
+    if not isinstance(ports, dict):
+        return None
+    candidates: list[int] = []
+    for mappings in ports.values():
+        if not isinstance(mappings, list):
+            continue
+        for mapping in mappings:
+            if not isinstance(mapping, dict):
+                continue
+            hp = mapping.get("HostPort")
+            if hp is None:
+                continue
+            try:
+                candidates.append(int(hp))
+            except (TypeError, ValueError):
+                continue
+    return min(candidates) if candidates else None
+
+
+def _podman_container_id(inspect: dict[str, object] | None) -> str | None:
+    if inspect is None:
+        return None
+    cid = inspect.get("Id") or inspect.get("id")
+    if isinstance(cid, str) and cid:
+        return cid
+    return None
+
+
+async def runtime_status(
+    space: Repo,
+    *,
+    settings: Settings,
+    manager: SpaceRuntimeManager,
+    failed_reason: str | None = None,
+) -> RuntimeStatus:
+    owner_name = space.owner.username if space.owner is not None else ""
+    if not settings.spaces_runtime_enabled:
+        return _make_disabled(settings)
+    try:
+        inspect = await manager.inspect(owner_name, space.name)
+    except Exception as exc:
+        return RuntimeStatus(
+            state=RuntimeState.FAILED,
+            message=f"{_KO_FAILED_PREFIX}{exc}",
+            url=None,
+        )
+    if inspect is None:
+        return RuntimeStatus(
+            state=RuntimeState.STOPPED,
+            message=_KO_STOPPED,
+            url=None,
+        )
+    state_value = inspect.get("State")
+    podman_status: str | None = None
+    if isinstance(state_value, dict):
+        raw = state_value.get("Status")
+        if isinstance(raw, str):
+            podman_status = raw
+    mapped = _podman_state(podman_status)
+    port = _podman_host_port(inspect)
+    container_id = _podman_container_id(inspect)
+    url = (
+        _run_url(settings, owner_name, space.name)
+        if mapped is RuntimeState.RUNNING
+        else None
+    )
+    if mapped is RuntimeState.FAILED:
+        message = (
+            f"{_KO_FAILED_PREFIX}{failed_reason}"
+            if failed_reason
+            else "마지막 실행이 실패했습니다."
+        )
+        return RuntimeStatus(
+            state=RuntimeState.FAILED,
+            message=message,
+            url=None,
+            container_id=container_id,
+            port=port,
+        )
+    if mapped is RuntimeState.RUNNING:
+        return RuntimeStatus(
+            state=RuntimeState.RUNNING,
+            message=_KO_RUNNING,
+            url=url,
+            container_id=container_id,
+            port=port,
+        )
+    if mapped is RuntimeState.BUILDING:
+        return RuntimeStatus(
+            state=RuntimeState.BUILDING,
+            message=_KO_BUILDING,
+            url=None,
+        )
+    return RuntimeStatus(
+        state=RuntimeState.STOPPED,
+        message=_KO_STOPPED,
+        url=None,
+        container_id=container_id,
+        port=port,
+    )
+
+
+def container_name_for(owner: str, name: str) -> str:
+    return _container_name(owner, name)
+
+
+__all__ = [
+    "RuntimeState",
+    "RuntimeStatus",
+    "container_name_for",
+    "runtime_status",
+]

@@ -192,10 +192,19 @@ fi
 #   - src/outo_models/firewall/open_ports.py
 #   - src/outo_models/tls/caddy_manager.py
 #   - src/outo_models/server/app.py
+#   - src/outo_models/objectstore/factory.py  — S3 backend error messages
+#   - src/outo_models/spaces/runtime.py       — runtime_disabled hint
 #
 # We extract every `OUTO_<UPPER_SNAKE>` token and require it appear in at
 # least one docs/*.md file. Comments / strings are in scope: env vars that
 # the code only *talks about* must still be documented somewhere.
+#
+# `config.py` ALSO contributes the `OUTO_*` form of every Settings field —
+# the Pydantic `env_prefix="OUTO_"` setting maps each field to its env var
+# even when the code only references the field name (`settings.foo_bar`).
+# The extractor walks the class body for `^\s+<name>\s*:` declarations and
+# uppercases them. `model_config` is excluded because it is a Pydantic
+# bookkeeping attribute, not an env knob.
 declare -a ENVVAR_SOURCES=(
     "${CONFIG_PY}"
     "${CLI_DIR}/__init__.py"
@@ -209,6 +218,8 @@ declare -a ENVVAR_SOURCES=(
     "${REPO_ROOT}/src/outo_models/server/app.py"
     "${REPO_ROOT}/src/outo_models/utils/paths.py"
     "${REPO_ROOT}/src/outo_models/db/migrations/env.py"
+    "${REPO_ROOT}/src/outo_models/objectstore/factory.py"
+    "${REPO_ROOT}/src/outo_models/spaces/runtime.py"
 )
 
 declare -a ENVVARS=()
@@ -220,6 +231,24 @@ for src in "${ENVVAR_SOURCES[@]}"; do
         grep -hoE 'OUTO_[A-Z][A-Z0-9_]*' "${src}" | sorted_uniq
     )
 done
+
+# Settings-field → env-var expansion: read each `<field>: <annotation>` line
+# from `Settings` and convert the field name to its `OUTO_<UPPER>` form.
+# Methods (which have `:` only after the return-type annotation) and
+# properties (which start with `def `) are filtered out by the leading
+# whitespace + field-name shape below.
+if [[ -f "${CONFIG_PY}" ]]; then
+    while IFS= read -r field; do
+        [[ -n "${field}" ]] || continue
+        upper="$(printf '%s' "${field}" | tr '[:lower:]' '[:upper:]')"
+        ENVVARS+=("OUTO_${upper}")
+    done < <(
+        grep -E '^[[:space:]]+[a-z_][a-z0-9_]*[[:space:]]*:' "${CONFIG_PY}" \
+            | sed -E 's/^[[:space:]]+([a-z_][a-z0-9_]*).*/\1/' \
+            | grep -v '^model_config$' \
+            | sorted_uniq
+    )
+fi
 
 mapfile -t ENVVARS < <(printf '%s\n' "${ENVVARS[@]}" | sorted_uniq)
 

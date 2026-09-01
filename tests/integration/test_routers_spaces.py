@@ -52,7 +52,7 @@ class TestCreateSpace:
 class TestGetSpace:
     """`GET /api/spaces/{owner}/{name}` includes the runtime block."""
 
-    async def test_runtime_block_reports_v1_stub(
+    async def test_runtime_block_reports_disabled_state_by_default(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
         client, _, _ = app
@@ -68,9 +68,9 @@ class TestGetSpace:
         response = client.get("/api/spaces/carol/showcase")
         assert response.status_code == 200
         runtime = response.json()["runtime"]
-        assert runtime["state"] == "preview_unavailable"
-        assert runtime["docs_url"] == "/docs/spaces"
-        assert "v1" in runtime["message"]
+        assert runtime["state"] == "disabled"
+        assert runtime["url"] is None
+        assert "비활성화" in runtime["message"]
 
 
 class TestListSpaces:

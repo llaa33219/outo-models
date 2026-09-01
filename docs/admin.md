@@ -83,9 +83,9 @@ sudo outo-models admin quota set alice 50GiB
 
 ## 5. GPU 할당
 
-사용자별로 GPU ID 문자열을 자유 형식으로 부여할 수 있습니다. v1 은 운영자가
-스스로 정한 라벨을 그대로 저장할 뿐, 실제 kubelet / nvidia plugin 연동은 v2
-로드맵입니다.
+사용자별로 GPU ID 문자열을 자유 형식으로 부여할 수 있습니다. v2 부터 할당된
+GPU 는 해당 사용자가 Space 를 띄울 때 컨테이너에 부착됩니다 (`nvidia.com/gpu=<id>`
+CDI 디바이스).
 
 ```bash
 sudo outo-models admin gpu show alice
@@ -97,6 +97,9 @@ sudo outo-models admin gpu clear alice
 
 저장 위치는 `web_settings(key="gpu:<username>")` 의 JSON 배열입니다. 모든 변경은
 `AuditLog(action="admin.gpu")` 가 기록합니다.
+
+부착 조건과 트러블슈팅은 [spaces.md §GPU 할당](spaces.md#gpu-할당) 와
+[troubleshooting.md §GPU CDI 오류](troubleshooting.md#gpu-cdi-오류) 참고.
 
 ## 6. 원격 모드 (`--api-url` + `--token`)
 

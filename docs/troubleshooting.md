@@ -226,6 +226,216 @@ podman logs outo-models
   /var/lib/outo-models/db.sqlite3 ".backup /backup/db-$(date +%F).sqlite3"`)
 - `data_dir/repos/` 는 git 저장소이므로 `git clone --mirror` 로 외부 미러 가능
 
+## 11. LFS 오류 응답
+
+`/info/lfs/objects/batch` 와 `/info/lfs/objects/{oid}` 의 모든 응답 코드는
+[git-repos.md §오류 코드](git-repos.md#오류-코드) 표에 정리되어 있습니다. 본
+섹션은 자주 부딪히는 케이스의 디버깅 절차만 다룹니다.
+
+### 406 / 415 — `Accept` 또는 `Content-Type` 누락
+
+`Accept: application/vnd.git-lfs+json` 가 없거나 본문 Content-Type 이 다를 때.
+서버는 fastapi 와 무관한 ASGI 핸들러가 직접 응답하므로, 클라이언트가 LFS 가
+아닌 다른 Git 클라이언트 (예: 구버전 `git-lfs`) 라면 LFS 스펙 미준수로 발생합니다.
+
+해결: `git lfs install` 로 클라이언트 측 LFS 필터를 다시 설치하고,
+`git config --list | grep lfs` 로 `filter.lfs.*` 가 잡히는지 확인합니다.
+
+### 413 — 객체가 너무 큼 또는 쿼터 초과
+
+batch 응답 본문 또는 PUT 응답 본문이 다음 두 형태 중 하나입니다.
+
+```json
+{ "error": "object size 2147483648 exceeds per-object limit 5368709120" }
+```
+
+→ `OUTO_LFS_MAX_OBJECT_BYTES` (기본 5 GiB) 초과. `/etc/outo-models/config.yaml`
+의 `lfs_max_object_bytes` 를 늘리거나 객체를 더 작게 분할.
+
+```json
+{ "error": "quota exceeded: used=… + incoming=… > max=…" }
+```
+
+→ 사용자 쿼터 초과. `outo-models admin quota show <name>` 으로 `used` /
+`max` 를 확인하고, `quota set <name> 50GiB` 으로 늘립니다.
+
+batch 응답에서는 **per-object** 로 표현됩니다 (한 객체의 413 이 다른 객체를
+실패시키지 않음). PUT 단계에서는 batch 응답에서 action 을 받은 후 본 업로드가
+다시 413 으로 거절될 수 있는데, 이때는 사용자가 직접 LFS 커밋을 줄여야 합니다.
+
+### 422 — batch JSON 형식 오류
+
+- `operation` 이 `"upload"` / `"download"` 가 아님
+- oid 가 64자 hex 가 아님 (예: sha256 미사용, 잘못된 길이)
+- `transfers` 에 `"basic"` 이 없음
+
+서버는 LFS 스펙대로 `application/vnd.git-lfs+json` Content-Type 으로 본문을
+반환합니다. 클라이언트 로그를 확인하고, `git lfs ls-files` 로 추적된 oid 가
+올바른지 검증합니다.
+
+### S3 presign clock skew
+
+`OUTO_LFS_BACKEND=s3` 인데 `git lfs push` 가 다음 메시지로 실패합니다.
+
+```
+S3 returned SignatureDoesNotMatch (or RequestTimeTooSkewed)
+```
+
+원인: SigV4 서명이 `X-Amz-Date` 의 시각을 기준으로 생성되는데, 서버 / 클라이언트
+/ S3 의 시각이 5분 이상 어긋나면 거절됩니다.
+
+해결:
+
+```bash
+# 1) 서버 호스트의 현재 시각이 UTC 와 얼마나 차이나는지
+date -u; date
+
+# 2) chronyd / systemd-timesyncd 가 살아있는지
+systemctl status chronyd   # 또는 systemd-timesyncd
+
+# 3) 컨테이너 안의 시각도 확인 (Podman 기본은 호스트와 공유지만 일부 환경은 분리)
+podman exec outo-models date -u
+```
+
+서버 시각이 정상이라면 클라이언트 측 시계 또는 S3 측 시계 문제입니다. 가장 흔한
+원인은 **장기 미부팅 서버** 의 RTC 어긋남이므로 `chronyc tracking` 으로 stratum
+을 확인하세요.
+
+### presign URL 이 외부로 새는 경우
+
+`OUTO_S3_PRESIGN_TTL_SECONDS` 가 너무 크면 만료 전 presigned URL 이 로그 /
+캐시에 남아 데이터가 노출됩니다. 기본 3600 초이지만, 운영 정책상 외부 공유가
+일어나지 않게 300~600 초로 줄이는 것을 권장합니다 (자세한 함의는
+[security.md §`s3` 백엔드의 presigned URL](security.md#s3-백엔드의-presigned-url)).
+
+## 12. Podman / Spaces 런타임 오류
+
+### 503 `runtime_disabled`
+
+`POST /api/spaces/<owner>/<name>/start` (또는 `/stop`, `/restart`, `/run/...`) 의
+응답이 다음입니다.
+
+```json
+{ "error": "runtime_disabled",
+  "message": "런타임이 비활성화되어 있습니다. 관리자가 OUTO_SPACES_RUNTIME_ENABLED=true 로 설정한 뒤 다시 시도해 주세요." }
+```
+
+원인: 컨테이너가 `OUTO_SPACES_RUNTIME_ENABLED=false` 로 떠 있음 (기본값).
+
+해결:
+
+```bash
+podman inspect outo-models --format '{{.Config.Env}}' | tr ',' '\n' | grep OUTO_
+# OUTO_SPACES_RUNTIME_ENABLED 가 없거나 false 면 환경 변수로 주입 후 재시작
+sudo podman stop outo-models
+sudo podman rm outo-models
+sudo outo-models start
+# 또는 config.yaml 의 spaces_runtime_enabled: true 로 변경
+```
+
+### 503 `podman_unreachable`
+
+```json
+{ "error": "podman_unreachable",
+  "message": "Podman 소켓에 연결할 수 없습니다. 호스트의 /run/podman/podman.sock 파일이 컨테이너에 마운트되어 있는지 확인하세요." }
+```
+
+원인: `OUTO_PODMAN_SOCKET` 으로 지정한 경로의 Unix 소켓이 컨테이너 안에서
+도달 불가. 가장 흔한 원인은 마운트 누락, rootless / system 모드 혼동.
+
+해결 절차:
+
+```bash
+# 1) 호스트에 Podman 소켓이 실제로 존재하는지
+ls -l /run/podman/podman.sock 2>/dev/null \
+  || ls -l /run/user/$(id -u)/podman/podman.sock 2>/dev/null
+
+# 2) 컨테이너 안에서 같은 경로가 보이는지
+podman exec outo-models ls -l /run/podman/podman.sock
+
+# 3) 마운트가 빠져 있다면 start 명령에 추가
+sudo podman run -d --name outo-models \
+  -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro \
+  ...
+
+# 4) 컨테이너 안에서 직접 REST 호출을 시험
+podman exec outo-models \
+  curl --unix-socket /run/podman/podman.sock \
+  http://d/v4.0.0/libpod/containers/json?all=true
+```
+
+### 502 `space_build_failed`
+
+```json
+{ "error": "space_build_failed",
+  "message": "이미지 빌드에 실패했습니다: …Podman API가 오류를 반환했습니다: <마지막 2 KiB>" }
+```
+
+원인: Podman `POST /libpod/build` 가 4xx / 5xx 로 응답. 메시지의 꼬리는 Podman
+빌드 로그의 마지막 2 KiB (`_build_failure_tail`) — Dockerfile / Containerfile 의
+오류가 그 안에 그대로 나옵니다.
+
+해결 절차:
+
+1. `docker_sdk` / `gradio` / `streamlit` SDK 인 경우 저장소 루트에 `Dockerfile`
+   또는 `Containerfile` 이 있는지 확인
+2. 컨테이너 안에서 직접 빌드를 재현해 전체 로그를 확인
+   ```bash
+   podman exec outo-models \
+     podman build --build-context /tmp/site=<(git clone <repo> /tmp/site) -
+   ```
+3. 베이스 이미지 (`FROM`) 가 컨테이너 안에서 pull 가능한지 — air-gapped 환경이면
+   미리 `podman pull` 해 둘 것
+
+### 503 `space_not_running`
+
+`/spaces/<owner>/<name>/run/` 으로 접속했는데:
+
+```json
+{ "error": "space_not_running",
+  "message": "스페이스가 실행 중이 아닙니다. 시작 후 다시 시도해 주세요." }
+```
+
+원인: 컨테이너가 exited / stopped / 생성되지 않은 상태.
+
+해결:
+
+```bash
+curl -b cookies.txt https://<domain>/api/spaces/<owner>/<name>/status
+# state 가 stopped / failed 면
+curl -X POST -b cookies.txt https://<domain>/api/spaces/<owner>/<name>/start
+```
+
+### 503 "모든 사용 가능한 런타임 포트가 사용 중입니다"
+
+원인: `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` 의 1000개 (또는 운영자가
+정한 범위) 포트가 모두 점유됨.
+
+해결:
+
+1. `curl -b cookies.txt https://<domain>/api/spaces` 로 스페이스 목록 확인 후
+   미사용 컨테이너를 `stop` 또는 `delete`
+2. 운영 중이라면 `OUTO_SPACES_RUNTIME_PORT_RANGE_END` 값을 늘려서 컨테이너 재시작
+
+### GPU CDI 오류
+
+`start` 가 다음을 반환합니다.
+
+```
+Podman API가 오류를 반환했습니다: … nvidia.com/gpu=0: no such device …
+```
+
+해결:
+
+```bash
+# 1) 호스트에 CDI 사양이 있는지
+ls /etc/cdi/nvidia.yaml
+
+# 2) podman 으로 디바이스를 직접 시도
+podman run --rm --device nvidia.com/gpu=0 docker.io/library/cuda-vectoradd:nvidia-12.0.0
+# 이게 실패하면 호스트 설정 문제 — nvidia-container-toolkit + CDI 사양 갱신 필요
+```
+
 ## 다음 단계
 
 - [install.md](install.md) — 첫 설치 절차
