@@ -1,10 +1,11 @@
 """Tests for `outo-models reset` — the destructive triple-yes gate.
 
 These are the safety tests: every regression here is a regression of
-AGENTS.md §2.2 ("3회 yes 확인 로직과 dry-run 기본 동작을 변경하는 PR은
-거부됩니다"). The gate is tested both through `CliRunner` (covers the
-real command surface) and through the `_reset_impl` function (covers
-the dry-run / refusal / abort branches the runner can't easily reach).
+AGENTS.md §2.2 ("any PR that changes the three-yes confirmation logic
+or the dry-run-by-default behavior will be rejected"). The gate is
+tested both through `CliRunner` (covers the real command surface) and
+through the `_reset_impl` function (covers the dry-run / refusal / abort
+branches the runner can't easily reach).
 """
 from __future__ import annotations
 
@@ -39,8 +40,8 @@ class TestResetDryRun:
         result = runner.invoke(app, ["reset"], env={"OUTO_CONFIG": str(tmp_path / "cfg.yaml")})
         assert result.exit_code == 0
         # Rich markup can be stripped by CliRunner — assert on plain text.
-        assert "삭제됩니다" in result.output
-        assert "볼륨: outo-models-data" in result.output
+        assert "would be deleted" in result.output
+        assert "volume: outo-models-data" in result.output
         assert not (tmp_path / "cfg.yaml").exists()
 
     def test_dry_run_lists_user_and_repo_counts(
@@ -90,8 +91,8 @@ class TestResetDryRun:
 
         result = runner.invoke(app, ["reset"])
         assert result.exit_code == 0, result.output
-        assert "사용자 수: 1" in result.output
-        assert "디스크 사용량:" in result.output
+        assert "users: 1" in result.output
+        assert "disk usage:" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +157,7 @@ class TestTripleYesGate:
             "Y",
             "YES",
             "yes ",  # trailing whitespace stripped by our check, but we test the raw
-            "예",
+            "true",
             "",
             "n",
             "yess",

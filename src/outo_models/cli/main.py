@@ -8,7 +8,8 @@ module owns three things only:
        `outo-models = "outo_models.cli.main:app"` reads.
     2. The `--version` flag (printed from `outo_models.version`).
     3. The error funnel — every `OutoError` raised by any subcommand is
-       rendered as a single Korean line + exit 1, never a traceback.
+       rendered as a single human-readable line + exit 1, never a
+       traceback.
 
 Why one fat Typer callback instead of per-command exception handlers?
     * The CLI's safety contract ("no tracebacks leak secrets") is a single
@@ -31,12 +32,10 @@ from outo_models.cli.setup import setup_app
 from outo_models.cli.update import update
 from outo_models.exceptions import OutoError
 
-# The top-level Typer app. Name and help text are operator-visible; the
-# Korean help makes the CLI self-explanatory for native speakers (AGENTS.md
-# §3 — docs and CLI must agree, both in Korean).
+# The top-level Typer app. The help text is operator-visible English.
 app = typer.Typer(
     name="outo-models",
-    help="outo-models 셀프 호스팅 서버 운영 CLI",
+    help="Operator CLI for a self-hosted outo-models server.",
     no_args_is_help=True,
     rich_markup_mode="rich",
     add_completion=False,
@@ -58,18 +57,18 @@ def _root_callback(
         "--version",
         callback=_version_callback,
         is_eager=True,
-        help="패키지 버전을 출력하고 종료합니다.",
+        help="Print the package version and exit.",
     ),
 ) -> None:
-    """outo-models 운영 CLI 루트 콜백.
+    """`outo-models` operator CLI root callback.
 
-    `OutoError`는 한국어 한 줄 메시지 + exit 1로 렌더링되며 Python
-    traceback은 절대 출력되지 않습니다 (AGENTS.md §2.1).
+    `OutoError` is rendered as a single human-readable line + exit 1;
+    Python tracebacks are never printed (AGENTS.md §2.1).
     """
 
 
-app.add_typer(setup_app, name="setup", help="최초 대화형 설정 마법사")
-app.add_typer(server_app, name="server", help="컨테이너 내부 서버/마이그레이션")
+app.add_typer(setup_app, name="setup", help="First-run interactive setup wizard")
+app.add_typer(server_app, name="server", help="In-container server / migration commands")
 
 # Lifecycle commands are top-level Typer commands (each a single leaf
 # action) so we avoid a redundant sub-app for one command. Imports are
@@ -80,14 +79,14 @@ from outo_models.cli.start import start  # noqa: E402
 from outo_models.cli.status import status  # noqa: E402
 from outo_models.cli.stop import stop  # noqa: E402
 
-app.command("start", help="outo-models 컨테이너를 시작합니다.")(start)
-app.command("stop", help="outo-models 컨테이너를 중지합니다.")(stop)
-app.command("restart", help="outo-models 컨테이너를 재시작합니다.")(restart)
-app.command("status", help="outo-models 컨테이너 상태를 확인합니다.")(status)
+app.command("start", help="Start the outo-models container.")(start)
+app.command("stop", help="Stop the outo-models container.")(stop)
+app.command("restart", help="Restart the outo-models container.")(restart)
+app.command("status", help="Show the outo-models container status.")(status)
 
-app.command("update", help="이미지 갱신 + DB 마이그레이션 + 재시작")(update)
-app.command("reset", help="컨테이너와 데이터를 모두 삭제 (3회 확인 게이트)")(reset)
-app.add_typer(admin_app, name="admin", help="사용자 / 쿼터 / GPU 관리")
+app.command("update", help="Pull the new image, run DB migrations, and restart.")(update)
+app.command("reset", help="Wipe the container and all data (triple-yes gate).")(reset)
+app.add_typer(admin_app, name="admin", help="Manage users, quotas, and GPUs")
 
 
 def main() -> None:

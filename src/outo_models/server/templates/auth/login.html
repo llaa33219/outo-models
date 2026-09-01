@@ -1,22 +1,22 @@
 {% extends "base.html" %}
-{% block title %}로그인 — outo-models{% endblock %}
+{% block title %}Log in — outo-models{% endblock %}
 {% block content %}
-<h1>로그인</h1>
-<p class="muted">사용자 이름과 비밀번호를 입력하세요.</p>
+<h1>Log in</h1>
+<p class="muted">Enter your username and password.</p>
 {% if error %}<div class="errors">{{ error }}</div>{% endif %}
 <form method="post" action="/login">
   <input type="hidden" name="_csrf" value="{{ request.cookies.get('_csrf', '') }}">
   <p>
-    <label>사용자 이름<br>
+    <label>Username<br>
       <input type="text" name="username" required>
     </label>
   </p>
   <p>
-    <label>비밀번호<br>
+    <label>Password<br>
       <input type="password" name="password" required>
     </label>
   </p>
-  <p><button type="submit">로그인</button></p>
+  <p><button type="submit">Log in</button></p>
 </form>
-<p class="muted">계정이 없으신가요? <a href="/signup">가입</a></p>
+<p class="muted">Don't have an account? <a href="/signup">Sign up</a></p>
 {% endblock %}

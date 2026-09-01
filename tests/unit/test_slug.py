@@ -66,7 +66,7 @@ class TestValidateSlugRejects:
             "UPPER",  # uppercase
             "with space",  # space inside
             "with_underscore"[:5] + " ",  # any forbidden char
-            "한글",  # non-ASCII
+            "Ω",  # non-ASCII
             "a" * 64,  # too long
             "a" * 100,
             "-",  # single forbidden char

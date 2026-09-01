@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}저장소 — outo-models{% endblock %}
+{% block title %}Repositories — outo-models{% endblock %}
 {% block content %}
-<h1>공개 저장소</h1>
+<h1>Public repositories</h1>
 {% if repos %}
   {% for repo in repos %}
     <div class="card">
@@ -11,6 +11,6 @@
     </div>
   {% endfor %}
 {% else %}
-  <p class="muted">아직 공개된 저장소가 없습니다.</p>
+  <p class="muted">No public repositories yet.</p>
 {% endif %}
 {% endblock %}

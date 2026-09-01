@@ -4,11 +4,11 @@ server via the `/api/admin/*` endpoints over HTTPS.
 The client is a thin wrapper around `httpx.Client` carrying a bearer PAT
 (`Authorization: Bearer <token>`). Each admin command builds a short-lived
 client, calls exactly one endpoint, and lets the response drive its
-Korean CLI output.
+CLI output.
 
 Why a dedicated class rather than a bag of `httpx.post(...)` calls?
     * Centralises error mapping — every network failure becomes the same
-      Korean CLI message the operator sees, never a traceback.
+      CLI message the operator sees, never a traceback.
     * Centralises the base-URL contract — `--remote` rewrites the host,
       `--api-url` lets ops target a non-default port, and the rest of the
       admin code path never sees the difference.
@@ -48,7 +48,7 @@ class AdminApiError(OutoError):
         * `admin_auth_failed` — server returned 401 / 403.
         * `admin_bad_response` — non-JSON body, unexpected status code.
 
-    The Korean message is operator-facing and deliberately free of bearer
+    The message is operator-facing and deliberately free of bearer
     tokens / host names that could leak into shell history.
     """
 
@@ -181,7 +181,7 @@ class AdminApiClient:
 
         Raises:
             AdminApiError: wraps every transport failure with a stable
-                `code` (see class docstring) and a Korean message free of
+                `code` (see class docstring) and a message free of
                 bearer tokens / host details.
         """
         try:
@@ -193,27 +193,27 @@ class AdminApiClient:
             )
         except httpx.HTTPError as exc:
             raise AdminApiError(
-                "원격 관리 API에 연결할 수 없습니다. 서버가 실행 중인지 확인해 주세요.",
+                "Cannot reach the remote admin API. Check that the server is running.",
                 code="admin_unreachable",
             ) from exc
 
         if response.status_code in (401, 403):
             raise AdminApiError(
-                "인증에 실패했습니다. PAT가 유효한지 확인해 주세요.",
+                "Authentication failed. Check that the PAT is valid.",
                 code="admin_auth_failed",
             )
         if response.status_code == 204 or not response.content:
             return None
         if response.status_code >= 400:
             raise AdminApiError(
-                f"원격 관리 API가 오류를 반환했습니다 (HTTP {response.status_code}).",
+                f"The remote admin API returned an error (HTTP {response.status_code}).",
                 code="admin_bad_response",
             )
         try:
             payload: Any = response.json()
         except ValueError as exc:
             raise AdminApiError(
-                "원격 관리 API가 잘못된 응답을 반환했습니다.",
+                "The remote admin API returned an invalid response.",
                 code="admin_bad_response",
             ) from exc
         return payload

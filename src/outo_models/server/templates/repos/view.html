@@ -8,10 +8,10 @@
 <h2>Clone</h2>
 <pre><code>git clone {{ clone_url }}</code></pre>
 
-<h2>최근 커밋</h2>
+<h2>Recent commits</h2>
 {% if revisions %}
   <table>
-    <thead><tr><th>SHA</th><th>메시지</th><th>작성자</th><th>시간</th></tr></thead>
+    <thead><tr><th>SHA</th><th>Message</th><th>Author</th><th>Time</th></tr></thead>
     <tbody>
       {% for rev in revisions %}
         <tr>
@@ -24,6 +24,6 @@
     </tbody>
   </table>
 {% else %}
-  <p class="muted">아직 커밋이 없습니다.</p>
+  <p class="muted">No commits yet.</p>
 {% endif %}
 {% endblock %}

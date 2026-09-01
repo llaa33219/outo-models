@@ -105,14 +105,14 @@ def write_config(path: Path, answers: SetupAnswers) -> None:
     # readable.
     body = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
     path.write_text(body, encoding="utf-8")
-    # chmod may fail on FAT mounts etc. — the Korean warning still fires,
+    # chmod may fail on FAT mounts etc. — the warning still fires,
     # and the file content is correct.
     with contextlib.suppress(OSError):
         os.chmod(path, 0o600)
 
     Console(stderr=True).print(
-        f"[yellow][경고] {path} 에 DNS 토큰 / 비밀 키가 포함되어 있습니다. "
-        "파일 권한을 0o600 으로 유지해 주세요.[/yellow]"
+        f"[yellow][warning] {path} contains a DNS token / secret key. "
+        "Keep the file permissions at 0o600.[/yellow]"
     )
 
 
@@ -135,13 +135,13 @@ async def ensure_dns_record(answers: SetupAnswers) -> None:
     )
     await provider.ensure_record(record)
 
-    # `ManualProvider.instructions()` returns a Korean cheat sheet; we
-    # print it and wait for the operator to confirm the record is live.
+    # `ManualProvider.instructions()` returns the operator cheat sheet;
+    # we print it and wait for the operator to confirm the record is live.
     from outo_models.dns.manual import ManualProvider
 
     if isinstance(provider, ManualProvider):
         Console().print(provider.instructions())
-        prompts.confirm("DNS 레코드가 전파되었으면 Enter 키를 눌러 주세요.", default=True)
+        prompts.confirm("Press Enter once the DNS record has propagated.", default=True)
 
 
 async def open_firewall_ports(ports: list[int]) -> None:
@@ -151,13 +151,12 @@ async def open_firewall_ports(ports: list[int]) -> None:
     except OutoError as exc:
         if exc.code == "firewall_permission":
             raise ConfigError(
-                f"방화벽 명령에 권한이 없습니다 ({exc}). "
-                "root 권한으로 다시 실행하거나 /etc/sudoers.d/outo-models 에 "
-                "NOPASSWD 규칙을 추가해 주세요."
+                f"insufficient permissions to run the firewall command ({exc}). "
+                "Re-run as root, or add a NOPASSWD rule to /etc/sudoers.d/outo-models."
             ) from exc
         raise
     Console().print(
-        f"[green][완료] 방화벽 포트 개방: {result.opened} ({result.kind.value})[/green]"
+        f"[green][done] firewall ports opened: {result.opened} ({result.kind.value})[/green]"
     )
 
 
@@ -209,25 +208,25 @@ def render_caddyfile_setup(answers: SetupAnswers) -> str:
     body = render_caddyfile(config)
     path = resolve_config_path().with_name("Caddyfile")
     path.write_text(body, encoding="utf-8")
-    Console().print(f"[green][완료] Caddyfile 작성: {path}[/green]")
+    Console().print(f"[green][done] Caddyfile written: {path}[/green]")
     return body
 
 
 def print_next_steps(config_path: Path, caddyfile: str) -> None:
-    """Render the final Korean message: where the config lives + how to start."""
+    """Render the final message: where the config lives + how to start."""
     console = Console()
     console.print()
-    console.print("[bold green][완료] 설정이 저장되었습니다.[/bold green]")
-    console.print(f"  - 설정 파일: {config_path}")
+    console.print("[bold green][done] Configuration saved.[/bold green]")
+    console.print(f"  - Config file: {config_path}")
     console.print(f"  - Caddyfile: {config_path.with_name('Caddyfile')}")
     console.print()
-    console.print("다음 명령으로 서버를 시작하세요:")
+    console.print("Start the server with:")
     console.print("  [bold]outo-models start[/bold]")
-    from outo_models.cli import emit_korean
+    from outo_models.cli import print_status
 
-    emit_korean(
-        "비밀번호는 절대 화면에 다시 출력되지 않습니다. "
-        "분실 시 admin reset-password 로 재설정하세요."
+    print_status(
+        "The password will never be displayed on screen again. "
+        "If you lose it, use `admin reset-password` to generate a new one."
     )
     del caddyfile  # signature kept for testability; the body is on disk.
 

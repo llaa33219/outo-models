@@ -1,28 +1,27 @@
 {% extends "base.html" %}
-{% block title %}가입 — outo-models{% endblock %}
+{% block title %}Sign up — outo-models{% endblock %}
 {% block content %}
-<h1>계정 만들기</h1>
-<p class="muted">사용자 이름, 이메일, 비밀번호를 입력하세요.</p>
+<h1>Create an account</h1>
+<p class="muted">Enter your username, email, and password.</p>
 {% if error %}<div class="errors">{{ error }}</div>{% endif %}
 <form method="post" action="/signup">
   <input type="hidden" name="_csrf" value="{{ request.cookies.get('_csrf', '') }}">
   <p>
-    <label>사용자 이름<br>
+    <label>Username<br>
       <input type="text" name="username" required minlength="1" maxlength="63">
     </label>
   </p>
   <p>
-    <label>이메일<br>
+    <label>Email<br>
       <input type="email" name="email" required>
     </label>
   </p>
   <p>
-    <label>비밀번호 (최소 8자)<br>
+    <label>Password (minimum 8 characters)<br>
       <input type="password" name="password" required minlength="8">
     </label>
   </p>
-  <p><button type="submit">가입</button></p>
+  <p><button type="submit">Sign up</button></p>
 </form>
-<p class="muted">이미 계정이 있으신가요? <a href="/login">로그인</a></p>
+<p class="muted">Already have an account? <a href="/login">Log in</a></p>
 {% endblock %}
-

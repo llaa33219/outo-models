@@ -70,7 +70,7 @@ class TestGetSpace:
         runtime = response.json()["runtime"]
         assert runtime["state"] == "disabled"
         assert runtime["url"] is None
-        assert "비활성화" in runtime["message"]
+        assert "disabled" in runtime["message"].lower()
 
 
 class TestListSpaces:

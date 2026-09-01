@@ -127,6 +127,12 @@ working in this repository **must** follow.
   `README.md`, `AGENTS.md`, the example config comments, the systemd /
   quadlet examples, or the contract checker is a defect; translate it back
   to English.
+- **User-facing runtime strings are English too.** CLI output, exception
+  messages, Jinja templates, log messages, and shell-script output are
+  written in English only. Machine-facing codes (exception `.code`, HTTP
+  statuses, audit actions) are the stable contract; human prose is not —
+  tests must assert on codes/structure, and on exact prose only when the
+  wording itself is the feature (e.g. the reset gate).
 - `scripts/check-docs.sh` verifies that every CLI command, REST router
   symbol, and `OUTO_*` environment variable is documented. Do not bypass
   this check. The `Docs/code parity` step in `.github/workflows/ci.yml`

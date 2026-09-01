@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}관리자 대시보드 — outo-models{% endblock %}
+{% block title %}Admin dashboard — outo-models{% endblock %}
 {% block content %}
-<h1>관리자 대시보드</h1>
-<p class="muted">가입 대기 중인 사용자를 승인하거나 거절하세요.</p>
+<h1>Admin dashboard</h1>
+<p class="muted">Approve or reject pending signups.</p>
 
-<h2>가입 대기</h2>
+<h2>Pending signups</h2>
 {% if pending %}
   <table>
-    <thead><tr><th>사용자 이름</th><th>이메일</th><th>가입 시각</th><th>승인</th><th>거절</th></tr></thead>
+    <thead><tr><th>Username</th><th>Email</th><th>Signup time</th><th>Approve</th><th>Reject</th></tr></thead>
     <tbody>
       {% for user in pending %}
         <tr>
@@ -17,13 +17,13 @@
           <td>
             <form method="post" action="/api/admin/users/{{ user.username }}/approve" style="display:inline">
               <input type="hidden" name="_csrf" value="{{ request.cookies.get('_csrf', '') }}">
-              <button type="submit">승인</button>
+              <button type="submit">Approve</button>
             </form>
           </td>
           <td>
             <form method="post" action="/api/admin/users/{{ user.username }}/deny" style="display:inline">
               <input type="hidden" name="_csrf" value="{{ request.cookies.get('_csrf', '') }}">
-              <button type="submit" class="danger">거절</button>
+              <button type="submit" class="danger">Reject</button>
             </form>
           </td>
         </tr>
@@ -31,6 +31,6 @@
     </tbody>
   </table>
 {% else %}
-  <p class="muted">대기 중인 가입 신청이 없습니다.</p>
+  <p class="muted">No pending signups.</p>
 {% endif %}
 {% endblock %}

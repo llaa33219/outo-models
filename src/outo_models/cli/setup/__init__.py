@@ -14,7 +14,7 @@ Two surfaces:
 
 The interactive path is what a human operator gets on the server host.
 The non-interactive path is what `container/scripts/*.sh` and any
-provisioning tool uses; both surface the same Korean final message.
+provisioning tool uses; both surface the same final message.
 
 The admin password is never logged, never echoed, never written to the
 config YAML in plaintext — only the argon2id hash reaches disk, via
@@ -38,7 +38,7 @@ from outo_models.exceptions import OutoError
 
 setup_app = typer.Typer(
     name="setup",
-    help="최초 대화형 설정 마법사",
+    help="First-run interactive setup wizard",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="rich",
@@ -47,7 +47,7 @@ setup_app = typer.Typer(
 
 @setup_app.callback()
 def _setup_callback() -> None:
-    """`outo-models setup` — 최초 설치 마법사."""
+    """`outo-models setup` — first-install wizard."""
 
 
 @setup_app.command("run")
@@ -55,51 +55,55 @@ def setup_run(
     non_interactive: bool = typer.Option(
         False,
         "--non-interactive",
-        help="대화형 프롬프트를 비활성화하고 플래그 / 환경변수만 사용합니다.",
+        help="Disable interactive prompts; use only flags and environment variables.",
     ),
-    domain: str | None = typer.Option(None, "--domain", help="서버 도메인"),
+    domain: str | None = typer.Option(None, "--domain", help="Server domain"),
     acme_email: str | None = typer.Option(
-        None, "--acme-email", help="ACME (Let's Encrypt) 계정 이메일"
+        None, "--acme-email", help="ACME (Let's Encrypt) account email"
     ),
     dns_provider: str | None = typer.Option(
         None,
         "--dns-provider",
-        help="DNS 제공자 (cloudflare | manual)",
+        help="DNS provider (cloudflare | manual)",
     ),
-    public_ipv4: str | None = typer.Option(None, "--public-ipv4", help="서버 공개 IPv4 주소"),
-    admin_username: str | None = typer.Option(None, "--admin-username", help="관리자 계정 이름"),
-    admin_email: str | None = typer.Option(None, "--admin-email", help="관리자 계정 이메일"),
+    public_ipv4: str | None = typer.Option(
+        None, "--public-ipv4", help="Server public IPv4 address"
+    ),
+    admin_username: str | None = typer.Option(
+        None, "--admin-username", help="Admin account username"
+    ),
+    admin_email: str | None = typer.Option(None, "--admin-email", help="Admin account email"),
     admin_password: str | None = typer.Option(
         None,
         "--admin-password",
-        help="관리자 비밀번호 (비대화형 모드 전용; 8자 이상)",
+        help="Admin password (non-interactive mode only; minimum 8 characters)",
     ),
-    skip_dns: bool = typer.Option(False, "--skip-dns", help="DNS 레코드 생성 단계 건너뜀"),
+    skip_dns: bool = typer.Option(False, "--skip-dns", help="Skip the DNS record creation step"),
     skip_firewall: bool = typer.Option(
-        False, "--skip-firewall", help="방화벽 포트 개방 단계 건너뜀"
+        False, "--skip-firewall", help="Skip the firewall port opening step"
     ),
     skip_ip_detect: bool = typer.Option(
         False,
         "--skip-ip-detect",
-        help="자동 IPv4 감지를 건너뛰고 수동 입력만 받습니다.",
+        help="Skip automatic IPv4 detection and only accept manual input.",
     ),
     yes: bool = typer.Option(
         False,
         "--yes",
-        help="기본값을 자동으로 수락 (안전한 단계에 한함).",
+        help="Accept defaults automatically (only for safe steps).",
     ),
     ports: str | None = typer.Option(
         None,
         "--ports",
-        help="쉼표로 구분된 포트 목록 (기본: 80,443).",
+        help="Comma-separated list of ports (default: 80,443).",
     ),
     require_approval: bool | None = typer.Option(
         None,
         "--require-approval/--no-require-approval",
-        help="신규 가입 시 관리자 승인 필요 여부.",
+        help="Whether new signups require admin approval.",
     ),
 ) -> None:
-    """설정 마법사를 실행합니다."""
+    """Run the setup wizard."""
     try:
         _run_setup(
             non_interactive=non_interactive,
@@ -156,7 +160,7 @@ def _run_setup(
     )
     _effect.apply_settings_env(answers)
 
-    # (1) Write the YAML config (mode 0o600; secrets included; warn Korean).
+    # (1) Write the YAML config (mode 0o600; secrets included; warn operator).
     config_path = _effect.resolve_config_path()
     _effect.write_config(config_path, answers)
 
@@ -174,7 +178,7 @@ def _run_setup(
     # (5) Caddyfile rendering.
     caddyfile = _effect.render_caddyfile_setup(answers)
 
-    # (6) Korean next-steps.
+    # (6) Final next-steps message.
     _effect.print_next_steps(config_path, caddyfile)
 
 

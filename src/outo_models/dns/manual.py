@@ -2,7 +2,7 @@
 
 `ensure_record` is a no-op against the upstream — the operator must create the
 records themselves at their DNS host. The provider remembers every record the
-setup wizard asked for, and `instructions()` returns a Korean-language cheat
+setup wizard asked for, and `instructions()` returns an English-language cheat
 sheet telling the operator exactly which records to create. `mark_confirmed()`
 clears the pending list once the operator has confirmed propagation.
 
@@ -55,7 +55,7 @@ class ManualProvider(DNSProvider):
         self._pending.clear()
 
     def instructions(self) -> str:
-        """Korean-language instructions telling the operator which records to add.
+        """English-language instructions telling the operator which records to add.
 
         The wizard prints this verbatim when the operator picks the `manual`
         DNS provider. Returns an empty string when no records are pending.
@@ -63,16 +63,19 @@ class ManualProvider(DNSProvider):
         if not self._pending:
             return ""
         lines: list[str] = [
-            f"다음 DNS 레코드를 {self._zone_domain} 의 DNS 호스트에 추가하세요:",
+            f"Please add the following DNS records at your DNS host for {self._zone_domain}:",
             "",
         ]
         for idx, record in enumerate(self._pending.values(), start=1):
             lines.append(
-                f"{idx}. 이름(name): {record.name}  "
-                f"유형(type): {record.type}  "
-                f"값(value): {record.value}  "
+                f"{idx}. Name: {record.name}  "
+                f"Type: {record.type}  "
+                f"Value: {record.value}  "
                 f"TTL: {record.ttl}s"
             )
         lines.append("")
-        lines.append("레코드가 전파된 것을 확인한 뒤 설치 마법사에서 '확인'을 눌러 주세요.")
+        lines.append(
+            "Once you have confirmed the records have propagated, "
+            "please press 'Confirm' in the setup wizard."
+        )
         return "\n".join(lines)

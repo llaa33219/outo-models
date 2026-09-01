@@ -81,7 +81,7 @@ def collect_answers(
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise ConfigError(
-                f"--non-interactive 모드에서 다음 값이 필요합니다: {', '.join(missing)}"
+                f"--non-interactive mode requires the following values: {', '.join(missing)}"
             )
 
     domain_value = _collect_domain(domain, non_interactive, yes)
@@ -117,10 +117,10 @@ def _collect_domain(flag_value: str | None, non_interactive: bool, yes: bool) ->
     if flag_value:
         return _validate_domain(flag_value)
     if non_interactive:
-        raise ConfigError("--domain 이 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--domain is required (--non-interactive mode).")
     default = "models.example.com" if yes else ""
     while True:
-        value = prompts.text("서버 도메인을 입력하세요 (예: models.example.com):", default=default)
+        value = prompts.text("Enter the server domain (e.g. models.example.com):", default=default)
         try:
             return _validate_domain(value)
         except ValidationFailedError as exc:
@@ -130,9 +130,9 @@ def _collect_domain(flag_value: str | None, non_interactive: bool, yes: bool) ->
 def _validate_domain(value: str) -> str:
     stripped = value.strip().lower()
     if not stripped:
-        raise ValidationFailedError("도메인을 입력해야 합니다.")
+        raise ValidationFailedError("A domain is required.")
     if " " in stripped or "/" in stripped:
-        raise ValidationFailedError("도메인에 공백이나 슬래시를 포함할 수 없습니다.")
+        raise ValidationFailedError("The domain must not contain spaces or slashes.")
     return stripped
 
 
@@ -140,26 +140,26 @@ def _collect_acme_email(flag_value: str | None, non_interactive: bool, yes: bool
     if flag_value:
         return flag_value.strip()
     if non_interactive:
-        raise ConfigError("--acme-email 이 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--acme-email is required (--non-interactive mode).")
     default = f"admin@{(get_settings().domain or 'example.com')}" if yes else ""
-    return prompts.text("ACME (Let's Encrypt) 계정 이메일을 입력하세요:", default=default).strip()
+    return prompts.text("Enter the ACME (Let's Encrypt) account email:", default=default).strip()
 
 
 def _collect_dns_provider(flag_value: str | None, non_interactive: bool, yes: bool) -> str:
     valid = ("cloudflare", "manual")
     if flag_value:
         if flag_value not in valid:
-            raise ConfigError(f"--dns-provider 는 {valid} 중 하나여야 합니다.")
+            raise ConfigError(f"--dns-provider must be one of {valid}.")
         return flag_value
     if non_interactive:
-        raise ConfigError("--dns-provider 가 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--dns-provider is required (--non-interactive mode).")
     while True:
         value = prompts.text(
-            "DNS 제공자를 선택하세요 (cloudflare / manual):", default="cloudflare" if yes else ""
+            "Choose a DNS provider (cloudflare / manual):", default="cloudflare" if yes else ""
         )
         if value in valid:
             return value
-        Console(stderr=True).print(f"[red]{valid} 중 하나를 입력해 주세요.[/red]")
+        Console(stderr=True).print(f"[red]Please enter one of {valid}.[/red]")
 
 
 def _collect_cloudflare_token(non_interactive: bool, yes: bool) -> str:
@@ -168,10 +168,10 @@ def _collect_cloudflare_token(non_interactive: bool, yes: bool) -> str:
         return env_token
     if non_interactive:
         raise ConfigError(
-            "cloudflare 제공자를 사용할 때 --admin-password 처럼 토큰이 필요합니다. "
-            "OUTO_CLOUDFLARE_API_TOKEN 환경변수를 설정해 주세요."
+            "Using the cloudflare provider requires a token, just like --admin-password. "
+            "Set the OUTO_CLOUDFLARE_API_TOKEN environment variable."
         )
-    return prompts.password("Cloudflare API 토큰을 입력하세요 (Zone.DNS:Edit 권한):")
+    return prompts.password("Enter the Cloudflare API token (Zone.DNS:Edit scope):")
 
 
 def _collect_public_ipv4(
@@ -180,7 +180,7 @@ def _collect_public_ipv4(
     if flag_value:
         return flag_value.strip()
     if non_interactive:
-        raise ConfigError("--public-ipv4 가 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--public-ipv4 is required (--non-interactive mode).")
 
     detected: str | None = None
     if not skip_detect:
@@ -194,7 +194,7 @@ def _collect_public_ipv4(
             detected = None
 
     default = detected or ""
-    value = prompts.text("서버의 공개 IPv4 주소 (DNS A 레코드):", default=default)
+    value = prompts.text("Server public IPv4 address (DNS A record):", default=default)
     return value.strip()
 
 
@@ -202,10 +202,10 @@ def _collect_admin_username(flag_value: str | None, non_interactive: bool, yes: 
     if flag_value:
         return validate_slug(flag_value)
     if non_interactive:
-        raise ConfigError("--admin-username 이 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--admin-username is required (--non-interactive mode).")
     default = "admin" if yes else ""
     while True:
-        value = prompts.text("관리자 계정 이름 (slug, 예: admin):", default=default)
+        value = prompts.text("Admin account username (slug, e.g. admin):", default=default)
         try:
             return validate_slug(value)
         except ValidationFailedError as exc:
@@ -216,13 +216,13 @@ def _collect_admin_email(flag_value: str | None, non_interactive: bool, yes: boo
     if flag_value:
         return flag_value.strip().lower()
     if non_interactive:
-        raise ConfigError("--admin-email 이 필요합니다 (--non-interactive 모드).")
+        raise ConfigError("--admin-email is required (--non-interactive mode).")
     default = ""
     while True:
-        value = prompts.text("관리자 계정 이메일을 입력하세요:", default=default).strip().lower()
+        value = prompts.text("Enter the admin account email:", default=default).strip().lower()
         if "@" in value:
             return value
-        Console(stderr=True).print("[red]유효한 이메일 주소를 입력해 주세요.[/red]")
+        Console(stderr=True).print("[red]Please enter a valid email address.[/red]")
 
 
 def _collect_admin_password(flag_value: str | None, non_interactive: bool, yes: bool) -> str:
@@ -230,19 +230,19 @@ def _collect_admin_password(flag_value: str | None, non_interactive: bool, yes: 
         return _validate_password_strength(flag_value)
     if non_interactive:
         raise ConfigError(
-            f"--admin-password 가 필요합니다 "
-            f"(--non-interactive 모드, 최소 {_MIN_PASSWORD_LENGTH}자)."
+            f"--admin-password is required "
+            f"(--non-interactive mode, minimum {_MIN_PASSWORD_LENGTH} characters)."
         )
     while True:
-        first = prompts.password("관리자 비밀번호를 입력하세요 (8자 이상):")
+        first = prompts.password("Enter the admin password (minimum 8 characters):")
         try:
             _validate_password_strength(first)
         except ValidationFailedError as exc:
             Console(stderr=True).print(f"[red]{exc}[/red]")
             continue
-        second = prompts.password("관리자 비밀번호를 다시 입력하세요:")
+        second = prompts.password("Re-enter the admin password:")
         if first != second:
-            Console(stderr=True).print("[red]비밀번호가 일치하지 않습니다. 다시 시도하세요.[/red]")
+            Console(stderr=True).print("[red]Passwords do not match. Please try again.[/red]")
             continue
         return first
 
@@ -250,7 +250,7 @@ def _collect_admin_password(flag_value: str | None, non_interactive: bool, yes: 
 def _validate_password_strength(value: str) -> str:
     if len(value) < _MIN_PASSWORD_LENGTH:
         raise ValidationFailedError(
-            f"비밀번호는 최소 {_MIN_PASSWORD_LENGTH}자 이상이어야 합니다."
+            f"Password must be at least {_MIN_PASSWORD_LENGTH} characters long."
         )
     return value
 
@@ -261,7 +261,9 @@ def _collect_ports(flag_value: str | None, non_interactive: bool, yes: bool) -> 
     if non_interactive:
         return list(_FIREWALL_REQUIRED_PORTS)
     default = "80,443" if yes else ""
-    raw = prompts.text("외부에서 열 포트 (쉼표 구분, 기본 80,443):", default=default)
+    raw = prompts.text(
+        "Ports to expose externally (comma-separated, default 80,443):", default=default
+    )
     if not raw.strip():
         return list(_FIREWALL_REQUIRED_PORTS)
     return _parse_ports(raw)
@@ -276,12 +278,12 @@ def _parse_ports(raw: str) -> list[int]:
         try:
             port = int(piece)
         except ValueError as exc:
-            raise ValidationFailedError(f"포트 '{piece}' 는 정수가 아닙니다.") from exc
+            raise ValidationFailedError(f"Port '{piece}' is not an integer.") from exc
         if not (1 <= port <= 65535):
-            raise ValidationFailedError(f"포트 {port} 는 유효 범위 (1-65535)가 아닙니다.")
+            raise ValidationFailedError(f"Port {port} is outside the valid range (1-65535).")
         out.append(port)
     if not out:
-        raise ValidationFailedError("최소 한 개의 포트가 필요합니다.")
+        raise ValidationFailedError("At least one port is required.")
     return out
 
 
@@ -290,7 +292,7 @@ def _collect_require_approval(flag_value: bool | None, non_interactive: bool, ye
         return flag_value
     if non_interactive:
         return True
-    return prompts.confirm("신규 가입 시 관리자 승인을 요구하시겠습니까?", default=yes or True)
+    return prompts.confirm("Require admin approval for new signups?", default=yes or True)
 
 
 __all__ = ["SetupAnswers", "collect_answers"]

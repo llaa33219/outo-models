@@ -325,8 +325,8 @@ class TestResetDryRunDefault:
 
         assert result.exit_code == 0, result.output
         # Dry-run summary lines that AGENTS.md §2.2 mandates.
-        assert "삭제됩니다" in result.output
-        assert "볼륨: outo-models-data" in result.output
+        assert "would be deleted" in result.output
+        assert "volume: outo-models-data" in result.output
         # Marker file survived — dry-run must not delete anything.
         assert marker.is_file()
         assert marker.read_bytes() == b"keep me"

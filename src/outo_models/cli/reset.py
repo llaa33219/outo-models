@@ -6,7 +6,7 @@ it implements the rule exactly as the spec demands:
 
     * Default (no `--destroy`) → DRY RUN. Print what would be destroyed
       (user count, repo count, total bytes, volume name) and exit 0 with
-      a Korean reminder to re-run with `--destroy`.
+      a reminder to re-run with `--destroy`.
     * `--destroy` requires `OUTO_DESTRUCTIVE=1` in the environment. Without
       it → refusal message, exit 1.
     * `OUTO_DESTRUCTIVE=1` without `--destroy` → still DRY RUN.
@@ -71,14 +71,16 @@ def reset(
     destroy: bool = typer.Option(
         False,
         "--destroy",
-        help="실제 삭제를 수행합니다 (게이트 통과 필요). 기본은 dry-run.",
+        help="Perform the actual deletion (must pass the confirmation gate). "
+        "Dry-run by default.",
     ),
 ) -> None:
-    """`outo-models reset` — 모든 데이터를 삭제 (3회 확인 게이트).
+    """`outo-models reset` — wipe all data (triple-confirmation gate).
 
-    기본 동작은 dry-run: 삭제될 대상 요약을 출력하고 0 으로 종료합니다.
-    실제 삭제하려면 `--destroy` 와 환경변수 `OUTO_DESTRUCTIVE=1` 을
-    함께 사용하고, 세 번 정확히 `yes` 를 입력해야 합니다.
+    The default action is a dry run: it prints a summary of what would be
+    deleted and exits 0. To perform the actual deletion you must pass
+    `--destroy` together with the environment variable `OUTO_DESTRUCTIVE=1`,
+    and type exactly `yes` three times.
     """
     _reset_impl(destroy=destroy)
 
@@ -124,20 +126,21 @@ async def _compute_summary() -> tuple[int, int, int, str]:
 
 
 def _print_dry_run(user_count: int, repo_count: int, total_bytes: int, volume: str) -> None:
-    """Print the would-be-destroyed summary in Korean."""
+    """Print the would-be-destroyed summary."""
     console = Console()
     console.print(
-        "[bold yellow][dry-run] 다음 데이터가 삭제됩니다 (실제 삭제는 수행하지 않음):[/bold yellow]"
+        "[bold yellow]\\[dry-run] The following data would be deleted "
+        "(no actual deletion will happen):[/bold yellow]"
     )
-    console.print(f"  - 사용자 수: {user_count}")
-    console.print(f"  - 저장소 수: {repo_count}")
-    console.print(f"  - 디스크 사용량: {format_bytes(total_bytes)}")
-    console.print(f"  - 컨테이너: {_CONTAINER_NAME}")
-    console.print(f"  - 볼륨: {volume}")
+    console.print(f"  - users: {user_count}")
+    console.print(f"  - repositories: {repo_count}")
+    console.print(f"  - disk usage: {format_bytes(total_bytes)}")
+    console.print(f"  - container: {_CONTAINER_NAME}")
+    console.print(f"  - volume: {volume}")
     console.print()
     console.print(
-        "실제로 삭제하려면 [bold]--destroy[/bold] 옵션과 "
-        f"[bold]{_DESTRUCTIVE_ENV}=1[/bold] 환경변수를 함께 사용하세요."
+        "To actually delete, pass the [bold]--destroy[/bold] option "
+        f"together with the environment variable [bold]{_DESTRUCTIVE_ENV}=1[/bold]."
     )
 
 
@@ -148,14 +151,14 @@ def _print_escalation_warning(
     console = Console(stderr=True)
     summaries = {
         1: (
-            f"[정말로 삭제하시겠습니까?] 사용자 {user_count}명, "
-            f"저장소 {repo_count}개, {format_bytes(total_bytes)}."
+            f"[Are you sure?] This will permanently delete {user_count} users, "
+            f"{repo_count} repositories, {format_bytes(total_bytes)} of data."
         ),
-        2: "[경고] 이 작업은 되돌릴 수 없습니다 (복구 불가). 모든 데이터가 영구히 사라집니다.",
+        2: "[WARNING] This action is irreversible (no recovery). All data will be gone for good.",
         3: (
-            f"[최종 확인] 컨테이너 '{_CONTAINER_NAME}' 와 볼륨 '{_VOLUME_NAME}', "
-            f"로컬 데이터 디렉터리가 모두 삭제됩니다. {user_count}명의 사용자와 "
-            f"{repo_count}개의 저장소가 사라집니다."
+            f"[FINAL CONFIRMATION] The container '{_CONTAINER_NAME}' and the volume "
+            f"'{_VOLUME_NAME}', plus the local data directory, will all be deleted. "
+            f"{user_count} users and {repo_count} repositories will disappear."
         ),
     }
     console.print(f"\n[bold red]{summaries[stage]}[/bold red]")
@@ -175,16 +178,16 @@ def _gather_yes_confirmations(user_count: int, repo_count: int, total_bytes: int
         # exactly `yes` — `Confirm.ask` would silently accept `y` and
         # weaken the AGENTS.md §2.2 gate.
         try:
-            answer = input(f"[{stage}/{_REQUIRED_YES_COUNT}] 정확히 '{_YES_TOKEN}' 입력: ")
+            answer = input(f"[{stage}/{_REQUIRED_YES_COUNT}] type '{_YES_TOKEN}' exactly: ")
         except EOFError:
-            console.print("[bold red]입력 스트림이 닫혔습니다. 작업을 중단합니다.[/bold red]")
+            console.print("[bold red]Input stream closed. Aborting.[/bold red]")
             return False
         # `answer != _YES_TOKEN` — no `.strip()`, so `yes ` (trailing
         # whitespace) is rejected. The spec demands exact match; an
         # operator who truly meant `yes` types it without trailing space.
         if answer != _YES_TOKEN:
             console.print(
-                f"[bold red]'{_YES_TOKEN}'이(가) 아닙니다 — 작업을 중단합니다.[/bold red]"
+                f"[bold red]Not '{_YES_TOKEN}' — aborting.[/bold red]"
             )
             return False
     return True
@@ -205,7 +208,7 @@ def _wipe_local_data_dir() -> None:
         shutil.rmtree(data_dir)
     except OSError as exc:
         raise OutoError(
-            f"로컬 데이터 디렉터리 삭제 실패 ({data_dir}): {exc}",
+            f"failed to delete local data directory ({data_dir}): {exc}",
             code="reset_local_wipe_failed",
         ) from exc
 
@@ -221,8 +224,8 @@ def _reset_impl(destroy: bool) -> None:
         _print_dry_run(user_count, repo_count, total_bytes, volume)
         if env_destructive:
             note = (
-                f"\n[yellow]참고: {_DESTRUCTIVE_ENV}=1 이 설정되어 있지만 "
-                "--destroy 가 없어 dry-run 으로 종료합니다.[/yellow]"
+                f"\n[yellow]Note: {_DESTRUCTIVE_ENV}=1 is set but "
+                "--destroy was not given, so this is a dry run.[/yellow]"
             )
             Console().print(note)
         asyncio.run(_dispose_engines_safe())
@@ -232,7 +235,7 @@ def _reset_impl(destroy: bool) -> None:
         asyncio.run(_dispose_engines_safe())
         render_error(
             ConfigError(
-                f"--destroy 를 사용하려면 환경변수 {_DESTRUCTIVE_ENV}=1 이 필요합니다.",
+                f"--destroy requires the environment variable {_DESTRUCTIVE_ENV}=1.",
                 code="reset_env_missing",
             )
         )
@@ -240,14 +243,14 @@ def _reset_impl(destroy: bool) -> None:
 
     if not _gather_yes_confirmations(user_count, repo_count, total_bytes):
         asyncio.run(_dispose_engines_safe())
-        render_error(OutoError("확인 게이트를 통과하지 못했습니다.", code="reset_aborted"))
+        render_error(OutoError("confirmation gate failed.", code="reset_aborted"))
         raise typer_exit(1)
 
     script = container_script("reset.sh")
     rc = stream_subprocess(["bash", script])
     if rc != 0:
         asyncio.run(_dispose_engines_safe())
-        render_error(OutoError(f"reset.sh 가 실패했습니다 (exit={rc})", code="reset_script_failed"))
+        render_error(OutoError(f"reset.sh failed (exit={rc})", code="reset_script_failed"))
         raise typer_exit(1)
 
     try:
@@ -258,9 +261,9 @@ def _reset_impl(destroy: bool) -> None:
         raise typer_exit(1) from exc
 
     Console().print(
-        "[bold green][완료] outo-models 가 초기 설치 상태로 되돌아갔습니다.[/bold green]"
+        "[bold green][done] outo-models has been reset to a freshly-installed state.[/bold green]"
     )
-    Console().print("다시 시작하려면 `outo-models setup` 을 실행해 주세요.")
+    Console().print("Run `outo-models setup` to start over.")
 
 
 async def _dispose_engines_safe() -> None:

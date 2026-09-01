@@ -13,15 +13,15 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from outo_models.cli import emit_korean
+from outo_models.cli import print_status
 
 _CONTAINER_NAME = "outo-models"
 
 
 def status() -> None:
-    """`outo-models status` — 컨테이너 실행 상태를 출력합니다."""
+    """`outo-models status` — print the container run state."""
     if shutil.which("podman") is None:
-        emit_korean("[정보] 이 호스트에는 podman이 설치되어 있지 않습니다 (개발 환경).")
+        print_status("[info] podman is not installed on this host (development environment).")
         return
 
     # `podman container exists` returns 0 when present, 1 when absent.
@@ -31,7 +31,7 @@ def status() -> None:
         capture_output=True,
     )
     if exists.returncode != 0:
-        emit_korean(f"[상태] 컨테이너 없음: {_CONTAINER_NAME}")
+        print_status(f"[status] no such container: {_CONTAINER_NAME}")
         return
 
     inspect = subprocess.run(  # noqa: S603
@@ -42,9 +42,9 @@ def status() -> None:
     )
     is_running = inspect.stdout.strip().lower() == "true"
     if is_running:
-        emit_korean(f"[상태] 실행 중: {_CONTAINER_NAME}")
+        print_status(f"[status] running: {_CONTAINER_NAME}")
         return
-    emit_korean(f"[상태] 중지됨: {_CONTAINER_NAME}")
+    print_status(f"[status] stopped: {_CONTAINER_NAME}")
 
 
 __all__ = ["status"]

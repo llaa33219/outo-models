@@ -126,7 +126,7 @@ class TestDispatcher:
         status = await runtime_status(_space(), settings=settings, manager=manager)
         assert status.state is RuntimeState.DISABLED
         assert status.url is None
-        assert "비활성화" in status.message
+        assert "disabled" in status.message.lower()
         assert "OUTO_SPACES_RUNTIME_ENABLED" in status.message
         assert manager.calls == []
 
@@ -136,7 +136,7 @@ class TestDispatcher:
         status = await runtime_status(_space(), settings=settings, manager=manager)
         assert status.state is RuntimeState.STOPPED
         assert status.url is None
-        assert "중지" in status.message
+        assert "stopped" in status.message.lower()
 
     async def test_running_state_carries_url_and_port(self) -> None:
         settings = _settings()

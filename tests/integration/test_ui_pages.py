@@ -126,4 +126,4 @@ class TestAdminPageGate:
         )
         response = client.get("/admin")
         assert response.status_code == 200
-        assert "관리자" in response.text or "admin" in response.text.lower()
+        assert "Admin" in response.text or "admin" in response.text.lower()

@@ -30,17 +30,17 @@ def update(
     image: str = typer.Option(
         "outo-models:stable",
         "--image",
-        help="갱신할 이미지 태그.",
+        help="Image tag to update to.",
     ),
 ) -> None:
-    """`outo-models update` — 이미지 갱신 + DB 마이그레이션 + 재시작."""
+    """`outo-models update` — pull the new image, run DB migrations, restart."""
     script = container_script("update.sh")
     argv = ["bash", script, image]
     rc = stream_subprocess(argv)
     if rc != 0:
         render_error(
             OutoError(
-                f"업데이트 스크립트가 실패했습니다 (exit={rc})",
+                f"update script failed (exit={rc})",
                 code="update_failed",
             )
         )

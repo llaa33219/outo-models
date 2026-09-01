@@ -5,7 +5,7 @@
 # over a unit-of-work boundary that should not be split — every helper
 # serves at most one method on the class, and the alternatives (a
 # separate helpers module + multiple manager classes) would force
-# callers to thread the same `_KOREAN_SOCK_HINT` / `_ERROR_TAIL_MAX_CHARS`
+# callers to thread the same `_podman_socket_hint` / `_ERROR_TAIL_MAX_CHARS`
 # constants across files. Keeping one module is the smaller diff and
 # the easier review target.
 
@@ -36,8 +36,8 @@ Two distinct failure surfaces map to typed `OutoError` subclasses (created
 inline via the constructor `code=` argument):
 
 * socket unreachable (`httpx.ConnectError`, `OSError`) → ``code="podman_unreachable"``
-  with a Korean hint telling the operator to mount the socket into the
-  container.
+  with an operator-facing hint telling the operator to mount the socket
+  into the container.
 * Podman REST 4xx / 5xx → ``code="podman_api"`` carrying the podman error
   body verbatim so the operator can see *why* the call was rejected.
 
@@ -90,12 +90,11 @@ def image_tag(owner: str, name: str) -> str:
     return f"localhost/outo-space-{owner}-{name}:latest"
 
 
-def _korean_sock_hint() -> str:
+def _podman_socket_hint() -> str:
     """Return the operator-facing hint appended to `podman_unreachable` errors."""
     return (
-        "Podman 소켓에 연결할 수 없습니다. 호스트의 "
-        "/run/podman/podman.sock 파일이 컨테이너에 마운트되어 있는지 "
-        "확인하세요."
+        "Cannot connect to the Podman socket. Check that "
+        "/run/podman/podman.sock from the host is mounted into the container."
     )
 
 
@@ -174,13 +173,13 @@ class SpaceRuntimeManager:
             )
         except httpx.ConnectError as exc:
             raise OutoError(
-                _korean_sock_hint(),
+                _podman_socket_hint(),
                 code="podman_unreachable",
                 status_code=503,
             ) from exc
         except httpx.RequestError as exc:
             raise OutoError(
-                f"Podman API 호출에 실패했습니다: {exc}",
+                f"Podman API call failed: {exc}",
                 code="podman_unreachable",
                 status_code=503,
             ) from exc
@@ -208,7 +207,7 @@ class SpaceRuntimeManager:
         else:
             tail = _build_failure_tail(message)
         raise OutoError(
-            f"Podman API가 오류를 반환했습니다: {tail or 'unknown error'}",
+            f"Podman API returned an error: {tail or 'unknown error'}",
             code="podman_api",
             status_code=502,
         )
@@ -295,8 +294,8 @@ class SpaceRuntimeManager:
             if port not in used:
                 return port
         raise OutoError(
-            "모든 사용 가능한 런타임 포트가 사용 중입니다. "
-            "spaces_runtime_port_range_end 값을 늘려주세요.",
+            "All available runtime ports are in use. "
+            "Increase the spaces_runtime_port_range_end value.",
             code="podman_api",
             status_code=503,
         )
@@ -317,7 +316,7 @@ class SpaceRuntimeManager:
             )
         except _Outo as exc:
             raise _Outo(
-                f"이미지 빌드에 실패했습니다: {exc}",
+                f"Image build failed: {exc}",
                 code="space_build_failed",
                 status_code=502,
             ) from exc
@@ -414,7 +413,7 @@ class SpaceRuntimeManager:
                 )
             except httpx.RequestError as exc:
                 raise OutoError(
-                    f"Podman API 호출에 실패했습니다: {exc}",
+                    f"Podman API call failed: {exc}",
                     code="podman_unreachable",
                     status_code=503,
                 ) from exc
@@ -434,7 +433,7 @@ class SpaceRuntimeManager:
                 )
             except httpx.RequestError as exc:
                 raise OutoError(
-                    f"Podman API 호출에 실패했습니다: {exc}",
+                    f"Podman API call failed: {exc}",
                     code="podman_unreachable",
                     status_code=503,
                 ) from exc

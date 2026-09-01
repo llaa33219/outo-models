@@ -154,7 +154,8 @@ class TestApprovalTransitions:
 
         result = runner.invoke(app, ["admin", "approve", "carol"])
         assert result.exit_code == 0, result.output
-        assert "approved" in result.output.lower() or "승인" in result.output
+        assert "[approved]" in result.output
+        assert "carol" in result.output
 
     def test_ban_then_unban(
         self, runner: CliRunner, tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -236,7 +237,8 @@ class TestGpu:
 
         result = runner.invoke(app, ["admin", "gpu", "assign", "frank", "gpu-0", "gpu-1"])
         assert result.exit_code == 0, result.output
-        assert "할당" in result.output
+        assert "[gpu]" in result.output
+        assert "assigned" in result.output
 
         result = runner.invoke(app, ["admin", "gpu", "show", "frank"])
         assert result.exit_code == 0
@@ -248,7 +250,7 @@ class TestGpu:
 
         result = runner.invoke(app, ["admin", "gpu", "show", "frank"])
         assert result.exit_code == 0
-        assert "할당 없음" in result.output
+        assert "no GPUs assigned" in result.output
 
 
 class TestResetPassword:

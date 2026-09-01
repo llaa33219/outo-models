@@ -1,7 +1,7 @@
 """Typer command bodies for `outo-models admin ...`.
 
 Each command: validate `--api-url` / `--token`, branch on remote vs
-local, print a single Korean line. The actual logic lives in
+local, print a single status line. The actual logic lives in
 `admin._local_db` (SQL) and `cli_remote.api` (HTTP) — adding a new admin
 command is a 3-line diff.
 
@@ -44,14 +44,14 @@ def _remote_options(
     credential — that is always a typo or an automation bug).
     """
     if (api_url is None) != (token is None):
-        render_error(ValidationFailedError("--api-url 과 --token 은 함께 사용해야 합니다."))
+        render_error(ValidationFailedError("--api-url and --token must be used together."))
         raise typer_exit(1)
     return api_url, token, api_url is not None and token is not None
 
 
 def _print_users_table(users: list[dict[str, Any]]) -> None:
     if not users:
-        typer.echo("(사용자 없음)")
+        typer.echo("(no users)")
         return
     header = f"{'username':<20} {'email':<32} {'role':<8} {'status':<10} {'id':<5}"
     typer.echo(header)
@@ -68,7 +68,7 @@ def _require_admin() -> Any:
     """Resolve the first admin user for the local-DB actor; exit 1 if none exists."""
     admin = _local_db.require_admin_for_local()
     if admin is None:
-        render_error(NotFoundError("로컬 DB 에 admin 계정이 없습니다. setup 으로 생성해 주세요."))
+        render_error(NotFoundError("no admin account in the local DB. Create one via setup."))
         raise typer_exit(1)
     return admin
 
@@ -103,10 +103,10 @@ def list_users_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """사용자 목록을 출력합니다."""
+    """Print the list of users."""
     if status_filter is not None and status_filter not in VALID_STATUSES:
         render_error(
-            ValidationFailedError(f"--status 는 {VALID_STATUSES} 중 하나여야 합니다.")
+            ValidationFailedError(f"--status must be one of {VALID_STATUSES}.")
         )
         raise typer_exit(1)
     users = _dispatch_remote_or_local(
@@ -124,7 +124,7 @@ def pending_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """승인 대기 사용자만 출력합니다 (`admin list --status pending` 의 단축 명령)."""
+    """Print only the users awaiting approval (shortcut for `admin list --status pending`)."""
     users = _dispatch_remote_or_local(
         api_url,
         token,
@@ -152,7 +152,7 @@ def approve_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """가입 대기를 승인합니다."""
+    """Approve a pending signup."""
     result = _dispatch_remote_or_local(
         api_url,
         token,
@@ -161,7 +161,7 @@ def approve_command(
             _local_db.run_async(_local_db._approve_async(username, _require_admin()))
         ),
     )
-    typer.echo(f"[승인] {result['username']} → {result['status']}")
+    typer.echo(f"[approved] {result['username']} -> {result['status']}")
 
 
 def deny_command(
@@ -170,7 +170,7 @@ def deny_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """가입을 거절합니다."""
+    """Deny a signup."""
     result = _dispatch_remote_or_local(
         api_url,
         token,
@@ -179,7 +179,7 @@ def deny_command(
             _local_db.run_async(_local_db._deny_async(username, _require_admin(), reason))
         ),
     )
-    typer.echo(f"[거절] {result['username']} → {result['status']}")
+    typer.echo(f"[denied] {result['username']} -> {result['status']}")
 
 
 def ban_command(
@@ -188,7 +188,7 @@ def ban_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """사용자를 차단합니다."""
+    """Ban a user."""
     result = _dispatch_remote_or_local(
         api_url,
         token,
@@ -197,7 +197,7 @@ def ban_command(
             _local_db.run_async(_local_db._ban_async(username, _require_admin(), reason))
         ),
     )
-    typer.echo(f"[차단] {result['username']} → {result['status']}")
+    typer.echo(f"[banned] {result['username']} -> {result['status']}")
 
 
 def unban_command(
@@ -205,7 +205,7 @@ def unban_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """차단을 해제합니다."""
+    """Lift a ban."""
     result = _dispatch_remote_or_local(
         api_url,
         token,
@@ -214,7 +214,7 @@ def unban_command(
             _local_db.run_async(_local_db._unban_async(username, _require_admin()))
         ),
     )
-    typer.echo(f"[해제] {result['username']} → {result['status']}")
+    typer.echo(f"[unbanned] {result['username']} -> {result['status']}")
 
 
 def quota_show_command(
@@ -222,7 +222,7 @@ def quota_show_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """저장 용량 할당량을 확인합니다."""
+    """Show a user's storage quota."""
     quota = _dispatch_remote_or_local(
         api_url,
         token,
@@ -230,7 +230,7 @@ def quota_show_command(
         local_action=lambda: _local_db.run_async(_local_db._get_quota_async(username)),
     )
     typer.echo(
-        f"[쿼터] {username}: max={format_bytes(int(quota['max_bytes']))} "
+        f"[quota] {username}: max={format_bytes(int(quota['max_bytes']))} "
         f"used={format_bytes(int(quota.get('used_bytes', 0)))}"
     )
 
@@ -241,7 +241,7 @@ def quota_set_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """저장 용량 할당량을 설정합니다."""
+    """Set a user's storage quota."""
     try:
         new_max = parse_human_bytes(max_bytes)
     except ValidationFailedError as exc:
@@ -260,7 +260,7 @@ def quota_set_command(
         remote_action=lambda c: c.set_quota(username, new_max),
         local_action=_local_set,
     )
-    typer.echo(f"[쿼터] {username}: max={format_bytes(int(result['max_bytes']))}")
+    typer.echo(f"[quota] {username}: max={format_bytes(int(result['max_bytes']))}")
 
 
 def gpu_show_command(
@@ -268,7 +268,7 @@ def gpu_show_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """GPU 할당 목록을 확인합니다."""
+    """Show a user's GPU assignment."""
     payload = _dispatch_remote_or_local(
         api_url,
         token,
@@ -279,9 +279,9 @@ def gpu_show_command(
     )
     gpu_ids = list(payload.get("gpu_ids", []))
     if not gpu_ids:
-        typer.echo(f"[GPU] {username}: 할당 없음")
+        typer.echo(f"[gpu] {username}: no GPUs assigned")
         return
-    typer.echo(f"[GPU] {username}: {', '.join(gpu_ids)}")
+    typer.echo(f"[gpu] {username}: {', '.join(gpu_ids)}")
 
 
 def gpu_assign_command(
@@ -290,7 +290,7 @@ def gpu_assign_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """GPU 를 할당합니다 (기존 목록을 덮어씁니다)."""
+    """Assign GPUs to a user (overwrites the existing list)."""
     _dispatch_remote_or_local(
         api_url,
         token,
@@ -299,7 +299,7 @@ def gpu_assign_command(
             _local_db._set_gpu_async(username, _require_admin(), list(gpu_ids))
         ),
     )
-    typer.echo(f"[GPU] {username}: 할당 {gpu_ids}")
+    typer.echo(f"[gpu] {username}: assigned {gpu_ids}")
 
 
 def gpu_clear_command(
@@ -307,7 +307,7 @@ def gpu_clear_command(
     api_url: str | None,
     token: str | None,
 ) -> None:
-    """GPU 할당을 모두 제거합니다."""
+    """Remove all GPU assignments from a user."""
     _dispatch_remote_or_local(
         api_url,
         token,
@@ -316,15 +316,15 @@ def gpu_clear_command(
             _local_db._clear_gpu_async(username, _require_admin())
         ),
     )
-    typer.echo(f"[GPU] {username}: 할당 제거")
+    typer.echo(f"[gpu] {username}: assignment cleared")
 
 
 def reset_password_command(username: str) -> None:
-    """새 비밀번호를 생성하고 1회만 출력합니다 (분실 복구용)."""
+    """Generate a new password and print it once (for recovery)."""
     admin = _require_admin()
     new_password = secrets.token_urlsafe(18)
     user = _local_db.run_async(_local_db._reset_password_async(username, admin, new_password))
-    typer.echo(f"[재설정] {user.username} 의 새 비밀번호 (다시 출력되지 않습니다):")
+    typer.echo(f"[reset] New password for {user.username} (will not be shown again):")
     typer.echo(f"  {new_password}")
 
 

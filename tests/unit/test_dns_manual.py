@@ -104,7 +104,7 @@ class TestMarkConfirmed:
 
 
 class TestInstructions:
-    """`instructions()` is Korean text the wizard prints to the operator."""
+    """`instructions()` is English text the wizard prints to the operator."""
 
     def test_empty_when_no_pending(self) -> None:
         provider = ManualProvider(zone_domain="models.example.com")

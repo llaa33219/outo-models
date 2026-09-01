@@ -8,8 +8,8 @@ firewall / DNS / TLS work is already done by the setup wizard, and this
 command does NOT touch any host-privileged tooling.
 
 When `podman` is not on `PATH` (the development machine), the command
-prints a clear Korean message telling the operator this command runs on
-the server host. This is *not* an error per se — the development machine
+prints a clear message telling the operator this command runs on the
+server host. This is *not* an error per se — the development machine
 has no server to manage — but it exits non-zero so a CI script wrapping
 the CLI notices.
 """
@@ -22,8 +22,8 @@ from pathlib import Path
 import yaml
 
 from outo_models.cli import (
-    emit_korean,
     podman_available,
+    print_status,
     render_error,
     stream_subprocess,
     typer_exit,
@@ -64,25 +64,25 @@ def _load_config() -> dict[str, object]:
     path = _config_path()
     if not path.exists():
         raise ConfigError(
-            f"설정 파일이 없습니다 ({path}). 먼저 'outo-models setup'을 실행해 주세요."
+            f"config file not found ({path}). Run 'outo-models setup' first."
         )
     with path.open("r", encoding="utf-8") as fh:
         payload = yaml.safe_load(fh) or {}
     if not isinstance(payload, dict):
-        raise ConfigError(f"설정 파일 형식이 잘못되었습니다 ({path}): 최상위가 매핑이 아님")
+        raise ConfigError(f"config file has an invalid format ({path}): top-level is not a mapping")
     for key in _REQUIRED_KEYS:
         if key not in payload:
-            raise ConfigError(f"설정 파일에 '{key}' 키가 없습니다 ({path})")
+            raise ConfigError(f"config file is missing the '{key}' key ({path})")
     return payload
 
 
 def start() -> None:
-    """`outo-models start` — 컨테이너를 시작합니다."""
+    """`outo-models start` — start the container."""
     if not podman_available():
         render_error(
             ConfigError(
-                "이 명령은 서버 호스트에서 실행되어야 합니다 (podman 미설치). "
-                "컨테이너 배포 환경의 호스트에서 다시 실행해 주세요."
+                "this command must be run on the server host (podman not installed). "
+                "Re-run it on the host of the deployed container."
             )
         )
         raise typer_exit(1)
@@ -98,7 +98,7 @@ def start() -> None:
     ports_raw = cfg[_KEY_PORTS]
     if not isinstance(ports_raw, list):
         render_error(
-            ConfigError(f"설정 파일의 'ports'는 리스트여야 합니다 (got {type(ports_raw).__name__})")
+            ConfigError(f"config file 'ports' must be a list (got {type(ports_raw).__name__})")
         )
         raise typer_exit(1)
     ports = [str(int(p)) for p in ports_raw]
@@ -138,9 +138,9 @@ def start() -> None:
 
     rc = stream_subprocess(argv)
     if rc != 0:
-        emit_korean(f"[오류] 컨테이너 시작 실패 (exit={rc})")
+        print_status(f"[error] container failed to start (exit={rc})")
         raise typer_exit(1)
-    emit_korean(f"컨테이너 시작 완료: {image}")
+    print_status(f"container started: {image}")
 
 
 __all__ = ["start"]

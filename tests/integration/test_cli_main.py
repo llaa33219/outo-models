@@ -66,7 +66,7 @@ class TestHelpMessages:
         assert result.exit_code == 0, (
             f"{argv} → exit {result.exit_code}, output: {result.output}"
         )
-        assert "Usage" in result.output or "사용법" in result.output
+        assert "Usage" in result.output
 
 
 class TestOutoErrorRendering:
@@ -86,7 +86,7 @@ class TestOutoErrorRendering:
         result = runner.invoke(app, ["admin", "list", "--status", "wat"])
         assert result.exit_code == 1
         assert "Traceback" not in result.output
-        assert "오류" in result.output
+        assert "error" in result.output.lower()
 
     def test_render_error_raises_for_unknown_exception(self) -> None:
         class _Weird(Exception):

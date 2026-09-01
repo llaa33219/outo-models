@@ -135,8 +135,8 @@ def _runtime_disabled_response() -> JSONResponse:
         content={
             "error": "runtime_disabled",
             "message": (
-                "런타임이 비활성화되어 있습니다. 관리자가 "
-                "OUTO_SPACES_RUNTIME_ENABLED=true 로 설정한 뒤 다시 시도해 주세요."
+                "Runtime is disabled. An administrator must set "
+                "OUTO_SPACES_RUNTIME_ENABLED=true; please try again."
             ),
         },
     )
@@ -359,7 +359,7 @@ async def _run_lifecycle(
                 )
                 return RuntimeStatus(
                     state=RuntimeState.RUNNING,
-                    message="스페이스가 실행 중입니다.",
+                    message="The Space is running.",
                     url=run_url,
                 )
             await manager.stop(owner_name, space_name)
@@ -376,7 +376,7 @@ async def _run_lifecycle(
             )
             return RuntimeStatus(
                 state=RuntimeState.RUNNING,
-                message="스페이스가 실행 중입니다.",
+                message="The Space is running.",
                 url=run_url,
             )
         if sdk == "docker":
@@ -386,8 +386,8 @@ async def _run_lifecycle(
                 for candidate in ("Dockerfile", "Containerfile")
             ):
                 raise ValidationFailedError(
-                    "docker SDK 스페이스는 저장소 루트에 Dockerfile 또는 "
-                    "Containerfile 이 있어야 합니다."
+                    "A docker SDK Space must have a Dockerfile or "
+                    "Containerfile at the repository root."
                 )
         await manager.build_image(owner_name, space_name)
         await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
@@ -610,7 +610,7 @@ async def _stream_proxy_response(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 content={
                     "error": "proxy_unreachable",
-                    "message": f"스페이스 컨테이너에 연결할 수 없습니다: {exc}",
+                    "message": f"Cannot connect to the Space container: {exc}",
                 },
             )
         cleaned = _strip_hop_headers(upstream.headers)
@@ -710,7 +710,7 @@ async def _proxy_dispatch(
             status_code=status.HTTP_404_NOT_FOUND,
             content={
                 "error": "not_found",
-                "message": f"파일을 찾을 수 없습니다: {path!r}",
+                "message": f"File not found: {path!r}",
             },
         )
     if not settings.spaces_runtime_enabled:
@@ -718,7 +718,7 @@ async def _proxy_dispatch(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "error": "runtime_disabled",
-                "message": "런타임이 비활성화되어 있습니다.",
+                "message": "Runtime is disabled.",
             },
         )
     manager = SpaceRuntimeManager(settings)
@@ -730,7 +730,7 @@ async def _proxy_dispatch(
             content={
                 "error": "space_not_running",
                 "message": (
-                    "스페이스가 실행 중이 아닙니다. 시작 후 다시 시도해 주세요."
+                    "The Space is not running. Please start it and try again."
                 ),
             },
         )

@@ -32,21 +32,21 @@ class RuntimeStatus:
     port: int | None = None
 
 
-_KO_DISABLED = "런타임이 비활성화되어 있습니다."
-_KO_DISABLED_HINT = (
-    "관리자가 OUTO_SPACES_RUNTIME_ENABLED=true 로 설정하고 "
-    "Podman 소켓을 마운트한 뒤 다시 시도해 주세요."
+_DISABLED = "Runtime is disabled."
+_DISABLED_HINT = (
+    "An administrator must set OUTO_SPACES_RUNTIME_ENABLED=true and mount the "
+    "Podman socket before trying again."
 )
-_KO_STOPPED = "스페이스가 중지된 상태입니다."
-_KO_BUILDING = "스페이스를 빌드 중입니다."
-_KO_RUNNING = "스페이스가 실행 중입니다."
-_KO_FAILED_PREFIX = "마지막 실행이 실패했습니다: "
+_STOPPED = "The Space is stopped."
+_BUILDING = "The Space is building."
+_RUNNING = "The Space is running."
+_FAILED_PREFIX = "Last run failed: "
 
 
 def _make_disabled(_settings: Settings) -> RuntimeStatus:
     return RuntimeStatus(
         state=RuntimeState.DISABLED,
-        message=f"{_KO_DISABLED} {_KO_DISABLED_HINT}",
+        message=f"{_DISABLED} {_DISABLED_HINT}",
         url=None,
     )
 
@@ -116,13 +116,13 @@ async def runtime_status(
     except Exception as exc:
         return RuntimeStatus(
             state=RuntimeState.FAILED,
-            message=f"{_KO_FAILED_PREFIX}{exc}",
+            message=f"{_FAILED_PREFIX}{exc}",
             url=None,
         )
     if inspect is None:
         return RuntimeStatus(
             state=RuntimeState.STOPPED,
-            message=_KO_STOPPED,
+            message=_STOPPED,
             url=None,
         )
     state_value = inspect.get("State")
@@ -141,9 +141,9 @@ async def runtime_status(
     )
     if mapped is RuntimeState.FAILED:
         message = (
-            f"{_KO_FAILED_PREFIX}{failed_reason}"
+            f"{_FAILED_PREFIX}{failed_reason}"
             if failed_reason
-            else "마지막 실행이 실패했습니다."
+            else "Last run failed."
         )
         return RuntimeStatus(
             state=RuntimeState.FAILED,
@@ -155,7 +155,7 @@ async def runtime_status(
     if mapped is RuntimeState.RUNNING:
         return RuntimeStatus(
             state=RuntimeState.RUNNING,
-            message=_KO_RUNNING,
+            message=_RUNNING,
             url=url,
             container_id=container_id,
             port=port,
@@ -163,12 +163,12 @@ async def runtime_status(
     if mapped is RuntimeState.BUILDING:
         return RuntimeStatus(
             state=RuntimeState.BUILDING,
-            message=_KO_BUILDING,
+            message=_BUILDING,
             url=None,
         )
     return RuntimeStatus(
         state=RuntimeState.STOPPED,
-        message=_KO_STOPPED,
+        message=_STOPPED,
         url=None,
         container_id=container_id,
         port=port,

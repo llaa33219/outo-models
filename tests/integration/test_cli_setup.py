@@ -181,7 +181,7 @@ class TestNonInteractive:
         result = runner.invoke(app, argv)
         assert result.exit_code == 1
         assert "Traceback" not in result.output
-        assert "--non-interactive" in result.output or "필요" in result.output
+        assert "--non-interactive" in result.output or "required" in result.output
         assert not config_path.exists()
 
     def test_invalid_password_below_minimum(

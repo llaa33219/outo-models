@@ -7,7 +7,7 @@ modifying any handler code.
 
 S3 is lazy-imported: the dev / CI environments we test in do NOT have
 boto3 installed, so the import only fires when an operator actually
-selects `"s3"`. A `ConfigError` with a Korean message surfaces the
+selects `"s3"`. A `ConfigError` with an English message surfaces the
 missing dependency / missing settings so the operator can act on it.
 """
 
@@ -59,9 +59,8 @@ def create_object_store(
             from outo_models.objectstore.s3 import S3ObjectStore
         except ImportError as exc:
             raise ConfigError(
-                "S3 LFS 백엔드를 활성화하려면 "
-                "outo_models.objectstore.s3 모듈이 필요합니다. "
-                "WP-20이 아직 머지되지 않았거나 의존성이 누락되었습니다: "
+                "The S3 LFS backend requires the outo_models.objectstore.s3 module. "
+                "Either WP-20 has not been merged yet or a dependency is missing: "
                 f"{exc}"
             ) from exc
         missing = [
@@ -76,7 +75,7 @@ def create_object_store(
         ]
         if missing:
             raise ConfigError(
-                "S3 LFS 백엔드가 활성화되어 있지만 다음 설정이 비어 있습니다: "
+                "The S3 LFS backend is enabled, but the following settings are empty: "
                 + ", ".join(missing)
             )
         # `_S3ObjectStore` is only available in environments with WP-20
@@ -95,7 +94,7 @@ def create_object_store(
             ),
         )
         return store
-    raise ConfigError(f"알 수 없는 OUTO_LFS_BACKEND 값: {backend!r}")
+    raise ConfigError(f"Unknown OUTO_LFS_BACKEND value: {backend!r}")
 
 
 __all__ = ["create_object_store"]

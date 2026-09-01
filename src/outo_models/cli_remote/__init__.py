@@ -1,13 +1,14 @@
-"""CLI → 서버 관리 REST 클라이언트.
+"""CLI → server admin REST client.
 
-`outo-models admin --remote ...` 커맨드가 이 패키지를 통해 실행 중인
-서버의 `/api/admin/*` 엔드포인트와 통신합니다.
+The `outo-models admin --remote ...` commands use this package to talk
+to a running server's `/api/admin/*` endpoints.
 
 Public surface:
-    * `AdminApiClient` — bearer PAT 인증을 사용하는 동기 httpx 클라이언트.
-    * `AdminApiError` — 모든 전송 실패를 통합하는 typed 예외.
+    * `AdminApiClient` — synchronous httpx client with bearer PAT auth.
+    * `AdminApiError` — typed exception that unifies every transport
+      failure.
 
-세부 구현은 `api.py`를 참고하세요.
+See `api.py` for the implementation details.
 """
 
 from outo_models.cli_remote.api import AdminApiClient, AdminApiError

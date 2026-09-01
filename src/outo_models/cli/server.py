@@ -37,7 +37,7 @@ from outo_models.db.engine import dispose_engines, get_engine, run_migrations
 # invoked from the parent Typer `app` in `main.py`.
 server_app = typer.Typer(
     name="server",
-    help="컨테이너 내부에서 실행되는 서버 / 마이그레이션 명령",
+    help="Server and migration commands run inside the container.",
     add_completion=False,
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -49,17 +49,17 @@ def serve(
     host: str = typer.Option(
         "127.0.0.1",
         "--host",
-        help="uvicorn 바인딩 호스트 (Caddy가 443에서 reverse-proxy).",
+        help="uvicorn bind host (Caddy reverse-proxies on 443).",
     ),
     port: int = typer.Option(
         8000,
         "--port",
-        help="uvicorn 바인딩 포트.",
+        help="uvicorn bind port.",
         min=1,
         max=65535,
     ),
 ) -> None:
-    """FastAPI 앱을 uvicorn으로 부팅합니다 (컨테이너 내부 전용)."""
+    """Boot the FastAPI app under uvicorn (container-internal use only)."""
     try:
         import uvicorn
 
@@ -78,10 +78,11 @@ def serve(
 
 @server_app.command("migrate")
 def migrate() -> None:
-    """설정된 DB URL에 대해 `alembic upgrade head`를 실행합니다.
+    """Run `alembic upgrade head` against the configured DB URL.
 
-    `update.sh`가 새 이미지로 throwaway 컨테이너에서 호출합니다. 성공 시
-    0, 실패 시 1로 종료합니다 (호스트 스크립트가 exit code를 검사).
+    `update.sh` invokes this in a throwaway container with the new
+    image. Exits 0 on success, 1 on failure (the host script checks the
+    exit code).
     """
     import asyncio
 

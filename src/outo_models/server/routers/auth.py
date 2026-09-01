@@ -126,11 +126,11 @@ async def signup(
         "status": user.status,
     }
     if user.status == "pending":
-        # Korean: "가입 대기 중 — 관리자 승인이 필요합니다."
-        payload["detail"] = "가입 대기 중 — 관리자 승인이 필요합니다."
+        payload["detail"] = (
+            "Account is pending approval — an administrator must approve it."
+        )
     else:
-        # Korean: "계정이 생성되었습니다."
-        payload["detail"] = "계정이 생성되었습니다."
+        payload["detail"] = "Account created."
     return JSONResponse(status_code=201, content=payload)
 
 
@@ -167,8 +167,7 @@ async def logout(response: Response) -> dict[str, str]:
         samesite="lax",
         secure=False,
     )
-    # Korean: "로그아웃되었습니다."
-    return {"detail": "로그아웃되었습니다."}
+    return {"detail": "Logged out."}
 
 
 @router.get("/me")

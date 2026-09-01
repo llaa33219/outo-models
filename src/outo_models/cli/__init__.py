@@ -17,9 +17,9 @@ Three concerns live here:
 
 2. **`render_error()` — single funnel for typed CLI failures.**
    `OutoError` carries a stable `.code` (machine-readable) and a
-   Korean message (operator-facing). The Typer callback prints the message
-   in red and exits with code 1 — never a Python traceback, since
-   `AGENTS.md §2.1` forbids leaking secrets and tracebacks routinely do.
+   human-readable message (operator-facing). The Typer callback prints
+   the message in red and exits with code 1 — never a Python traceback,
+   since `AGENTS.md §2.1` forbids leaking secrets and tracebacks routinely do.
 
 3. **`container_script()` — locate `container/scripts/*.sh`.**
    Mirrors `firewall.open_ports._resolve_script_path` and
@@ -156,7 +156,7 @@ def render_error(exc: BaseException) -> None:
     """
     if isinstance(exc, OutoError):
         message = str(exc) or exc.__class__.__name__
-        Console(stderr=True).print(f"[bold red]오류[/bold red] ({exc.code}): {message}")
+        Console(stderr=True).print(f"[bold red]error[/bold red] ({exc.code}): {message}")
         return
     raise exc
 
@@ -220,8 +220,8 @@ def podman_available() -> bool:
     return shutil.which("podman") is not None
 
 
-def emit_korean(message: str) -> None:
-    """Print a single line to stdout — used for the post-step Korean notes."""
+def print_status(message: str) -> None:
+    """Print a single line to stdout — used for post-step status notes."""
     Console().print(message)
 
 
@@ -311,10 +311,10 @@ def _parse_int(number_text: str, factor: int, original: str) -> int:
 __all__ = [
     "Prompts",
     "container_script",
-    "emit_korean",
     "format_bytes",
     "parse_human_bytes",
     "podman_available",
+    "print_status",
     "prompts",
     "render_error",
     "stream_subprocess",

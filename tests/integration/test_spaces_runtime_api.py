@@ -655,7 +655,7 @@ class TestAuditLogRows:
             settings=get_settings(),
             inspect_payload=None,
             raise_=OutoError(
-                "이미지 빌드에 실패했습니다",
+                "Image build failed",
                 code="space_build_failed",
                 status_code=502,
             ),

@@ -256,7 +256,7 @@ class TestUriEncoding:
             method="GET",
             endpoint="https://s3.example.com",
             bucket="b",
-            key="한글.txt",
+            key="Ω.txt",
             region="us-east-1",
             access_key="AKID",
             secret_key="SECRET",
@@ -264,9 +264,9 @@ class TestUriEncoding:
             now=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
         )
         # Each byte of the UTF-8 sequence encoded as %XX.
-        assert "한글.txt" not in url
-        # One byte in UTF-8 for 한글 is three bytes; percent-encoded:
-        assert "%ED%95%9C%EA%B8%80.txt" in url
+        assert "Ω.txt" not in url
+        # U+03A9 (Ω) encodes to 0xCE 0xA9 in UTF-8; percent-encoded:
+        assert "%CE%A9.txt" in url
 
     def test_unreserved_chars_are_not_encoded(self) -> None:
         url = presign_url(

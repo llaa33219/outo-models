@@ -440,18 +440,18 @@ class S3ObjectStore:
     ) -> None:
         # ---- validation (refuses to construct on bad config) ----
         if not endpoint:
-            raise ConfigError("S3 백엔드: s3_endpoint가 비어 있습니다")
+            raise ConfigError("S3 backend: s3_endpoint is empty")
         if not bucket:
-            raise ConfigError("S3 백엔드: s3_bucket이 비어 있습니다")
+            raise ConfigError("S3 backend: s3_bucket is empty")
         if not region:
-            raise ConfigError("S3 백엔드: s3_region이 비어 있습니다")
+            raise ConfigError("S3 backend: s3_region is empty")
         if not access_key:
-            raise ConfigError("S3 백엔드: s3_access_key가 비어 있습니다")
+            raise ConfigError("S3 backend: s3_access_key is empty")
         if not secret_key:
-            raise ConfigError("S3 백엔드: s3_secret_key가 비어 있습니다")
+            raise ConfigError("S3 backend: s3_secret_key is empty")
         if presign_ttl <= 0:
             raise ConfigError(
-                f"S3 백엔드: s3_presign_ttl_seconds는 양수여야 합니다 (got {presign_ttl})"
+                f"S3 backend: s3_presign_ttl_seconds must be positive (got {presign_ttl})"
             )
         # Validate endpoint parses; raises ConfigError on malformed.
         _split_endpoint(endpoint)
