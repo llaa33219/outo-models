@@ -120,10 +120,13 @@ ENV OUTO_ENV=production
 # ---------- (5) dev flavor ----------
 FROM runtime-base AS dev
 # debugpy + ipython are the only allowed deviation from stable (AGENTS.md §4).
-# We briefly drop to root to pip-install into the venv, then immediately
-# return to the app user so the running process stays non-root.
+# uv-built venvs ship without pip, so install through uv itself (copied here
+# just for this layer) and immediately return to the app user so the running
+# process stays non-root.
 USER root
-RUN /app/.venv/bin/pip install --no-cache-dir debugpy ipython
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN /usr/local/bin/uv pip install --python /app/.venv/bin/python --no-cache debugpy ipython \
+    && rm /usr/local/bin/uv
 USER app
 ENV OUTO_ENV=development
 
