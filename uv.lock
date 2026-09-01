@@ -620,6 +620,7 @@ dev = [
     { name = "ruff" },
     { name = "trustme" },
     { name = "types-itsdangerous" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
@@ -658,6 +659,7 @@ dev = [
     { name = "ruff", specifier = ">=0.5" },
     { name = "trustme", specifier = ">=1.1" },
     { name = "types-itsdangerous", specifier = ">=1.1" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
@@ -1058,6 +1060,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b4/50/9a5dbcd227496c5f784d632f39cc91120c2efae7a909573792bc60777221/types-itsdangerous-1.1.6.tar.gz", hash = "sha256:21c6966c10e353a5d35d36c82aaa2c5598d3bc32ddc8e0591276da5ad2e3c638", size = 3094, upload-time = "2021-11-26T06:21:42.072Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/88/51732cae3f281af4db869bc039c3320048dcbb26cb57222e3f8073bf09f8/types_itsdangerous-1.1.6-py3-none-any.whl", hash = "sha256:aef2535c2fa0527dcce244ece0792b20ec02ee46533800735275f82a45a0244d", size = 3353, upload-time = "2021-11-26T06:21:41.215Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260815"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/72/b56089aeee6c496d969bac42376bedb6e3eeab4682e1018fa3137122f94b/types_pyyaml-6.0.12.20260815.tar.gz", hash = "sha256:28764110c9cf35846e733da32d8d734df7473c5dde9ef67c3b7332ec0e819858", size = 18545, upload-time = "2026-08-15T02:41:51.532Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/52/eefeba09be4ef2a1eb989eb92934561e8e502a6ee3c32654996e4be7e399/types_pyyaml-6.0.12.20260815-py3-none-any.whl", hash = "sha256:6f332212b7e191f3afd5016a713c510b6340593b7ebec573c7d5d20aa5386d3b", size = 21148, upload-time = "2026-08-15T02:41:50.555Z" },
 ]
 
 [[package]]

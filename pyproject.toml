@@ -45,6 +45,7 @@ dev = [
     "mypy>=1.10",
     "bandit>=1.7",
     "types-itsdangerous>=1.1",
+    "types-PyYAML>=6.0",
 ]
 
 [build-system]
