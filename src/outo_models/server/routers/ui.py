@@ -87,7 +87,9 @@ async def repos_list_page(
                     .options(selectinload(Repo.owner))
                     .order_by(Repo.id)
                 )
-            ).scalars().all(),
+            )
+            .scalars()
+            .all(),
             "clone_url": clone_url,
         },
     )
@@ -172,10 +174,10 @@ async def admin_dashboard_page(
 ) -> Response:
     """Render the admin dashboard."""
     pending = (
-        await db.execute(
-            select(User).where(User.status == "pending").order_by(User.created_at)
-        )
-    ).scalars().all()
+        (await db.execute(select(User).where(User.status == "pending").order_by(User.created_at)))
+        .scalars()
+        .all()
+    )
     response = templates.TemplateResponse(
         request,
         "admin/dashboard.html",
@@ -227,13 +229,9 @@ async def login_form(
     """Receive the login form, set the session cookie, redirect home."""
     verify_csrf(request, form_token=csrf)
     slug = validate_slug(username)
-    user = (
-        await db.execute(select(User).where(User.username == slug))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.username == slug))).scalar_one_or_none()
     if user is None or not verify_password(user.password_hash, password):
-        return RedirectResponse(
-            url="/login", status_code=status.HTTP_303_SEE_OTHER
-        )
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     can_login(user)
     manager = SessionManager(settings.secret_key, max_age=7 * 24 * 3600)
     token = manager.dumps({"user_id": user.id, "nonce": secrets.token_urlsafe(16)})

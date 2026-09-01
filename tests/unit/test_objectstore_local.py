@@ -150,9 +150,7 @@ class TestSharding:
 class TestSymlinkSafety:
     """Symlinks are never followed — neither for reads nor for writes."""
 
-    async def test_reading_through_symlink_at_final_path_is_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_reading_through_symlink_at_final_path_is_rejected(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         # Plant a real file outside the store, link the LFS slot at it.
         outside = tmp_path / "outside.bin"
@@ -208,12 +206,8 @@ class TestAction:
     async def test_upload_and_download_actions_share_href(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         oid = "ab" + "cd" + "0" * 60
-        upload = await store.make_upload_action(
-            owner="alice", repo="model", oid=oid, size=42
-        )
-        download = await store.make_download_action(
-            owner="alice", repo="model", oid=oid, size=42
-        )
+        upload = await store.make_upload_action(owner="alice", repo="model", oid=oid, size=42)
+        download = await store.make_download_action(owner="alice", repo="model", oid=oid, size=42)
 
         assert isinstance(upload, LfsAction)
         assert upload.href == download.href
@@ -225,9 +219,7 @@ class TestAction:
         root = tmp_path / "lfs"
         root.mkdir()
         store = LocalObjectStore(root, base_url="http://lfs.test/", presign_ttl=600)
-        action = await store.make_upload_action(
-            owner="alice", repo="model", oid="0" * 64, size=0
-        )
+        action = await store.make_upload_action(owner="alice", repo="model", oid="0" * 64, size=0)
         assert action.href.startswith("http://lfs.test/")
 
 

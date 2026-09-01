@@ -75,7 +75,7 @@ async def resolve_git_identity(
         The matched `User` (detached, fresh from the DB) or `None`.
     """
     del settings  # Settings is a forward-compat hook; today we use the
-                  # process-wide session factory.
+    # process-wide session factory.
 
     if not authorization_header:
         return None
@@ -96,9 +96,7 @@ async def resolve_git_identity(
 
     async with factory() as session:
         user = (
-            await session.execute(
-                select(User).where(User.username == username)
-            )
+            await session.execute(select(User).where(User.username == username))
         ).scalar_one_or_none()
         if user is None:
             return None
@@ -108,12 +106,14 @@ async def resolve_git_identity(
             return None
 
         pats = (
-            await session.execute(
-                select(PersonalAccessToken).where(
-                    PersonalAccessToken.user_id == user.id
+            (
+                await session.execute(
+                    select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         matched: PersonalAccessToken | None = None
         for pat in pats:

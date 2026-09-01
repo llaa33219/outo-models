@@ -51,9 +51,7 @@ def _build_expired_cert(
     dependency tree (trustme depends on it) and is therefore available.
     """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name(
-        [x509.NameAttribute(NameOID.COMMON_NAME, hostname)]
-    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
     now = dt.datetime.now(dt.UTC)
     cert = (
         x509.CertificateBuilder()
@@ -78,9 +76,7 @@ def _build_expired_cert(
     return cert_pem, key_pem
 
 
-def _redirect_open_connection(
-    monkeypatch: pytest.MonkeyPatch, port: int
-) -> None:
+def _redirect_open_connection(monkeypatch: pytest.MonkeyPatch, port: int) -> None:
     """Rewrite `asyncio.open_connection` so `:443` calls land on `port`.
 
     The public API of `check_cert_health` pins to port 443, so tests port that
@@ -131,11 +127,10 @@ class _LocalTlsServer:
         import tempfile
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=".pem"
-        ) as cert_file, tempfile.NamedTemporaryFile(
-            delete=False, suffix=".pem"
-        ) as key_file:
+        with (
+            tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cert_file,
+            tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as key_file,
+        ):
             cert_file.write(cert_pem)
             cert_file.flush()
             key_file.write(key_pem)
@@ -164,9 +159,7 @@ class _LocalTlsServer:
             pass
 
     @staticmethod
-    async def _handle_client(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             await reader.readline()
         finally:
@@ -324,27 +317,21 @@ class TestRenewalJobPolicy:
 
     async def test_healthy_cert_does_not_trigger_reload(self) -> None:
         caddy = self._FakeCaddy()
-        health = CertHealth(
-            ok=True, not_after=None, days_remaining=30, error=None
-        )
+        health = CertHealth(ok=True, not_after=None, days_remaining=30, error=None)
         result = await self._run_with_check_stub(caddy, health)
         assert result.ok is True
         assert caddy.reload_calls == 0
 
     async def test_unhealthy_cert_with_caddy_healthy_triggers_reload(self) -> None:
         caddy = self._FakeCaddy(healthy_result=True)
-        health = CertHealth(
-            ok=False, not_after=None, days_remaining=-5, error="expired"
-        )
+        health = CertHealth(ok=False, not_after=None, days_remaining=-5, error="expired")
         result = await self._run_with_check_stub(caddy, health)
         assert result.ok is False
         assert caddy.reload_calls == 1
 
     async def test_unhealthy_cert_with_caddy_unhealthy_does_not_reload(self) -> None:
         caddy = self._FakeCaddy(healthy_result=False)
-        health = CertHealth(
-            ok=False, not_after=None, days_remaining=-5, error="expired"
-        )
+        health = CertHealth(ok=False, not_after=None, days_remaining=-5, error="expired")
         result = await self._run_with_check_stub(caddy, health)
         assert result.ok is False
         assert caddy.reload_calls == 0
@@ -354,9 +341,7 @@ class TestRenewalJobPolicy:
             healthy_result=True,
             reload_raises=OutoError("caddy down", code="caddy_unreachable"),
         )
-        health = CertHealth(
-            ok=False, not_after=None, days_remaining=-5, error="expired"
-        )
+        health = CertHealth(ok=False, not_after=None, days_remaining=-5, error="expired")
         # Must NOT raise — the scheduler cannot afford to die on a transient blip.
         result = await self._run_with_check_stub(caddy, health)
         assert result.ok is False
@@ -367,9 +352,7 @@ class TestRenewalJobAcceptsCaddyManager:
     """End-to-end check: `renewal_job` accepts a real `CaddyManager` instance."""
 
     async def test_signature_is_compatible(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
 
             async def _refuse(*_args: Any, **_kwargs: Any) -> Any:

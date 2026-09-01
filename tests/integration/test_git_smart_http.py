@@ -143,9 +143,7 @@ async def _seed_owner_with_pat(
         await session.commit()
         user_id = user.id
     async with factory() as session:
-        owner = (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        owner = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         return owner, raw_token
 
 
@@ -177,17 +175,13 @@ async def _make_repo(
             # `create_repo` already materialized a default quota row via
             # `ensure_quota_rows`; tighten the cap instead of inserting.
             existing = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == owner.id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == owner.id))
             ).scalar_one()
             existing.max_bytes = quota_bytes
             await session.commit()
 
     async with factory() as session:
-        return (
-            await session.execute(select(Repo).where(Repo.id == repo_id))
-        ).scalar_one()
+        return (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
 
 
 @pytest.fixture
@@ -357,10 +351,10 @@ class TestPushBookkeeping:
 
         async with session_factory() as session:
             revs = (
-                await session.execute(
-                    select(Revision).where(Revision.repo_id == repo_id)
-                )
-            ).scalars().all()
+                (await session.execute(select(Revision).where(Revision.repo_id == repo_id)))
+                .scalars()
+                .all()
+            )
             assert len(revs) == 1
             assert revs[0].branch == "master"
             # Git appends a newline to every commit message.
@@ -369,24 +363,20 @@ class TestPushBookkeeping:
             assert len(revs[0].commit_sha) == 40
 
             audit = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "repo.push")
-                )
-            ).scalars().all()
+                (await session.execute(select(AuditLog).where(AuditLog.action == "repo.push")))
+                .scalars()
+                .all()
+            )
             assert len(audit) == 1
             detail = json.loads(audit[0].detail or "{}")
             assert "branches" in detail
             assert detail["branches"][0]["new"] == revs[0].commit_sha
 
-            repo_row = (
-                await session.execute(select(Repo).where(Repo.id == repo_id))
-            ).scalar_one()
+            repo_row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
             assert repo_row.size_bytes > 0
 
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage.used_bytes > 0
         # Use pat so mypy is happy.
@@ -490,9 +480,7 @@ class TestAuthFailures:
         git_env: dict[str, str],
     ) -> None:
         owner, _owner_pat = await _seed_owner_with_pat(session_factory, "alice")
-        _intruder, intruder_pat = await _seed_owner_with_pat(
-            session_factory, "mallory"
-        )
+        _intruder, intruder_pat = await _seed_owner_with_pat(session_factory, "mallory")
         await _make_repo(session_factory, owner, name="model-priv", visibility=Visibility.PRIVATE)
 
         src = tmp_data_dir / "src"
@@ -534,10 +522,10 @@ class TestAuthFailures:
         # Sanity: the intruder did not actually push anything.
         async with session_factory() as session:
             count = (
-                await session.execute(
-                    select(Revision).where(Revision.repo_id == owner.id)
-                )
-            ).scalars().all()
+                (await session.execute(select(Revision).where(Revision.repo_id == owner.id)))
+                .scalars()
+                .all()
+            )
             assert count == []
 
     async def test_anonymous_clone_of_private_repo_returns_401(

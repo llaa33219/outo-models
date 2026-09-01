@@ -29,9 +29,7 @@ def _envelope(code: str, message: str) -> dict[str, str]:
     return {"error": code, "message": message}
 
 
-async def _outo_error_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def _outo_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Render any typed `OutoError` as its declared status + JSON envelope."""
     del request  # Unused; the handler signature accepts it for FastAPI.
     assert isinstance(exc, OutoError)
@@ -41,9 +39,7 @@ async def _outo_error_handler(
     )
 
 
-async def _validation_error_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Translate pydantic `RequestValidationError` into a 422 envelope.
 
     FastAPI's default 422 shape leaks the raw pydantic error list, which
@@ -71,9 +67,7 @@ async def _validation_error_handler(
     )
 
 
-async def _unhandled_error_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Render anything else as a generic 500 — never leak internals.
 
     The full traceback is logged via structlog with the request path +

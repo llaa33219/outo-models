@@ -7,6 +7,7 @@ tested both through `CliRunner` (covers the real command surface) and
 through the `_reset_impl` function (covers the dry-run / refusal / abort
 branches the runner can't easily reach).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -112,9 +113,7 @@ class TestDestroyRefusesWithoutEnv:
         from outo_models.config import get_settings as _settings
 
         _settings.cache_clear()
-        result = runner.invoke(
-            app, ["reset", "--destroy"], env={_DESTRUCTIVE_ENV: "0"}
-        )
+        result = runner.invoke(app, ["reset", "--destroy"], env={_DESTRUCTIVE_ENV: "0"})
         assert result.exit_code == 1
         # Clean Korean error — no traceback, no leaked secrets.
         assert "Traceback" not in result.output
@@ -211,11 +210,7 @@ class TestDestroyExecutes:
         # via `OUTO_RESET_SCRIPT` (mirroring `OUTO_FIREWALL_SCRIPT`).
         fake_script = tmp_path / "reset.sh"
         marker = tmp_path / "reset_called"
-        fake_script.write_text(
-            "#!/usr/bin/env bash\n"
-            f"touch '{marker}'\n"
-            "exit 0\n"
-        )
+        fake_script.write_text(f"#!/usr/bin/env bash\ntouch '{marker}'\nexit 0\n")
         fake_script.chmod(0o755)
         monkeypatch.setenv("OUTO_RESET_SCRIPT", str(fake_script))
         monkeypatch.setenv(_DESTRUCTIVE_ENV, "1")

@@ -159,9 +159,7 @@ class TestSessionCookieAttributes:
 class TestMe:
     """`GET /api/auth/me` returns the authenticated user's profile."""
 
-    async def test_me_requires_auth(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    async def test_me_requires_auth(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.get("/api/auth/me")
         assert response.status_code == 401

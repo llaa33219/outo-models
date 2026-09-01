@@ -58,14 +58,10 @@ async def factory(
         await dispose_engines()
 
 
-async def _seed_user(
-    factory: async_sessionmaker[AsyncSession], username: str
-) -> int:
+async def _seed_user(factory: async_sessionmaker[AsyncSession], username: str) -> int:
     """Create a user and return the `User.id`."""
     async with factory() as session:
-        session.add(
-            User(username=username, email=f"{username}@example.com", password_hash="h")
-        )
+        session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
         await session.commit()
         user_id = (
             await session.execute(select(User.id).where(User.username == username))
@@ -73,13 +69,9 @@ async def _seed_user(
         return user_id
 
 
-async def _get_user(
-    factory: async_sessionmaker[AsyncSession], user_id: int
-) -> User:
+async def _get_user(factory: async_sessionmaker[AsyncSession], user_id: int) -> User:
     async with factory() as session:
-        return (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        return (await session.execute(select(User).where(User.id == user_id))).scalar_one()
 
 
 class TestRepoLifecycle:
@@ -93,12 +85,8 @@ class TestRepoLifecycle:
         # 1. Create: model repo appears on disk as a bare repo.
         owner_id = await _seed_user(factory, "alice")
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
-            repo = await create_repo(
-                session, owner=owner, name="my-model", kind=RepoKind.MODEL
-            )
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
+            repo = await create_repo(session, owner=owner, name="my-model", kind=RepoKind.MODEL)
             await session.commit()
             repo_id = repo.id
 
@@ -108,41 +96,29 @@ class TestRepoLifecycle:
 
         # 2. Duplicate create → ConflictError (and no second dir appears).
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             with pytest.raises(ConflictError):
-                await create_repo(
-                    session, owner=owner, name="my-model", kind=RepoKind.MODEL
-                )
+                await create_repo(session, owner=owner, name="my-model", kind=RepoKind.MODEL)
 
         # 3. Push-size quota accounting: a too-big push is rejected, and
         #    bookkeeping clamps at zero even with a negative delta.
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             quota, usage = await ensure_quota_rows(session, owner)
             quota.max_bytes = 1024
             await session.commit()
 
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             with pytest.raises(QuotaExceededError):
                 await check_push_allowed(session, owner, 2048)
             await add_usage(session, owner, 500)
             await session.commit()
 
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             usage_after = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage_after.used_bytes == 500
             # Floor at zero: a huge negative delta must not produce negative.
@@ -151,38 +127,28 @@ class TestRepoLifecycle:
 
         async with factory() as session:
             usage_floored = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage_floored.used_bytes == 0
 
         # 4. Reconcile corrects an artificial drift.
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             usage.used_bytes = 999_999  # obviously wrong
             await session.commit()
 
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             drift = await reconcile_user(session, owner)
             await session.commit()
             assert drift < 0  # tallied down to the real on-disk value
 
         async with factory() as session:
             usage_now = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage_now.used_bytes >= 0
             assert usage_now.used_bytes == drift + 999_999
@@ -214,9 +180,7 @@ class TestRepoLifecycle:
 
         # 6. Bump the recorded size to prove delete decrements usage.
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == repo_id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
             row.size_bytes = 4096
             await session.flush()
             owner_obj = (
@@ -227,12 +191,8 @@ class TestRepoLifecycle:
 
         # 7. Delete removes the row, the dir, and decrements usage.
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="my-model", kind=RepoKind.MODEL
-            )
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
+            await delete_repo(session, owner=owner, name="my-model", kind=RepoKind.MODEL)
             await session.commit()
 
         assert not fs_path.exists()
@@ -243,9 +203,7 @@ class TestRepoLifecycle:
             ).scalar_one_or_none()
             assert row is None
             usage_after_delete = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             # The +4096 from `add_usage` was exactly cancelled by the
             # -4096 from `delete_repo`'s size_bytes decrement.
@@ -253,13 +211,9 @@ class TestRepoLifecycle:
 
         # 8. Deleting again surfaces NotFoundError.
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             with pytest.raises(NotFoundError):
-                await delete_repo(
-                    session, owner=owner, name="my-model", kind=RepoKind.MODEL
-                )
+                await delete_repo(session, owner=owner, name="my-model", kind=RepoKind.MODEL)
 
 
 class TestCreateRepoCompensatingCleanup:
@@ -284,13 +238,9 @@ class TestCreateRepoCompensatingCleanup:
         monkeypatch.setattr(create_mod, "ensure_quota_rows", boom)
 
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             with pytest.raises(RuntimeError, match="synthetic DB failure"):
-                await create_repo(
-                    session, owner=owner, name="doomed", kind=RepoKind.MODEL
-                )
+                await create_repo(session, owner=owner, name="doomed", kind=RepoKind.MODEL)
 
         fs_path = repo_fs_path("bob", "doomed")
         assert not fs_path.exists(), "compensating cleanup must remove bare repo"

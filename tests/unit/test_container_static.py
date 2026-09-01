@@ -112,17 +112,19 @@ class TestContainerfileStructure:
 
     def test_final_stage_picks_flavor(self) -> None:
         # `FROM ${IMAGE_FLAVOR} AS final` selects stable/dev at build time.
-        assert re.search(
-            r"^FROM\s+\$\{IMAGE_FLAVOR\}\s+AS\s+final\b",
-            CONTAINERFILE_TEXT,
-            re.MULTILINE,
-        ) is not None
+        assert (
+            re.search(
+                r"^FROM\s+\$\{IMAGE_FLAVOR\}\s+AS\s+final\b",
+                CONTAINERFILE_TEXT,
+                re.MULTILINE,
+            )
+            is not None
+        )
 
     def test_image_flavor_arg_default(self) -> None:
         # Default to `stable`; CLI passes `--build-arg IMAGE_FLAVOR=dev` for dev builds.
         assert (
-            re.search(r"^ARG\s+IMAGE_FLAVOR=stable\b", CONTAINERFILE_TEXT, re.MULTILINE)
-            is not None
+            re.search(r"^ARG\s+IMAGE_FLAVOR=stable\b", CONTAINERFILE_TEXT, re.MULTILINE) is not None
         )
 
     def test_image_flavor_validated(self) -> None:
@@ -169,11 +171,14 @@ class TestContainerfileStructure:
     def test_env_path_includes_venv(self) -> None:
         # /app/.venv/bin must precede the system PATH so `python`/`outo-models`
         # resolve to the installed venv, not /usr/bin/python.
-        assert re.search(
-            r'^ENV\s+PATH="/app/\.venv/bin:[^"]*"\s*$',
-            CONTAINERFILE_TEXT,
-            re.MULTILINE,
-        ) is not None, "PATH must start with /app/.venv/bin"
+        assert (
+            re.search(
+                r'^ENV\s+PATH="/app/\.venv/bin:[^"]*"\s*$',
+                CONTAINERFILE_TEXT,
+                re.MULTILINE,
+            )
+            is not None
+        ), "PATH must start with /app/.venv/bin"
 
     def test_exposes_public_ports(self) -> None:
         # EXPOSE 80 443 — Caddy's public listener pair.
@@ -184,11 +189,14 @@ class TestContainerfileStructure:
 
     def test_entrypoint_is_wrapper_script(self) -> None:
         # Exec-form JSON array, the only thing that gets proper signal forwarding.
-        assert re.search(
-            r'^ENTRYPOINT\s+\[\s*"/usr/local/bin/outo-entrypoint\.sh"\s*\]',
-            CONTAINERFILE_TEXT,
-            re.MULTILINE,
-        ) is not None, "ENTRYPOINT must be the wrapper script in exec form"
+        assert (
+            re.search(
+                r'^ENTRYPOINT\s+\[\s*"/usr/local/bin/outo-entrypoint\.sh"\s*\]',
+                CONTAINERFILE_TEXT,
+                re.MULTILINE,
+            )
+            is not None
+        ), "ENTRYPOINT must be the wrapper script in exec form"
 
     def test_dev_flavor_installs_debug_tools(self) -> None:
         # Only the `dev` stage is allowed to install debugpy + ipython (AGENTS.md §4).
@@ -278,8 +286,7 @@ class TestShellScriptsSyntax:
             text=True,
         )
         assert result.returncode == 0, (
-            f"bash -n {script_path.name} failed: "
-            f"stderr={result.stderr!r}"
+            f"bash -n {script_path.name} failed: stderr={result.stderr!r}"
         )
 
 
@@ -322,7 +329,7 @@ class TestEntrypointContract:
         assert "ip_unprivileged_port_start" in ENTRYPOINT_TEXT
         assert "docs/troubleshooting.md" in ENTRYPOINT_TEXT
         # euid check — `id -u` or `EUID` env, both common idioms.
-        assert 'id -u' in ENTRYPOINT_TEXT or 'EUID' in ENTRYPOINT_TEXT
+        assert "id -u" in ENTRYPOINT_TEXT or "EUID" in ENTRYPOINT_TEXT
         # The warning must NOT cause a non-zero exit (warn, not fail).
         # We assert the warning block does NOT contain `exit 1`.
         warn_block_match = re.search(
@@ -376,13 +383,14 @@ class TestQuadletExample:
     def test_net_bind_service_commented_out(self) -> None:
         # The capability must appear (so operators know it exists) but stay
         # commented out by default — opt-in via NET_BIND_SERVICE comment removal.
-        assert re.search(
-            r"^#\s*AddCapability=NET_BIND_SERVICE\b", QUADLET_TEXT, re.MULTILINE
-        ) is not None, "AddCapability=NET_BIND_SERVICE must be present, commented"
+        assert (
+            re.search(r"^#\s*AddCapability=NET_BIND_SERVICE\b", QUADLET_TEXT, re.MULTILINE)
+            is not None
+        ), "AddCapability=NET_BIND_SERVICE must be present, commented"
         # And the un-commented form must NOT exist (would auto-enable the cap).
-        assert re.search(
-            r"^AddCapability=NET_BIND_SERVICE\b", QUADLET_TEXT, re.MULTILINE
-        ) is None, "AddCapability=NET_BIND_SERVICE must NOT be enabled by default"
+        assert (
+            re.search(r"^AddCapability=NET_BIND_SERVICE\b", QUADLET_TEXT, re.MULTILINE) is None
+        ), "AddCapability=NET_BIND_SERVICE must NOT be enabled by default"
 
 
 # ---------------------------------------------------------------------------
@@ -432,14 +440,10 @@ class TestConfigExampleYaml:
         settings_keys = set(Settings.model_fields.keys())
         # Every Settings field must appear in the example.
         missing = settings_keys - yaml_keys
-        assert not missing, (
-            f"config.example.yaml is missing Settings fields: {sorted(missing)}"
-        )
+        assert not missing, f"config.example.yaml is missing Settings fields: {sorted(missing)}"
         # No extra top-level keys (would suggest a typo or stale field).
         extra = yaml_keys - settings_keys
-        assert not extra, (
-            f"config.example.yaml has unknown top-level keys: {sorted(extra)}"
-        )
+        assert not extra, f"config.example.yaml has unknown top-level keys: {sorted(extra)}"
 
     @pytest.mark.parametrize(
         "field_name",

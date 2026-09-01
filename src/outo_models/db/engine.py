@@ -113,9 +113,7 @@ async def run_migrations(engine: AsyncEngine) -> None:
 
     cfg = Config()
     cfg.set_main_option("script_location", "src/outo_models/db/migrations")
-    cfg.set_main_option(
-        "sqlalchemy.url", engine.url.render_as_string(hide_password=False)
-    )
+    cfg.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
     cfg.set_main_option("outo_version", version.__version__)
 
     def _run() -> None:

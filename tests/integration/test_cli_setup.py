@@ -11,6 +11,7 @@ The wizard must NEVER write the plaintext admin password anywhere (YAML,
 DB row, log, console). The DB row must carry an argon2id hash; the YAML
 must carry the API token only when the operator chose Cloudflare.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -314,9 +315,7 @@ class TestInteractive:
             return "correct horse battery staple" if len(calls) >= 3 else "wrong"
 
         monkeypatch.setattr(cli_prompts, "password", _pw)
-        monkeypatch.setattr(
-            cli_prompts, "confirm", lambda *a, **k: True
-        )
+        monkeypatch.setattr(cli_prompts, "confirm", lambda *a, **k: True)
 
         config_path = tmp_path / "outo.yaml"
         data_dir = tmp_path / "data"

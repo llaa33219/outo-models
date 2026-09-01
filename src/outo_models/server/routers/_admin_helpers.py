@@ -36,9 +36,7 @@ async def get_gpu_assignments(db: AsyncSession, username: str) -> list[str]:
     operator-controlled, so a typo must not crash the admin endpoint.
     """
     row = (
-        await db.execute(
-            select(WebSetting).where(WebSetting.key == gpu_setting_key(username))
-        )
+        await db.execute(select(WebSetting).where(WebSetting.key == gpu_setting_key(username)))
     ).scalar_one_or_none()
     if row is None:
         return []
@@ -74,9 +72,7 @@ def write_admin_audit(
 async def load_target_user(db: AsyncSession, username: str) -> User:
     """Fetch the target user or raise `NotFoundError`."""
     validate_slug(username)
-    user = (
-        await db.execute(select(User).where(User.username == username))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
     if user is None:
         raise NotFoundError(f"user {username!r} not found")
     return user

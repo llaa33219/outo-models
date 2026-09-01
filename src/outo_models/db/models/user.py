@@ -47,9 +47,7 @@ class User(IntIdMixin, TimestampWithUpdateMixin, Base):
     )
 
     display_name: Mapped[str | None] = mapped_column(nullable=True)
-    approved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", use_alter=True, name="fk_users_approved_by_id_users"),
         nullable=True,

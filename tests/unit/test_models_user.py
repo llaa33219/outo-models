@@ -81,9 +81,7 @@ class TestUserCreateRead:
             await session.commit()
 
         async with session_factory() as session:
-            user = (
-                await session.execute(select(User).where(User.username == "bob"))
-            ).scalar_one()
+            user = (await session.execute(select(User).where(User.username == "bob"))).scalar_one()
             assert user.role == "admin"
             assert user.status == "approved"
             assert user.display_name == "Bob the Builder"
@@ -105,9 +103,7 @@ class TestUserUpdate:
             )
             await session.commit()
             carol_id = (
-                await session.execute(
-                    select(User.id).where(User.username == "carol")
-                )
+                await session.execute(select(User.id).where(User.username == "carol"))
             ).scalar_one()
 
         approved_at = datetime.now(tz=UTC) + timedelta(minutes=1)
@@ -138,9 +134,7 @@ class TestUserDelete:
             )
             await session.commit()
             dave_id = (
-                await session.execute(
-                    select(User.id).where(User.username == "dave")
-                )
+                await session.execute(select(User.id).where(User.username == "dave"))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -150,9 +144,7 @@ class TestUserDelete:
             await session.commit()
 
         async with session_factory() as session:
-            result = await session.execute(
-                select(User).where(User.username == "dave")
-            )
+            result = await session.execute(select(User).where(User.username == "dave"))
             assert result.scalar_one_or_none() is None
 
 
@@ -163,15 +155,11 @@ class TestUserUniqueConstraints:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with session_factory() as session:
-            session.add(
-                User(username="erin", email="erin@example.com", password_hash="h")
-            )
+            session.add(User(username="erin", email="erin@example.com", password_hash="h"))
             await session.commit()
 
         async with session_factory() as session:
-            session.add(
-                User(username="erin", email="other@example.com", password_hash="h")
-            )
+            session.add(User(username="erin", email="other@example.com", password_hash="h"))
             with pytest.raises(IntegrityError):
                 await session.commit()
 
@@ -179,15 +167,11 @@ class TestUserUniqueConstraints:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with session_factory() as session:
-            session.add(
-                User(username="frank", email="frank@example.com", password_hash="h")
-            )
+            session.add(User(username="frank", email="frank@example.com", password_hash="h"))
             await session.commit()
 
         async with session_factory() as session:
-            session.add(
-                User(username="frank2", email="frank@example.com", password_hash="h")
-            )
+            session.add(User(username="frank2", email="frank@example.com", password_hash="h"))
             with pytest.raises(IntegrityError):
                 await session.commit()
 
@@ -220,8 +204,6 @@ class TestUserIsActive:
 
         async with session_factory() as session:
             user = (
-                await session.execute(
-                    select(User).where(User.username == f"user-{status}")
-                )
+                await session.execute(select(User).where(User.username == f"user-{status}"))
             ).scalar_one()
             assert user.is_active is expected

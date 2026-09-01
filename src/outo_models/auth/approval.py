@@ -166,9 +166,7 @@ async def register_user(
         await session.execute(select(User.id).where(User.email == normalized_email))
     ).scalar_one_or_none()
     if existing_email is not None:
-        raise ConflictError(
-            f"email {normalized_email!r} is already registered"
-        )
+        raise ConflictError(f"email {normalized_email!r} is already registered")
 
     # Password hashing is the most expensive thing in this function, so it
     # runs *after* all validation and uniqueness checks — a malformed slug
@@ -231,9 +229,7 @@ async def approve_user(
     """
     user = await _require_user(session, username=username)
     if user.status != _STATUS_PENDING:
-        raise ConflictError(
-            f"user {username!r} is not pending (status={user.status!r})"
-        )
+        raise ConflictError(f"user {username!r} is not pending (status={user.status!r})")
 
     now = utcnow()
     user.status = _STATUS_APPROVED
@@ -275,9 +271,7 @@ async def deny_user(
     """
     user = await _require_user(session, username=username)
     if user.status != _STATUS_PENDING:
-        raise ConflictError(
-            f"user {username!r} is not pending (status={user.status!r})"
-        )
+        raise ConflictError(f"user {username!r} is not pending (status={user.status!r})")
 
     now = utcnow()
     user.status = _STATUS_DENIED
@@ -353,9 +347,7 @@ async def ban_user(
     return user
 
 
-async def unban_user(
-    session: AsyncSession, *, username: str, admin: User
-) -> User:
+async def unban_user(session: AsyncSession, *, username: str, admin: User) -> User:
     """Transition a banned user to `approved`.
 
     The only legal exit from `"banned"` — the `Approval` row is left as-is
@@ -368,9 +360,7 @@ async def unban_user(
     """
     user = await _require_user(session, username=username)
     if user.status != _STATUS_BANNED:
-        raise ConflictError(
-            f"user {username!r} is not banned (status={user.status!r})"
-        )
+        raise ConflictError(f"user {username!r} is not banned (status={user.status!r})")
 
     now = utcnow()
     user.status = _STATUS_APPROVED
@@ -396,9 +386,7 @@ async def list_pending(session: AsyncSession) -> list[User]:
     microsecond, making `created_at` alone non-deterministic).
     """
     result = await session.execute(
-        select(User)
-        .where(User.status == _STATUS_PENDING)
-        .order_by(User.created_at, User.id)
+        select(User).where(User.status == _STATUS_PENDING).order_by(User.created_at, User.id)
     )
     return list(result.scalars().all())
 
@@ -415,9 +403,7 @@ def can_login(user: User) -> None:
         ForbiddenError: `user.status` is `"denied"` or `"banned"`.
     """
     if user.status == _STATUS_PENDING:
-        raise ApprovalRequiredError(
-            f"user {user.username!r} is awaiting admin approval"
-        )
+        raise ApprovalRequiredError(f"user {user.username!r} is awaiting admin approval")
     if user.status in (_STATUS_DENIED, _STATUS_BANNED):
         raise ForbiddenError(f"user {user.username!r} cannot log in")
     return None
@@ -432,9 +418,7 @@ async def _get_or_create_approval(session: AsyncSession, *, user_id: int) -> App
     admin transition still completes rather than crashing with `KeyError`.
     """
     approval = (
-        await session.execute(
-            select(Approval).where(Approval.user_id == user_id)
-        )
+        await session.execute(select(Approval).where(Approval.user_id == user_id))
     ).scalar_one_or_none()
     if approval is None:
         approval = Approval(user_id=user_id, decision=_STATUS_PENDING)

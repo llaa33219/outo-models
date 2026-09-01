@@ -29,9 +29,7 @@ def session_max_age() -> int:
     return _SESSION_MAX_AGE_SECONDS
 
 
-def build_session_cookie(
-    *, response: Response, settings: Settings, user_id: int
-) -> None:
+def build_session_cookie(*, response: Response, settings: Settings, user_id: int) -> None:
     """Set the session cookie on `response` using the settings-bound kwargs.
 
     A random nonce is folded into the payload so two consecutive logins
@@ -39,9 +37,7 @@ def build_session_cookie(
     dict deterministically).
     """
     manager = SessionManager(settings.secret_key, max_age=_SESSION_MAX_AGE_SECONDS)
-    token = manager.dumps(
-        {"user_id": user_id, "nonce": secrets.token_urlsafe(16)}
-    )
+    token = manager.dumps({"user_id": user_id, "nonce": secrets.token_urlsafe(16)})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,

@@ -71,8 +71,7 @@ def reset(
     destroy: bool = typer.Option(
         False,
         "--destroy",
-        help="Perform the actual deletion (must pass the confirmation gate). "
-        "Dry-run by default.",
+        help="Perform the actual deletion (must pass the confirmation gate). Dry-run by default.",
     ),
 ) -> None:
     """`outo-models reset` — wipe all data (triple-confirmation gate).
@@ -186,9 +185,7 @@ def _gather_yes_confirmations(user_count: int, repo_count: int, total_bytes: int
         # whitespace) is rejected. The spec demands exact match; an
         # operator who truly meant `yes` types it without trailing space.
         if answer != _YES_TOKEN:
-            console.print(
-                f"[bold red]Not '{_YES_TOKEN}' — aborting.[/bold red]"
-            )
+            console.print(f"[bold red]Not '{_YES_TOKEN}' — aborting.[/bold red]")
             return False
     return True
 

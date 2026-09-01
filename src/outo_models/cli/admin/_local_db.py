@@ -10,6 +10,7 @@ runs it via `asyncio.run`.
 # (10+ pairs of nearly-identical CRUD bodies); splitting into per-resource
 # sub-modules would force every command site to thread an extra import.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,9 +76,7 @@ async def bootstrap_if_needed() -> None:
 async def fetch_first_admin() -> Any:
     factory = session_factory()
     async with factory() as session:
-        result = await session.execute(
-            select(User).where(User.role == "admin").order_by(User.id)
-        )
+        result = await session.execute(select(User).where(User.role == "admin").order_by(User.id))
         return result.scalars().first()
 
 

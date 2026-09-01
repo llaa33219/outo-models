@@ -28,9 +28,7 @@ class TestSecurityHeadersOnSuccess:
         assert response.status_code == 200
         self._assert_common_headers(response.headers)
 
-    def test_no_hsts_on_localhost(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    def test_no_hsts_on_localhost(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.get("/")
         assert "strict-transport-security" not in response.headers
@@ -64,9 +62,7 @@ class TestSecurityHeadersOnErrors:
 class TestCspContents:
     """The CSP stays restrictive — no `unsafe-inline` for scripts."""
 
-    def test_script_src_is_self_only(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    def test_script_src_is_self_only(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.get("/")
         csp = response.headers["content-security-policy"]

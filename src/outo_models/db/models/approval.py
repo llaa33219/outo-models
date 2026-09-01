@@ -41,9 +41,7 @@ class Approval(IntIdMixin, TimestampMixin, Base):
         server_default="pending",
     )
     reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    decided_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 __all__ = ["Approval"]

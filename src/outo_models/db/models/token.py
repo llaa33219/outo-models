@@ -34,17 +34,11 @@ class PersonalAccessToken(IntIdMixin, TimestampMixin, Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
-    fingerprint_hash: Mapped[str] = mapped_column(
-        String(512), unique=True, nullable=False
-    )
+    fingerprint_hash: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
     prefix: Mapped[str] = mapped_column(String(8), nullable=False)
     scopes: Mapped[str] = mapped_column(String(2000), nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def is_expired(self) -> bool:

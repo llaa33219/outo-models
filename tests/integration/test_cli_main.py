@@ -7,6 +7,7 @@ Covers the small but security-critical surface of the CLI root:
       exit 1, never a Python traceback.
     * Unknown errors are not swallowed — they propagate so CI sees them.
 """
+
 from __future__ import annotations
 
 from importlib.metadata import version as _pkg_version
@@ -63,9 +64,7 @@ class TestHelpMessages:
     )
     def test_help_exits_zero(self, runner: CliRunner, argv: list[str]) -> None:
         result = runner.invoke(app, argv)
-        assert result.exit_code == 0, (
-            f"{argv} → exit {result.exit_code}, output: {result.output}"
-        )
+        assert result.exit_code == 0, f"{argv} → exit {result.exit_code}, output: {result.output}"
         assert "Usage" in result.output
 
 

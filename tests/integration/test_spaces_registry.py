@@ -72,29 +72,19 @@ async def factory(
         await dispose_engines()
 
 
-async def _make_user(
-    factory: async_sessionmaker[AsyncSession], username: str
-) -> User:
+async def _make_user(factory: async_sessionmaker[AsyncSession], username: str) -> User:
     """Create + return a `User` row from a fresh session."""
     async with factory() as session:
-        user = User(
-            username=username, email=f"{username}@example.com", password_hash="h"
-        )
+        user = User(username=username, email=f"{username}@example.com", password_hash="h")
         session.add(user)
         await session.commit()
-        return (
-            await session.execute(select(User).where(User.username == username))
-        ).scalar_one()
+        return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
-async def _reload_user(
-    factory: async_sessionmaker[AsyncSession], username: str
-) -> User:
+async def _reload_user(factory: async_sessionmaker[AsyncSession], username: str) -> User:
     """Look up `User` from a fresh session — the caller's session may be closed."""
     async with factory() as session:
-        return (
-            await session.execute(select(User).where(User.username == username))
-        ).scalar_one()
+        return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
 # ---------------------------------------------------------------------------
@@ -122,24 +112,18 @@ class TestSupportedSdks:
 class TestSpaceMetaHelpers:
     """The on-disk JSON file under `spaces_dir()/owner/name.json` is the source of truth."""
 
-    async def test_write_then_read_round_trips_sdk(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_write_then_read_round_trips_sdk(self, tmp_data_dir: Path) -> None:
         meta = SpaceMeta(sdk="gradio")
         write_space_meta("alice", "demo", meta)
 
         assert read_space_meta("alice", "demo").sdk == "gradio"
 
-    async def test_read_missing_meta_returns_static_default(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_read_missing_meta_returns_static_default(self, tmp_data_dir: Path) -> None:
         # No file written; the contract is "missing → default sdk static".
         meta = read_space_meta("alice", "absent")
         assert meta.sdk == "static"
 
-    async def test_meta_file_lives_under_spaces_dir(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_meta_file_lives_under_spaces_dir(self, tmp_data_dir: Path) -> None:
         write_space_meta("alice", "demo", SpaceMeta(sdk="docker"))
 
         path = spaces_dir() / "alice" / "demo.json"
@@ -149,9 +133,7 @@ class TestSpaceMetaHelpers:
         assert payload["sdk"] == "docker"
         assert "updated_at" in payload
 
-    async def test_write_creates_owner_segment(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_write_creates_owner_segment(self, tmp_data_dir: Path) -> None:
         # The owner dir must NOT exist before the first write — proving we
         # are not silently relying on a pre-created directory.
         assert not (spaces_dir() / "alice").exists()
@@ -181,9 +163,7 @@ class TestCreateSpace:
         # `Repo.kind` is stored as a string column; the contract is "space".
         assert repo.kind == "space"
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == repo.id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == repo.id))).scalar_one()
             assert row.kind == "space"
             assert row.visibility == "private"
             assert row.default_branch == "main"
@@ -243,9 +223,7 @@ class TestCreateSpace:
             await session.commit()
 
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == repo_id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
             assert row.visibility == "public"
             assert row.description == "hello world"
 
@@ -340,9 +318,7 @@ class TestListSpaces:
         async with factory() as session:
             assert await list_spaces(session) == []
 
-    async def test_returns_only_kind_space(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_returns_only_kind_space(self, factory: async_sessionmaker[AsyncSession]) -> None:
         from outo_models.repos.create import create_repo
         from outo_models.repos.models import RepoKind
 
@@ -354,9 +330,7 @@ class TestListSpaces:
             await session.commit()
 
         async with factory() as session:
-            spaces = await list_spaces(
-                session, owner_name="alice", include_private=True
-            )
+            spaces = await list_spaces(session, owner_name="alice", include_private=True)
 
         names = sorted(s.name for s in spaces)
         assert names == ["space-a", "space-b"]
@@ -366,12 +340,8 @@ class TestListSpaces:
     ) -> None:
         owner = await _make_user(factory, "alice")
         async with factory() as session:
-            await create_space(
-                session, owner=owner, name="pub", visibility=Visibility.PUBLIC
-            )
-            await create_space(
-                session, owner=owner, name="priv", visibility=Visibility.PRIVATE
-            )
+            await create_space(session, owner=owner, name="pub", visibility=Visibility.PUBLIC)
+            await create_space(session, owner=owner, name="priv", visibility=Visibility.PRIVATE)
             await session.commit()
 
         async with factory() as session:
@@ -384,34 +354,22 @@ class TestListSpaces:
     ) -> None:
         owner = await _make_user(factory, "alice")
         async with factory() as session:
-            await create_space(
-                session, owner=owner, name="pub", visibility=Visibility.PUBLIC
-            )
-            await create_space(
-                session, owner=owner, name="priv", visibility=Visibility.PRIVATE
-            )
+            await create_space(session, owner=owner, name="pub", visibility=Visibility.PUBLIC)
+            await create_space(session, owner=owner, name="priv", visibility=Visibility.PRIVATE)
             await session.commit()
 
         async with factory() as session:
-            names = sorted(
-                s.name for s in await list_spaces(session, include_private=True)
-            )
+            names = sorted(s.name for s in await list_spaces(session, include_private=True))
 
         assert names == ["priv", "pub"]
 
-    async def test_owner_name_filter(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_owner_name_filter(self, factory: async_sessionmaker[AsyncSession]) -> None:
         alice = await _make_user(factory, "alice")
         bob = await _make_user(factory, "bob")
 
         async with factory() as session:
-            await create_space(
-                session, owner=alice, name="a-one", visibility=Visibility.PUBLIC
-            )
-            await create_space(
-                session, owner=bob, name="b-one", visibility=Visibility.PUBLIC
-            )
+            await create_space(session, owner=alice, name="a-one", visibility=Visibility.PUBLIC)
+            await create_space(session, owner=bob, name="b-one", visibility=Visibility.PUBLIC)
             await session.commit()
 
         async with factory() as session:
@@ -434,12 +392,8 @@ class TestListSpaces:
             await session.commit()
 
         async with factory() as session:
-            page_1 = await list_spaces(
-                session, limit=2, offset=0, include_private=True
-            )
-            page_2 = await list_spaces(
-                session, limit=2, offset=2, include_private=True
-            )
+            page_1 = await list_spaces(session, limit=2, offset=0, include_private=True)
+            page_2 = await list_spaces(session, limit=2, offset=2, include_private=True)
 
         assert [s.name for s in page_1] == ["s-0", "s-1"]
         assert [s.name for s in page_2] == ["s-2", "s-3"]
@@ -453,49 +407,35 @@ class TestListSpaces:
 class TestUpdateSpace:
     """`update_space` mutates visibility and description on the row."""
 
-    async def test_update_visibility(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_visibility(self, factory: async_sessionmaker[AsyncSession]) -> None:
         owner = await _make_user(factory, "alice")
         async with factory() as session:
             repo = await create_space(session, owner=owner, name="demo")
             await session.commit()
 
         async with factory() as session:
-            updated = await update_space(
-                session, space=repo, visibility=Visibility.PUBLIC
-            )
+            updated = await update_space(session, space=repo, visibility=Visibility.PUBLIC)
             await session.commit()
 
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == updated.id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == updated.id))).scalar_one()
             assert row.visibility == "public"
 
-    async def test_update_description(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_description(self, factory: async_sessionmaker[AsyncSession]) -> None:
         owner = await _make_user(factory, "alice")
         async with factory() as session:
             repo = await create_space(session, owner=owner, name="demo")
             await session.commit()
 
         async with factory() as session:
-            updated = await update_space(
-                session, space=repo, description="new desc"
-            )
+            updated = await update_space(session, space=repo, description="new desc")
             await session.commit()
 
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == updated.id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == updated.id))).scalar_one()
             assert row.description == "new desc"
 
-    async def test_update_persists(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_persists(self, factory: async_sessionmaker[AsyncSession]) -> None:
         owner = await _make_user(factory, "alice")
         async with factory() as session:
             repo = await create_space(session, owner=owner, name="demo")
@@ -512,9 +452,7 @@ class TestUpdateSpace:
             await session.commit()
 
         async with factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.id == repo_id))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
             assert row.visibility == "public"
             assert row.description == "updated"
 

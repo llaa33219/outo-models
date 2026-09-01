@@ -134,17 +134,9 @@ async def runtime_status(
     mapped = _podman_state(podman_status)
     port = _podman_host_port(inspect)
     container_id = _podman_container_id(inspect)
-    url = (
-        _run_url(settings, owner_name, space.name)
-        if mapped is RuntimeState.RUNNING
-        else None
-    )
+    url = _run_url(settings, owner_name, space.name) if mapped is RuntimeState.RUNNING else None
     if mapped is RuntimeState.FAILED:
-        message = (
-            f"{_FAILED_PREFIX}{failed_reason}"
-            if failed_reason
-            else "Last run failed."
-        )
+        message = f"{_FAILED_PREFIX}{failed_reason}" if failed_reason else "Last run failed."
         return RuntimeStatus(
             state=RuntimeState.FAILED,
             message=message,

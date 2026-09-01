@@ -54,17 +54,13 @@ async def delete_repo(
         )
     ).scalar_one_or_none()
     if repo_row is None:
-        raise NotFoundError(
-            f"repository not found: {owner.username}/{name} ({kind.value})"
-        )
+        raise NotFoundError(f"repository not found: {owner.username}/{name} ({kind.value})")
 
     fs_path = repo_fs_path(owner.username, name)
     size_to_release = repo_row.size_bytes
 
     async with REPO_LOCKS.acquire(owner.username, name):
-        await session.execute(
-            delete(Revision).where(Revision.repo_id == repo_row.id)
-        )
+        await session.execute(delete(Revision).where(Revision.repo_id == repo_row.id))
         await session.delete(repo_row)
 
         session.add(

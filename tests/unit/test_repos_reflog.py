@@ -89,9 +89,7 @@ class TestRecentRevisionsPopulated:
         assert only.message == "first"
         assert "tester@example.com" in only.author
 
-    async def test_multiple_commits_returned_newest_first(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_multiple_commits_returned_newest_first(self, tmp_data_dir: Path) -> None:
         _init_bare(tmp_data_dir, "bob", "model-b")
         _push_commit(tmp_data_dir, "bob", "model-b", "first", "v1")
         _push_commit(tmp_data_dir, "bob", "model-b", "second", "v2")
@@ -103,9 +101,7 @@ class TestRecentRevisionsPopulated:
     async def test_default_limit_is_20(self, tmp_data_dir: Path) -> None:
         _init_bare(tmp_data_dir, "carol", "model-c")
         for i in range(25):
-            _push_commit(
-                tmp_data_dir, "carol", "model-c", f"msg {i:02d}", f"body {i}"
-            )
+            _push_commit(tmp_data_dir, "carol", "model-c", f"msg {i:02d}", f"body {i}")
 
         revs = await recent_revisions("carol", "model-c")
         assert len(revs) == 20
@@ -113,9 +109,7 @@ class TestRecentRevisionsPopulated:
     async def test_explicit_limit_is_honored(self, tmp_data_dir: Path) -> None:
         _init_bare(tmp_data_dir, "dave", "model-d")
         for i in range(5):
-            _push_commit(
-                tmp_data_dir, "dave", "model-d", f"msg {i:02d}", f"body {i}"
-            )
+            _push_commit(tmp_data_dir, "dave", "model-d", f"msg {i:02d}", f"body {i}")
 
         revs = await recent_revisions("dave", "model-d", limit=3)
         assert len(revs) == 3
@@ -129,9 +123,7 @@ class TestRecentRevisionsPopulated:
         revs = await recent_revisions("erin", "model-e", limit=10_000)
         assert len(revs) == 1
 
-    async def test_committed_at_is_timezone_aware_utc(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_committed_at_is_timezone_aware_utc(self, tmp_data_dir: Path) -> None:
         _init_bare(tmp_data_dir, "frank", "model-f")
         _push_commit(tmp_data_dir, "frank", "model-f", "stamped", "x")
 
@@ -145,9 +137,7 @@ class TestRecentRevisionsPopulated:
 class TestRecentRevisionsEmptyBranch:
     """A bare repo with commits on a non-default branch stays empty here."""
 
-    async def test_commits_only_on_alt_branch_yields_empty(
-        self, tmp_data_dir: Path
-    ) -> None:
+    async def test_commits_only_on_alt_branch_yields_empty(self, tmp_data_dir: Path) -> None:
         work = tmp_data_dir / "_work_alt"
         work.mkdir()
         porcelain.init(str(work), bare=False)

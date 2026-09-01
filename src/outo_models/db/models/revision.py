@@ -37,9 +37,7 @@ class Revision(IntIdMixin, TimestampMixin, Base):
         nullable=True,
     )
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    size_bytes: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     __table_args__ = (
         Index("ix_revisions_repo_id", "repo_id"),

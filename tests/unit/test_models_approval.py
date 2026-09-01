@@ -43,9 +43,7 @@ async def session_factory(tmp_data_dir) -> AsyncIterator[async_sessionmaker[Asyn
 async def _make_user(session: AsyncSession, username: str) -> int:
     session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
     await session.commit()
-    return (
-        await session.execute(select(User.id).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User.id).where(User.username == username))).scalar_one()
 
 
 class TestApprovalCreateRead:
@@ -61,9 +59,7 @@ class TestApprovalCreateRead:
 
         async with session_factory() as session:
             approval = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == user_id)
-                )
+                await session.execute(select(Approval).where(Approval.user_id == user_id))
             ).scalar_one()
             assert approval.decision == "pending"
             assert approval.decided_by_id is None
@@ -90,9 +86,7 @@ class TestApprovalCreateRead:
 
         async with session_factory() as session:
             approval = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == user_id)
-                )
+                await session.execute(select(Approval).where(Approval.user_id == user_id))
             ).scalar_one()
             assert approval.decided_by_id == admin_id
             assert approval.decision == "approved"
@@ -110,9 +104,7 @@ class TestApprovalUpdate:
             session.add(Approval(user_id=user_id))
             await session.commit()
             approval_id = (
-                await session.execute(
-                    select(Approval.id).where(Approval.user_id == user_id)
-                )
+                await session.execute(select(Approval.id).where(Approval.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -141,9 +133,7 @@ class TestApprovalDelete:
             session.add(Approval(user_id=user_id))
             await session.commit()
             approval_id = (
-                await session.execute(
-                    select(Approval.id).where(Approval.user_id == user_id)
-                )
+                await session.execute(select(Approval.id).where(Approval.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -154,9 +144,7 @@ class TestApprovalDelete:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == user_id)
-                )
+                await session.execute(select(Approval).where(Approval.user_id == user_id))
             ).scalar_one_or_none() is None
 
 

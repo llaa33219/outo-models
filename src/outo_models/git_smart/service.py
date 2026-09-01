@@ -179,11 +179,7 @@ class _WsgiToAsgi:
             if event.get("type") == "http.disconnect":
                 return None
             chunk_obj = event.get("body")
-            chunk = (
-                b""
-                if not isinstance(chunk_obj, (bytes, bytearray))
-                else bytes(chunk_obj)
-            )
+            chunk = b"" if not isinstance(chunk_obj, (bytes, bytearray)) else bytes(chunk_obj)
             if chunk:
                 total += len(chunk)
                 if total > self._max_body_bytes:
@@ -500,9 +496,7 @@ def _capture_branch_refs(repo_path: Path) -> dict[str, str]:
     return refs
 
 
-def _read_commit_message_author(
-    repo_path: Path, commit_sha: str
-) -> tuple[str, str] | None:
+def _read_commit_message_author(repo_path: Path, commit_sha: str) -> tuple[str, str] | None:
     """Read `(message, author)` for `commit_sha` from `repo_path`.
 
     Returns `None` if the object is missing or is not a commit — the
@@ -521,6 +515,7 @@ def _read_commit_message_author(
     # Only `Commit` objects carry `message` / `author`; `type_name` is
     # bytes on disk but `Commit` is the only class that produces it.
     from dulwich.objects import Commit
+
     if not isinstance(obj, Commit):
         return None
     message = obj.message.decode("utf-8", errors="replace")
@@ -622,9 +617,7 @@ class GitSmartService:
                 )
                 return
 
-            action, _is_ad = _classify(
-                method=method, rest_segments=rest, query_string=query_string
-            )
+            action, _is_ad = _classify(method=method, rest_segments=rest, query_string=query_string)
 
             # Locate the Repo + owner User.
             async with self._session() as session:
@@ -632,9 +625,8 @@ class GitSmartService:
                     await session.execute(
                         select(Repo).where(
                             Repo.name == repo_name,
-                            Repo.owner_id == select(User.id)
-                            .where(User.username == owner_name)
-                            .scalar_subquery(),
+                            Repo.owner_id
+                            == select(User.id).where(User.username == owner_name).scalar_subquery(),
                         )
                     )
                 ).scalar_one_or_none()
@@ -643,9 +635,7 @@ class GitSmartService:
                     return
                 # Load the owner User row for `authorize()`.
                 owner = (
-                    await session.execute(
-                        select(User).where(User.id == repo_row.owner_id)
-                    )
+                    await session.execute(select(User).where(User.id == repo_row.owner_id))
                 ).scalar_one()
 
             # Resolve identity from Authorization header.
@@ -653,9 +643,7 @@ class GitSmartService:
 
             raw_headers_obj = scope.get("headers")
             auth_header_obj = _header_value(raw_headers_obj, "authorization")
-            auth_header: str | None = (
-                str(auth_header_obj) if auth_header_obj is not None else None
-            )
+            auth_header: str | None = str(auth_header_obj) if auth_header_obj is not None else None
             user = await resolve_git_identity(auth_header, settings=self._settings)
 
             raw_headers = raw_headers_obj
@@ -683,14 +671,10 @@ class GitSmartService:
                 incoming = int(content_length) if content_length else 0
                 async with self._session() as session:
                     owner_for_quota = (
-                        await session.execute(
-                            select(User).where(User.id == owner.id)
-                        )
+                        await session.execute(select(User).where(User.id == owner.id))
                     ).scalar_one()
                     try:
-                        await check_push_allowed(
-                            session, owner_for_quota, incoming
-                        )
+                        await check_push_allowed(session, owner_for_quota, incoming)
                         await session.commit()
                     except QuotaExceededError as exc:
                         # `QuotaExceededError.status_code == 413`.
@@ -730,9 +714,7 @@ class GitSmartService:
             # Capture pre-push refs (only for PUSH, where bookkeeping matters).
             pre_refs: dict[str, str] = {}
             if action is GitAction.PUSH:
-                pre_refs = _capture_branch_refs(
-                    repo_fs_path(owner_name, repo_name)
-                )
+                pre_refs = _capture_branch_refs(repo_fs_path(owner_name, repo_name))
 
             result = await adapter(normalised_scope, receive, send)
             if result is None:
@@ -740,11 +722,7 @@ class GitSmartService:
             status_code, _body = result
 
             # Post-PUSH bookkeeping.
-            if (
-                action is GitAction.PUSH
-                and 200 <= status_code < 300
-                and user is not None
-            ):
+            if action is GitAction.PUSH and 200 <= status_code < 300 and user is not None:
                 await self._record_push(
                     owner=owner,
                     repo=repo_row,
@@ -787,9 +765,7 @@ class GitSmartService:
             for ref_name, new_sha in post_refs.items():
                 if pre_refs.get(ref_name) == new_sha:
                     continue
-                advances.append(
-                    {"ref": ref_name, "old": pre_refs.get(ref_name), "new": new_sha}
-                )
+                advances.append({"ref": ref_name, "old": pre_refs.get(ref_name), "new": new_sha})
                 details = _read_commit_message_author(fs_path, new_sha)
                 if details is None:
                     continue
@@ -810,14 +786,10 @@ class GitSmartService:
 
             async with self._session() as session:
                 repo_row = (
-                    await session.execute(
-                        select(Repo).where(Repo.id == repo.id)
-                    )
+                    await session.execute(select(Repo).where(Repo.id == repo.id))
                 ).scalar_one()
                 owner_row = (
-                    await session.execute(
-                        select(User).where(User.id == owner.id)
-                    )
+                    await session.execute(select(User).where(User.id == owner.id))
                 ).scalar_one()
 
                 new_size = await disk_usage(fs_path)
@@ -851,9 +823,7 @@ def _header_value(headers: object, name: str) -> str | None:
     for raw_k, raw_v in headers:
         k = raw_k.decode("latin-1").lower() if isinstance(raw_k, bytes) else str(raw_k).lower()
         if k == needle:
-            return (
-                raw_v.decode("latin-1") if isinstance(raw_v, bytes) else str(raw_v)
-            )
+            return raw_v.decode("latin-1") if isinstance(raw_v, bytes) else str(raw_v)
     return None
 
 

@@ -52,9 +52,7 @@ class TestAuditLogCreateRead:
 
         async with session_factory() as session:
             entry = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "system.cleanup")
-                )
+                await session.execute(select(AuditLog).where(AuditLog.action == "system.cleanup"))
             ).scalar_one()
             assert entry.actor_id is None
             assert entry.target_type == "audit_log"
@@ -78,9 +76,7 @@ class TestAuditLogCreateRead:
 
         async with session_factory() as session:
             entry = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "user.signup")
-                )
+                await session.execute(select(AuditLog).where(AuditLog.action == "user.signup"))
             ).scalar_one()
             assert entry.actor_id == 42
             assert entry.detail is None
@@ -90,16 +86,12 @@ class TestAuditLogCreateRead:
 class TestAuditLogUpdate:
     """Updates to `detail` are visible after a fresh session."""
 
-    async def test_update_detail(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_detail(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_factory() as session:
             session.add(AuditLog(action="repo.push", target_type="repo", target_id="1"))
             await session.commit()
             entry_id = (
-                await session.execute(
-                    select(AuditLog.id).where(AuditLog.action == "repo.push")
-                )
+                await session.execute(select(AuditLog.id).where(AuditLog.action == "repo.push"))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -122,9 +114,7 @@ class TestAuditLogDelete:
             session.add(AuditLog(action="repo.delete", target_type="repo", target_id="7"))
             await session.commit()
             entry_id = (
-                await session.execute(
-                    select(AuditLog.id).where(AuditLog.action == "repo.delete")
-                )
+                await session.execute(select(AuditLog.id).where(AuditLog.action == "repo.delete"))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -135,7 +125,5 @@ class TestAuditLogDelete:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "repo.delete")
-                )
+                await session.execute(select(AuditLog).where(AuditLog.action == "repo.delete"))
             ).scalar_one_or_none() is None

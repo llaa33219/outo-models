@@ -74,9 +74,7 @@ async def prune_audit_logs(
     factory = session_scope if session_factory is None else session_factory
 
     async with factory() as session:
-        result = await session.execute(
-            delete(AuditLog).where(AuditLog.created_at < cutoff)
-        )
+        result = await session.execute(delete(AuditLog).where(AuditLog.created_at < cutoff))
         # `session.execute` is typed as `Result[Any]`, but a Core DELETE
         # actually returns a `CursorResult`, which carries `rowcount`.
         cursor = cast(CursorResult[Any], result)

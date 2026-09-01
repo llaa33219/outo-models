@@ -101,9 +101,7 @@ def render_caddyfile(config: TlsConfig) -> str:
     try:
         template = _JINJA_ENV.get_template(_resolve_template_path().name)
     except jinja2.TemplateNotFound as exc:
-        raise ConfigError(
-            f"Caddyfile template not found at {_resolve_template_path()!s}"
-        ) from exc
+        raise ConfigError(f"Caddyfile template not found at {_resolve_template_path()!s}") from exc
     return template.render(
         domain=config.domain,
         email=config.email,

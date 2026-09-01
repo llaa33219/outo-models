@@ -75,9 +75,7 @@ async def _seed_user(
         )
         session.add(user)
         await session.commit()
-        return (
-            await session.execute(select(User).where(User.username == username))
-        ).scalar_one()
+        return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
 async def _seed_repo(
@@ -98,11 +96,7 @@ async def _seed_repo(
         )
         session.add(repo)
         await session.commit()
-        return (
-            await session.execute(
-                select(Repo).where(Repo.id == repo.id)
-            )
-        ).scalar_one()
+        return (await session.execute(select(Repo).where(Repo.id == repo.id))).scalar_one()
 
 
 async def _mint_pat(
@@ -126,9 +120,7 @@ async def _mint_pat(
         await session.commit()
         return (
             await session.execute(
-                select(PersonalAccessToken).where(
-                    PersonalAccessToken.id == pat.id
-                )
+                select(PersonalAccessToken).where(PersonalAccessToken.id == pat.id)
             )
         ).scalar_one()
 
@@ -149,31 +141,16 @@ class TestResolveGitIdentityMissingHeader:
         assert await resolve_git_identity("", settings=get_settings()) is None
 
     async def test_non_basic_scheme_returns_none(self, tmp_data_dir: Path) -> None:
-        assert (
-            await resolve_git_identity(
-                "Bearer some-token", settings=get_settings()
-            )
-            is None
-        )
+        assert await resolve_git_identity("Bearer some-token", settings=get_settings()) is None
 
     async def test_malformed_base64_returns_none(self, tmp_data_dir: Path) -> None:
         # `Basic !!!` is not valid base64 → must not raise.
-        assert (
-            await resolve_git_identity(
-                "Basic !!!notbase64", settings=get_settings()
-            )
-            is None
-        )
+        assert await resolve_git_identity("Basic !!!notbase64", settings=get_settings()) is None
 
     async def test_basic_without_colon_returns_none(self, tmp_data_dir: Path) -> None:
         # No colon separator → cannot split user/password.
         encoded = base64.b64encode(b"nocolonhere").decode("ascii")
-        assert (
-            await resolve_git_identity(
-                f"Basic {encoded}", settings=get_settings()
-            )
-            is None
-        )
+        assert await resolve_git_identity(f"Basic {encoded}", settings=get_settings()) is None
 
 
 class TestResolveGitIdentityUserLookup:

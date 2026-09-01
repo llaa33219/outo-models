@@ -149,9 +149,7 @@ def parse_batch_body(body: bytes) -> BatchRequest:
 
     operation = payload.get("operation")
     if operation not in ("upload", "download"):
-        raise ValidationFailedError(
-            f"operation must be 'upload' or 'download', got {operation!r}"
-        )
+        raise ValidationFailedError(f"operation must be 'upload' or 'download', got {operation!r}")
 
     transfers_raw = payload.get("transfers", ["basic"])
     if not isinstance(transfers_raw, list) or not transfers_raw:
@@ -162,9 +160,7 @@ def parse_batch_body(body: bytes) -> BatchRequest:
         transfers = transfers_raw
     if "basic" not in transfers:
         # We only support the `basic` transfer mode.
-        raise ValidationFailedError(
-            "server only supports the 'basic' transfer mode"
-        )
+        raise ValidationFailedError("server only supports the 'basic' transfer mode")
 
     raw_objects = payload.get("objects")
     if not isinstance(raw_objects, list):
@@ -239,8 +235,7 @@ async def _build_upload_entry(
             error={
                 "code": 413,
                 "message": (
-                    f"object size {size} exceeds per-object limit "
-                    f"{settings.lfs_max_object_bytes}"
+                    f"object size {size} exceeds per-object limit {settings.lfs_max_object_bytes}"
                 ),
             },
         )
@@ -267,9 +262,7 @@ async def _build_upload_entry(
             error={"code": 413, "message": str(exc)},
         )
 
-    action = await store.make_upload_action(
-        owner=owner, repo=repo, oid=oid, size=size
-    )
+    action = await store.make_upload_action(owner=owner, repo=repo, oid=oid, size=size)
     return BatchObjectResponse(
         oid=oid,
         size=size,
@@ -297,9 +290,7 @@ async def _build_download_entry(
             size=size,
             error={"code": 404, "message": "object not found"},
         )
-    action = await store.make_download_action(
-        owner=owner, repo=repo, oid=oid, size=size
-    )
+    action = await store.make_download_action(owner=owner, repo=repo, oid=oid, size=size)
     return BatchObjectResponse(
         oid=oid,
         size=size,

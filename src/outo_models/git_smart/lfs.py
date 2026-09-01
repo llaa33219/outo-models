@@ -131,9 +131,7 @@ def _header_value(headers: object, name: str) -> str | None:
     for raw_k, raw_v in headers:
         k = raw_k.decode("latin-1").lower() if isinstance(raw_k, bytes) else str(raw_k).lower()
         if k == needle:
-            return (
-                raw_v.decode("latin-1") if isinstance(raw_v, bytes) else str(raw_v)
-            )
+            return raw_v.decode("latin-1") if isinstance(raw_v, bytes) else str(raw_v)
     return None
 
 
@@ -157,9 +155,7 @@ async def _send_status(
     if extra_headers:
         for k, v in extra_headers:
             headers.append((k.encode("latin-1"), v.encode("latin-1")))
-    await send(
-        {"type": "http.response.start", "status": status, "headers": headers}
-    )
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body, "more_body": False})
 
 
@@ -179,9 +175,7 @@ async def _send_bytes(
     if extra_headers:
         for k, v in extra_headers:
             headers.append((k.encode("latin-1"), v.encode("latin-1")))
-    await send(
-        {"type": "http.response.start", "status": status, "headers": headers}
-    )
+    await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body, "more_body": False})
 
 
@@ -272,9 +266,7 @@ async def _read_full_body(receive: ASGIReceive, *, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-async def _stream_request_body(
-    receive: ASGIReceive, *, limit: int
-) -> AsyncIterator[bytes]:
+async def _stream_request_body(receive: ASGIReceive, *, limit: int) -> AsyncIterator[bytes]:
     """Yield the request body chunks without buffering.
 
     Stops when `more_body=False` OR the running total crosses `limit`
@@ -346,9 +338,7 @@ def _request_base_url(scope: dict[str, object]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _load_repo(
-    *, owner_name: str, repo_name: str
-) -> tuple[Repo, User] | None:
+async def _load_repo(*, owner_name: str, repo_name: str) -> tuple[Repo, User] | None:
     """Load the `(Repo, owner User)` pair; `None` if the repo is missing.
 
     Returns `None` for missing so the dispatcher can answer 404 without
@@ -361,9 +351,8 @@ async def _load_repo(
             await session.execute(
                 select(Repo).where(
                     Repo.name == repo_name,
-                    Repo.owner_id == select(User.id)
-                    .where(User.username == owner_name)
-                    .scalar_subquery(),
+                    Repo.owner_id
+                    == select(User.id).where(User.username == owner_name).scalar_subquery(),
                 )
             )
         ).scalar_one_or_none()
@@ -408,9 +397,9 @@ async def _handle_batch(
         await _send_bytes(
             send,
             status=406,
-            body=json.dumps(
-                {"error": "Accept must include application/vnd.git-lfs+json"}
-            ).encode("utf-8"),
+            body=json.dumps({"error": "Accept must include application/vnd.git-lfs+json"}).encode(
+                "utf-8"
+            ),
             content_type="application/json",
         )
         return
@@ -418,9 +407,9 @@ async def _handle_batch(
         await _send_bytes(
             send,
             status=415,
-            body=json.dumps(
-                {"error": "Content-Type must be application/vnd.git-lfs+json"}
-            ).encode("utf-8"),
+            body=json.dumps({"error": "Content-Type must be application/vnd.git-lfs+json"}).encode(
+                "utf-8"
+            ),
             content_type="application/json",
         )
         return
@@ -428,9 +417,7 @@ async def _handle_batch(
     try:
         raw = await _read_full_body(receive, limit=_BATCH_BODY_LIMIT)
     except ValueError:
-        await _send_status(
-            send, status=413, payload={"error": "batch body too large"}
-        )
+        await _send_status(send, status=413, payload={"error": "batch body too large"})
         return
     except ConnectionError:
         return
@@ -447,9 +434,7 @@ async def _handle_batch(
         return
     repo_row, owner = repo_pair
 
-    action = (
-        GitAction.PUSH if request.operation == "upload" else GitAction.PULL
-    )
+    action = GitAction.PUSH if request.operation == "upload" else GitAction.PULL
     auth_header = _header_value(headers, "authorization")
     user = await resolve_git_identity(auth_header, settings=settings)
     try:
@@ -549,10 +534,7 @@ async def _handle_put(
                 send,
                 status=413,
                 payload={
-                    "error": (
-                        f"object exceeds per-object limit "
-                        f"{settings.lfs_max_object_bytes}"
-                    )
+                    "error": (f"object exceeds per-object limit {settings.lfs_max_object_bytes}")
                 },
             )
             return
@@ -572,6 +554,7 @@ async def _handle_put(
         ).scalar_one()
         try:
             from outo_models.repos.quota import check_push_allowed
+
             await check_push_allowed(session, owner_for_quota, size_for_quota)
             await session.commit()
         except QuotaExceededError as exc:
@@ -588,17 +571,13 @@ async def _handle_put(
         await _send_status(
             send,
             status=501,
-            payload={
-                "error": "this server's LFS backend does not support proxied uploads"
-            },
+            payload={"error": "this server's LFS backend does not support proxied uploads"},
         )
         return
 
     body_iter = _stream_request_body(receive, limit=settings.lfs_max_object_bytes)
     try:
-        written = await store.write_object(
-            oid, body_iter, expected_size=size_for_quota
-        )
+        written = await store.write_object(oid, body_iter, expected_size=size_for_quota)
     except ValidationFailedError as exc:
         await _send_status(send, status=422, payload={"error": str(exc)})
         return
@@ -607,16 +586,12 @@ async def _handle_put(
         return
     except ValueError:
         # Streaming cap hit.
-        await _send_status(
-            send, status=413, payload={"error": "object too large"}
-        )
+        await _send_status(send, status=413, payload={"error": "object too large"})
         return
 
     # Persist usage + audit log; commit on success.
     async with factory() as session:
-        owner_row = (
-            await session.execute(select(User).where(User.id == owner.id))
-        ).scalar_one()
+        owner_row = (await session.execute(select(User).where(User.id == owner.id))).scalar_one()
         await add_usage(session, owner_row, written)
         session.add(
             AuditLog(
@@ -624,9 +599,7 @@ async def _handle_put(
                 action="lfs.upload",
                 target_type="repo",
                 target_id=str(repo_row.id),
-                detail=json.dumps(
-                    {"oid": oid, "size": written, "owner": owner_name}
-                ),
+                detail=json.dumps({"oid": oid, "size": written, "owner": owner_name}),
             )
         )
         await session.commit()
@@ -683,9 +656,7 @@ async def _handle_get(
         await _send_status(
             send,
             status=501,
-            payload={
-                "error": "this server's LFS backend does not support proxied downloads"
-            },
+            payload={"error": "this server's LFS backend does not support proxied downloads"},
         )
         return
 
@@ -698,13 +669,9 @@ async def _handle_get(
         (b"content-type", b"application/octet-stream"),
     ]
     if size is not None:
-        headers_out.append(
-            (b"content-length", str(size).encode("ascii"))
-        )
+        headers_out.append((b"content-length", str(size).encode("ascii")))
 
-    await send(
-        {"type": "http.response.start", "status": 200, "headers": headers_out}
-    )
+    await send({"type": "http.response.start", "status": 200, "headers": headers_out})
 
     try:
         async for chunk in store.read_object(oid):

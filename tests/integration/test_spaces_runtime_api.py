@@ -150,9 +150,7 @@ class _FakeSpaceRuntimeManager:
     async def remove(self, owner: str, name: str) -> None:
         del owner, name
 
-    async def inspect(
-        self, owner: str, name: str
-    ) -> dict[str, Any] | None:
+    async def inspect(self, owner: str, name: str) -> dict[str, Any] | None:
         if self._raise is not None:
             raise self._raise
         return self._inspect_payload
@@ -206,9 +204,7 @@ def _patch_router_manager(
                 return m
         return manager
 
-    monkeypatch.setattr(
-        "outo_models.server.routers.spaces.SpaceRuntimeManager", factory
-    )
+    monkeypatch.setattr("outo_models.server.routers.spaces.SpaceRuntimeManager", factory)
     return manager
 
 
@@ -235,9 +231,7 @@ class TestStaticSpace:
             json={"username": "alice", "password": "correct horse battery staple"},
         )
         space_id = await _seed_space(factory, owner_username="alice", sdk="static")
-        manager = _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        manager = _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         response = client.post("/api/spaces/alice/demo/start")
         assert response.status_code == 200, response.json()
         body = response.json()
@@ -252,10 +246,10 @@ class TestStaticSpace:
         # An audit row was written.
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "space.start")
-                )
-            ).scalars().all()
+                (await session.execute(select(AuditLog).where(AuditLog.action == "space.start")))
+                .scalars()
+                .all()
+            )
         assert len(rows) >= 1
         latest = rows[-1]
         assert latest.target_id == str(space_id)
@@ -297,9 +291,7 @@ class TestStartStopRestartApi:
         await _seed_space(
             factory, owner_username="alice", name="demo", sdk="static", visibility="public"
         )
-        _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         client.post("/api/auth/logout")
         response = client.get("/api/spaces/alice/demo/status")
         assert response.status_code == 200
@@ -346,9 +338,7 @@ class TestStartStopRestartApi:
         # alice's space; bob does NOT own it
         # Seed without going through create_space because we need the sidecar too
         await _seed_space(factory, owner_username="alice", name="demo")
-        manager = _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        manager = _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         response = client.post("/api/spaces/alice/demo/start")
         assert response.status_code == 403
         assert manager.start_calls == []
@@ -369,9 +359,7 @@ class TestStartStopRestartApi:
             json={"username": "alice", "password": "correct horse battery staple"},
         )
         await _seed_space(factory, owner_username="alice", sdk="static")
-        manager = _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        manager = _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         response = client.post("/api/spaces/alice/demo/start")
         assert response.status_code == 503
         assert response.json()["error"] == "runtime_disabled"
@@ -439,9 +427,7 @@ class TestStaticProxyPathTraversal:
 
         await _seed_space(factory, owner_username="alice", sdk="static")
         # Request a path that escapes via ../..
-        response = client.get(
-            "/spaces/alice/demo/run/../../secret.txt"
-        )
+        response = client.get("/spaces/alice/demo/run/../../secret.txt")
         # Path traversal is rejected — the test should NOT have received
         # the secret contents.
         assert response.status_code in (400, 404)
@@ -514,6 +500,7 @@ class TestContainerProxy:
 
         class _ProxyAsyncClient:
             """`httpx.AsyncClient` substitute that always routes through the test handler."""
+
             def __init__(self, *args, **kwargs) -> None:
                 timeout = kwargs.get("timeout", httpx.Timeout(30.0, connect=5.0))
                 self._client = real_async_client(
@@ -567,9 +554,7 @@ class TestContainerProxy:
             json={"username": "alice", "password": "correct horse battery staple"},
         )
         await _seed_space(factory, owner_username="alice", sdk="gradio")
-        _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         response = client.get("/spaces/alice/demo/run/index")
         assert response.status_code == 503
         assert response.json()["error"] == "space_not_running"
@@ -614,19 +599,21 @@ class TestAuditLogRows:
             json={"username": "alice", "password": "correct horse battery staple"},
         )
         await _seed_space(factory, owner_username="alice", sdk="static")
-        _patch_router_manager(
-            monkeypatch, fake_managers, inspect_payload=None, port=None
-        )
+        _patch_router_manager(monkeypatch, fake_managers, inspect_payload=None, port=None)
         response = client.post("/api/spaces/alice/demo/start")
         assert response.status_code == 200
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(AuditLog)
-                    .where(AuditLog.action == "space.start")
-                    .order_by(AuditLog.id)
+                (
+                    await session.execute(
+                        select(AuditLog)
+                        .where(AuditLog.action == "space.start")
+                        .order_by(AuditLog.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(rows) >= 1
         assert rows[-1].detail is not None
         decoded = json.loads(rows[-1].detail)
@@ -671,12 +658,16 @@ class TestAuditLogRows:
         assert response.status_code == 502
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(AuditLog)
-                    .where(AuditLog.action == "space.start")
-                    .order_by(AuditLog.id)
+                (
+                    await session.execute(
+                        select(AuditLog)
+                        .where(AuditLog.action == "space.start")
+                        .order_by(AuditLog.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(rows) >= 1
         decoded = json.loads(rows[-1].detail)
         assert decoded["ok"] is False

@@ -16,6 +16,7 @@ Creates every table that ships in WP-1 (outo-models v1):
     audit_logs               — append-only audit trail
     web_settings             — operator-editable web-admin key/value store
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -38,9 +39,7 @@ def upgrade() -> None:
         sa.Column("email", sa.String(length=255), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("role", sa.String(length=16), nullable=False, server_default="user"),
-        sa.Column(
-            "status", sa.String(length=16), nullable=False, server_default="pending"
-        ),
+        sa.Column("status", sa.String(length=16), nullable=False, server_default="pending"),
         sa.Column("display_name", sa.String(length=255), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("approved_by_id", sa.Integer(), nullable=True),
@@ -82,9 +81,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_repos"),
         sa.UniqueConstraint("owner_id", "kind", "name", name="uq_repos_owner_id_kind_name"),
-        sa.ForeignKeyConstraint(
-            ["owner_id"], ["users.id"], name="fk_repos_owner_id_users"
-        ),
+        sa.ForeignKeyConstraint(["owner_id"], ["users.id"], name="fk_repos_owner_id_users"),
     )
     op.create_index("ix_repos_owner_id", "repos", ["owner_id"])
     op.create_index("ix_repos_kind", "repos", ["kind"])
@@ -94,20 +91,14 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("repo_id", sa.Integer(), nullable=False),
         sa.Column("commit_sha", sa.String(length=40), nullable=False),
-        sa.Column(
-            "branch", sa.String(length=64), nullable=False, server_default="main"
-        ),
+        sa.Column("branch", sa.String(length=64), nullable=False, server_default="main"),
         sa.Column("author_id", sa.Integer(), nullable=True),
         sa.Column("message", sa.Text(), nullable=False),
         sa.Column("size_bytes", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_revisions"),
-        sa.ForeignKeyConstraint(
-            ["repo_id"], ["repos.id"], name="fk_revisions_repo_id_repos"
-        ),
-        sa.ForeignKeyConstraint(
-            ["author_id"], ["users.id"], name="fk_revisions_author_id_users"
-        ),
+        sa.ForeignKeyConstraint(["repo_id"], ["repos.id"], name="fk_revisions_repo_id_repos"),
+        sa.ForeignKeyConstraint(["author_id"], ["users.id"], name="fk_revisions_author_id_users"),
     )
     op.create_index("ix_revisions_repo_id", "revisions", ["repo_id"])
     op.create_index("ix_revisions_commit_sha", "revisions", ["commit_sha"])
@@ -117,9 +108,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
-        sa.Column(
-            "fingerprint_hash", sa.String(length=512), nullable=False
-        ),
+        sa.Column("fingerprint_hash", sa.String(length=512), nullable=False),
         sa.Column("prefix", sa.String(length=8), nullable=False),
         sa.Column("scopes", sa.String(length=2000), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
@@ -133,26 +122,20 @@ def upgrade() -> None:
             name="fk_personal_access_tokens_user_id_users",
         ),
     )
-    op.create_index(
-        "ix_personal_access_tokens_user_id", "personal_access_tokens", ["user_id"]
-    )
+    op.create_index("ix_personal_access_tokens_user_id", "personal_access_tokens", ["user_id"])
 
     op.create_table(
         "approvals",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("decided_by_id", sa.Integer(), nullable=True),
-        sa.Column(
-            "decision", sa.String(length=16), nullable=False, server_default="pending"
-        ),
+        sa.Column("decision", sa.String(length=16), nullable=False, server_default="pending"),
         sa.Column("reason", sa.String(length=500), nullable=True),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_approvals"),
         sa.UniqueConstraint("user_id", name="uq_approvals_user_id"),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name="fk_approvals_user_id_users"
-        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_approvals_user_id_users"),
         sa.ForeignKeyConstraint(
             ["decided_by_id"],
             ["users.id"],
@@ -168,24 +151,18 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_user_quotas"),
         sa.UniqueConstraint("user_id", name="uq_user_quotas_user_id"),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name="fk_user_quotas_user_id_users"
-        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_user_quotas_user_id_users"),
     )
 
     op.create_table(
         "user_usages",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column(
-            "used_bytes", sa.Integer(), nullable=False, server_default="0"
-        ),
+        sa.Column("used_bytes", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_user_usages"),
         sa.UniqueConstraint("user_id", name="uq_user_usages_user_id"),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name="fk_user_usages_user_id_users"
-        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_user_usages_user_id_users"),
     )
 
     op.create_table(
@@ -199,9 +176,7 @@ def upgrade() -> None:
         sa.Column("ip", sa.String(length=45), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_audit_logs"),
-        sa.ForeignKeyConstraint(
-            ["actor_id"], ["users.id"], name="fk_audit_logs_actor_id_users"
-        ),
+        sa.ForeignKeyConstraint(["actor_id"], ["users.id"], name="fk_audit_logs_actor_id_users"),
     )
     op.create_index("ix_audit_logs_action", "audit_logs", ["action"])
     op.create_index("ix_audit_logs_created_at", "audit_logs", ["created_at"])
@@ -226,9 +201,7 @@ def downgrade() -> None:
     op.drop_table("user_usages")
     op.drop_table("user_quotas")
     op.drop_table("approvals")
-    op.drop_index(
-        "ix_personal_access_tokens_user_id", table_name="personal_access_tokens"
-    )
+    op.drop_index("ix_personal_access_tokens_user_id", table_name="personal_access_tokens")
     op.drop_table("personal_access_tokens")
     op.drop_index("ix_revisions_commit_sha", table_name="revisions")
     op.drop_index("ix_revisions_repo_id", table_name="revisions")

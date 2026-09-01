@@ -44,9 +44,7 @@ async def session_factory(tmp_data_dir) -> AsyncIterator[async_sessionmaker[Asyn
 async def _make_user(session: AsyncSession, username: str) -> int:
     session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
     await session.commit()
-    return (
-        await session.execute(select(User.id).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User.id).where(User.username == username))).scalar_one()
 
 
 class TestUserQuotaRoundTrip:
@@ -62,9 +60,7 @@ class TestUserQuotaRoundTrip:
 
         async with session_factory() as session:
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == user_id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == user_id))
             ).scalar_one()
             assert quota.max_bytes == 5 * 1024**3
 
@@ -76,9 +72,7 @@ class TestUserQuotaRoundTrip:
             session.add(UserQuota(user_id=user_id, max_bytes=1024**3))
             await session.commit()
             quota_id = (
-                await session.execute(
-                    select(UserQuota.id).where(UserQuota.user_id == user_id)
-                )
+                await session.execute(select(UserQuota.id).where(UserQuota.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -98,9 +92,7 @@ class TestUserQuotaRoundTrip:
             session.add(UserQuota(user_id=user_id, max_bytes=1024))
             await session.commit()
             quota_id = (
-                await session.execute(
-                    select(UserQuota.id).where(UserQuota.user_id == user_id)
-                )
+                await session.execute(select(UserQuota.id).where(UserQuota.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -111,14 +103,10 @@ class TestUserQuotaRoundTrip:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == user_id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == user_id))
             ).scalar_one_or_none() is None
 
-    async def test_unique_user_id(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_unique_user_id(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_factory() as session:
             user_id = await _make_user(session, "dave")
             session.add(UserQuota(user_id=user_id, max_bytes=1024))
@@ -143,9 +131,7 @@ class TestUserUsageRoundTrip:
 
         async with session_factory() as session:
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == user_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == user_id))
             ).scalar_one()
             assert usage.used_bytes == 0
 
@@ -157,9 +143,7 @@ class TestUserUsageRoundTrip:
             session.add(UserUsage(user_id=user_id, used_bytes=4096))
             await session.commit()
             usage_id = (
-                await session.execute(
-                    select(UserUsage.id).where(UserUsage.user_id == user_id)
-                )
+                await session.execute(select(UserUsage.id).where(UserUsage.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -179,9 +163,7 @@ class TestUserUsageRoundTrip:
             session.add(UserUsage(user_id=user_id, used_bytes=1024))
             await session.commit()
             usage_id = (
-                await session.execute(
-                    select(UserUsage.id).where(UserUsage.user_id == user_id)
-                )
+                await session.execute(select(UserUsage.id).where(UserUsage.user_id == user_id))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -192,14 +174,10 @@ class TestUserUsageRoundTrip:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == user_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == user_id))
             ).scalar_one_or_none() is None
 
-    async def test_unique_user_id(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_unique_user_id(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_factory() as session:
             user_id = await _make_user(session, "harry")
             session.add(UserUsage(user_id=user_id, used_bytes=0))

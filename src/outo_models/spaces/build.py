@@ -35,9 +35,7 @@ from outo_models.utils.paths import spaces_dir
 _BUILD_EXCLUDED_DIRS: frozenset[str] = frozenset({".git", ".hg", "__pycache__"})
 
 
-def _iter_tree_blobs(
-    store: Any, tree_sha: bytes | None
-) -> Iterator[tuple[str, int, bytes]]:
+def _iter_tree_blobs(store: Any, tree_sha: bytes | None) -> Iterator[tuple[str, int, bytes]]:
     """Yield `(relpath, mode, data)` for every regular file in `tree_sha`."""
     if tree_sha is None:
         return

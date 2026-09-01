@@ -126,9 +126,7 @@ async def signup(
         "status": user.status,
     }
     if user.status == "pending":
-        payload["detail"] = (
-            "Account is pending approval — an administrator must approve it."
-        )
+        payload["detail"] = "Account is pending approval — an administrator must approve it."
     else:
         payload["detail"] = "Account created."
     return JSONResponse(status_code=201, content=payload)
@@ -145,9 +143,7 @@ async def login(
 ) -> dict[str, object]:
     """Verify password + approval state, then rotate the session cookie."""
     username = validate_slug(body.username)
-    user = (
-        await db.execute(select(User).where(User.username == username))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
     if user is None or not verify_password(user.password_hash, body.password):
         # Same error either way so an attacker cannot enumerate usernames.
         raise UnauthorizedError("Invalid username or password")
@@ -200,10 +196,14 @@ async def list_tokens(
 ) -> list[TokenRow]:
     """List every PAT owned by the current user."""
     rows = (
-        await db.execute(
-            select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+        (
+            await db.execute(
+                select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [
         TokenRow(
             id=row.id,
@@ -226,9 +226,7 @@ async def create_token(
 ) -> TokenCreateResponse:
     """Mint a new PAT. The plaintext is returned ONCE in the response."""
     service = TokenService.from_secret(settings.secret_key or "outo-dev-secret")
-    ttl_seconds = (
-        body.ttl_days * 86400 if body.ttl_days is not None else DEFAULT_TOKEN_TTL_SECONDS
-    )
+    ttl_seconds = body.ttl_days * 86400 if body.ttl_days is not None else DEFAULT_TOKEN_TTL_SECONDS
     raw_token = service.issue(
         subject=str(user.id),
         scopes=list(body.scopes),
@@ -264,9 +262,7 @@ async def delete_token(
 ) -> Response:
     """Delete a PAT owned by the current user, or any PAT if admin."""
     row = (
-        await db.execute(
-            select(PersonalAccessToken).where(PersonalAccessToken.id == token_id)
-        )
+        await db.execute(select(PersonalAccessToken).where(PersonalAccessToken.id == token_id))
     ).scalar_one_or_none()
     if row is None:
         raise NotFoundError(f"token {token_id} not found")

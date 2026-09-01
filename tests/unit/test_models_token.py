@@ -45,9 +45,7 @@ async def session_factory(tmp_data_dir) -> AsyncIterator[async_sessionmaker[Asyn
 async def _make_user(session: AsyncSession, username: str) -> int:
     session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
     await session.commit()
-    return (
-        await session.execute(select(User.id).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User.id).where(User.username == username))).scalar_one()
 
 
 class TestTokenCreateRead:
@@ -73,9 +71,7 @@ class TestTokenCreateRead:
         async with session_factory() as session:
             token = (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "ci-token"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "ci-token")
                 )
             ).scalar_one()
             assert token.user_id == owner_id
@@ -106,9 +102,7 @@ class TestTokenCreateRead:
         async with session_factory() as session:
             token = (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "expiring"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "expiring")
                 )
             ).scalar_one()
             assert token.expires_at is not None
@@ -171,9 +165,7 @@ class TestTokenDelete:
             await session.commit()
             token_id = (
                 await session.execute(
-                    select(PersonalAccessToken.id).where(
-                        PersonalAccessToken.name == "disposable"
-                    )
+                    select(PersonalAccessToken.id).where(PersonalAccessToken.name == "disposable")
                 )
             ).scalar_one()
 
@@ -186,9 +178,7 @@ class TestTokenDelete:
         async with session_factory() as session:
             assert (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "disposable"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "disposable")
                 )
             ).scalar_one_or_none() is None
 
@@ -249,9 +239,7 @@ class TestTokenIsExpired:
         async with session_factory() as session:
             token = (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "forever"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "forever")
                 )
             ).scalar_one()
             assert token.is_expired is False
@@ -277,9 +265,7 @@ class TestTokenIsExpired:
         async with session_factory() as session:
             token = (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "old"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "old")
                 )
             ).scalar_one()
             assert token.is_expired is True
@@ -305,9 +291,7 @@ class TestTokenIsExpired:
         async with session_factory() as session:
             token = (
                 await session.execute(
-                    select(PersonalAccessToken).where(
-                        PersonalAccessToken.name == "fresh"
-                    )
+                    select(PersonalAccessToken).where(PersonalAccessToken.name == "fresh")
                 )
             ).scalar_one()
             assert token.is_expired is False

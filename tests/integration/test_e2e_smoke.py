@@ -16,6 +16,7 @@ ephemeral port, owns its own tmp dir, and tears the uvicorn thread
 down on exit so the suite stays parallel-safe on multi-agent
 workstations.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,9 +43,7 @@ from outo_models.server import create_app
 
 
 @pytest.fixture
-def open_signup_env(
-    tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[Path]:
+def open_signup_env(tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Drop `OUTO_REQUIRE_APPROVAL=false` so signup auto-approves in tests.
 
     The autouse `_isolate_outo_env` (top-level conftest) strips every
@@ -78,9 +77,7 @@ def fresh_limiter() -> Iterator[None]:
 
 
 @pytest.fixture
-def live_server(
-    open_signup_env: Path, fresh_limiter: None
-) -> Iterator[str]:
+def live_server(open_signup_env: Path, fresh_limiter: None) -> Iterator[str]:
     """Boot the full `create_app` under uvicorn on an ephemeral port.
 
     Yields the base URL (`http://127.0.0.1:<port>`); shuts the server
@@ -242,13 +239,9 @@ class TestFullStackSignupToPush:
         await _run_git(["init"], cwd=push_workdir, env=git_env)
         (push_workdir / "README.md").write_bytes(payload)
         await _run_git(["add", "README.md"], cwd=push_workdir, env=git_env)
-        await _run_git(
-            ["commit", "-m", "smoke push"], cwd=push_workdir, env=git_env
-        )
+        await _run_git(["commit", "-m", "smoke push"], cwd=push_workdir, env=git_env)
 
-        push_url = _with_basic(
-            _repo_url(live_server, username, repo_name), username, pat
-        )
+        push_url = _with_basic(_repo_url(live_server, username, repo_name), username, pat)
         await _run_git(
             ["push", push_url, "HEAD:refs/heads/master"],
             cwd=push_workdir,
@@ -286,9 +279,7 @@ class TestSecurityHeadersOnSmokePath:
         assert response.headers["x-frame-options"] == "DENY"
         assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert response.headers["permissions-policy"].startswith("camera=()")
-        assert response.headers["content-security-policy"].startswith(
-            "default-src 'self'"
-        )
+        assert response.headers["content-security-policy"].startswith("default-src 'self'")
         # Loopback domain → no HSTS.
         assert "strict-transport-security" not in response.headers
 

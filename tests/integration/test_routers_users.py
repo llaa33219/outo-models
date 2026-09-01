@@ -52,9 +52,7 @@ class TestUserReposVisibility:
         client, _, _ = app
         await seed_approved_user(username="bob")
         async with factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.username == "bob"))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.username == "bob"))).scalar_one()
             await create_repo(
                 session,
                 owner=owner,

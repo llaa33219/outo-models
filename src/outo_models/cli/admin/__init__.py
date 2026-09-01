@@ -21,6 +21,7 @@ This `__init__.py` is the *only* file in the package that the parent
 `outo_models.cli.main` imports. It builds the Typer `admin_app`,
 registers every command from `_commands`, and re-exports the surface.
 """
+
 from __future__ import annotations
 
 import typer

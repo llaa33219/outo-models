@@ -287,9 +287,7 @@ class SpaceRuntimeManager:
     async def _allocate_host_port(self) -> int:
         start = self._settings.spaces_runtime_port_range_start
         end = self._settings.spaces_runtime_port_range_end
-        used = {
-            c.host_port for c in await self.list_managed() if c.host_port is not None
-        }
+        used = {c.host_port for c in await self.list_managed() if c.host_port is not None}
         for port in range(start, end + 1):
             if port not in used:
                 return port
@@ -365,9 +363,7 @@ class SpaceRuntimeManager:
             ],
         }
         if gpu_ids:
-            devices = [
-                {"path": f"nvidia.com/gpu={gpu}", "type": "cdi"} for gpu in gpu_ids
-            ]
+            devices = [{"path": f"nvidia.com/gpu={gpu}", "type": "cdi"} for gpu in gpu_ids]
             body["hostConfig"]["devices"] = devices
 
         create_response = await self._request(
@@ -428,9 +424,7 @@ class SpaceRuntimeManager:
         client = self._client if self._client is not None else self._build_client()
         try:
             try:
-                response = await client.get(
-                    f"{_LIBPOD_PREFIX}/containers/{container}/json"
-                )
+                response = await client.get(f"{_LIBPOD_PREFIX}/containers/{container}/json")
             except httpx.RequestError as exc:
                 raise OutoError(
                     f"Podman API call failed: {exc}",

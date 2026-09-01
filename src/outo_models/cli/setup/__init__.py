@@ -26,6 +26,7 @@ This `__init__.py` is the *only* file in the package that the parent
 declares the `run` command, and wires `setup._collect` /
 `setup._effect` together.
 """
+
 from __future__ import annotations
 
 import asyncio

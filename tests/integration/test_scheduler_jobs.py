@@ -120,9 +120,7 @@ def _cron_is_daily(trigger: CronTrigger) -> bool:
 class TestTaskSchedulerRegistration:
     """`start()` registers every `JOB_IDS` job with the right trigger."""
 
-    async def test_start_registers_all_three_jobs(
-        self, tmp_data_dir, settings: Settings
-    ) -> None:
+    async def test_start_registers_all_three_jobs(self, tmp_data_dir, settings: Settings) -> None:
         scheduler = TaskScheduler(settings, caddy_manager_factory=lambda: _FakeCaddy())
         try:
             scheduler.start()
@@ -147,9 +145,7 @@ class TestTaskSchedulerRegistration:
         finally:
             await scheduler.shutdown()
 
-    async def test_replace_existing_is_set(
-        self, tmp_data_dir, settings: Settings
-    ) -> None:
+    async def test_replace_existing_is_set(self, tmp_data_dir, settings: Settings) -> None:
         # Re-registering against an already-started scheduler must not crash;
         # `replace_existing=True` makes the second call idempotent.
         scheduler = TaskScheduler(settings, caddy_manager_factory=lambda: _FakeCaddy())
@@ -160,9 +156,7 @@ class TestTaskSchedulerRegistration:
         finally:
             await scheduler.shutdown()
 
-    async def test_shutdown_is_idempotent(
-        self, tmp_data_dir, settings: Settings
-    ) -> None:
+    async def test_shutdown_is_idempotent(self, tmp_data_dir, settings: Settings) -> None:
         scheduler = TaskScheduler(settings, caddy_manager_factory=lambda: _FakeCaddy())
         scheduler.start()
         await scheduler.shutdown()
@@ -207,9 +201,7 @@ class TestTaskSchedulerSwallowsCrashingJobs:
                 await _always_raises()
 
             assert scheduler.scheduler.running
-            assert {job.id for job in scheduler.scheduler.get_jobs()} >= set(
-                TaskScheduler.JOB_IDS
-            )
+            assert {job.id for job in scheduler.scheduler.get_jobs()} >= set(TaskScheduler.JOB_IDS)
         finally:
             await scheduler.shutdown()
 
@@ -229,12 +221,8 @@ class TestCertRenewalJob:
         import outo_models.tasks.jobs.renewal as rmod
         from outo_models.tls.renewal import CertHealth
 
-        async def _fake_renewal(
-            _domain: str, _caddy: _FakeCaddy, **_kwargs: Any
-        ) -> CertHealth:
-            return CertHealth(
-                ok=True, not_after=None, days_remaining=30, error=None
-            )
+        async def _fake_renewal(_domain: str, _caddy: _FakeCaddy, **_kwargs: Any) -> CertHealth:
+            return CertHealth(ok=True, not_after=None, days_remaining=30, error=None)
 
         monkeypatch.setattr(rmod, "renewal_job", _fake_renewal)
 
@@ -285,9 +273,7 @@ class TestQuotaReconcileJob:
         # before the package exists.
         import outo_models.tasks.jobs.quota_reconcile as qmod
 
-        monkeypatch.setitem(
-            __import__("sys").modules, "outo_models.repos.quota", None
-        )
+        monkeypatch.setitem(__import__("sys").modules, "outo_models.repos.quota", None)
 
         # Must NOT raise; must return without doing work.
         await qmod.quota_reconcile_job()
@@ -321,15 +307,11 @@ class TestQuotaReconcileJob:
         fake_module = types.ModuleType("outo_models.repos.quota")
         reconcile_calls: list[tuple[AsyncSession, User]] = []
 
-        async def _fake_reconcile_user(
-            session: AsyncSession, user: User
-        ) -> None:
+        async def _fake_reconcile_user(session: AsyncSession, user: User) -> None:
             reconcile_calls.append((session, user))
 
         fake_module.reconcile_user = _fake_reconcile_user  # type: ignore[attr-defined]
-        monkeypatch.setitem(
-            __import__("sys").modules, "outo_models.repos.quota", fake_module
-        )
+        monkeypatch.setitem(__import__("sys").modules, "outo_models.repos.quota", fake_module)
 
         await quota_reconcile_job()
 
@@ -360,9 +342,7 @@ class TestQuotaReconcileJob:
             raise RuntimeError("disk full")
 
         fake_module.reconcile_user = _explode  # type: ignore[attr-defined]
-        monkeypatch.setitem(
-            __import__("sys").modules, "outo_models.repos.quota", fake_module
-        )
+        monkeypatch.setitem(__import__("sys").modules, "outo_models.repos.quota", fake_module)
 
         # A crashing reconcile_user must NOT bring the scheduler down.
         await quota_reconcile_job()

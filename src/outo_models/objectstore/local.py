@@ -167,16 +167,12 @@ class LocalObjectStore:
         """
         _validate_oid(oid)
         if expected_size < 0:
-            raise ValidationFailedError(
-                f"expected_size must be non-negative, got {expected_size}"
-            )
+            raise ValidationFailedError(f"expected_size must be non-negative, got {expected_size}")
 
         target = self._object_path(oid)
         if target.exists() or target.is_symlink():
             # Don't overwrite an existing object — concurrent upload race.
-            raise ValidationFailedError(
-                f"object already exists: {oid[:8]}"
-            )
+            raise ValidationFailedError(f"object already exists: {oid[:8]}")
 
         # Parent dirs must exist; mkdir -p is idempotent.
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
@@ -184,9 +180,7 @@ class LocalObjectStore:
         # Reject symlinks at any segment of the path the write would land on.
         for seg in (target.parent.parent, target.parent, target):
             if seg.is_symlink():
-                raise ValidationFailedError(
-                    f"refusing to write through symlink at {seg}"
-                )
+                raise ValidationFailedError(f"refusing to write through symlink at {seg}")
 
         tmp_path = target.with_name(target.name + ".tmp")
         if tmp_path.exists() or tmp_path.is_symlink():
@@ -213,16 +207,13 @@ class LocalObjectStore:
             with contextlib.suppress(FileNotFoundError):
                 tmp_path.unlink()
             raise ValidationFailedError(
-                f"size mismatch for {oid[:8]}: "
-                f"expected {expected_size}, got {written}"
+                f"size mismatch for {oid[:8]}: expected {expected_size}, got {written}"
             )
         actual_oid = hasher.hexdigest()
         if actual_oid != oid:
             with contextlib.suppress(FileNotFoundError):
                 tmp_path.unlink()
-            raise ValidationFailedError(
-                f"sha256 mismatch: expected {oid}, got {actual_oid}"
-            )
+            raise ValidationFailedError(f"sha256 mismatch: expected {oid}, got {actual_oid}")
 
         # Atomic rename on the same filesystem; `os.replace` overwrites
         # atomically but we have already guaranteed the final slot is free.

@@ -54,29 +54,19 @@ async def session_factory(
         await dispose_engines()
 
 
-async def _seed_user(
-    factory: async_sessionmaker[AsyncSession], username: str
-) -> User:
+async def _seed_user(factory: async_sessionmaker[AsyncSession], username: str) -> User:
     """Create a user and return the live ORM object from a fresh session."""
     async with factory() as session:
-        session.add(
-            User(username=username, email=f"{username}@example.com", password_hash="h")
-        )
+        session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
         await session.commit()
-        return (
-            await session.execute(select(User).where(User.username == username))
-        ).scalar_one()
+        return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
-async def _usage(
-    factory: async_sessionmaker[AsyncSession], user_id: int
-) -> UserUsage:
+async def _usage(factory: async_sessionmaker[AsyncSession], user_id: int) -> UserUsage:
     """Fetch the current `UserUsage` row for `user_id`."""
     async with factory() as session:
         return (
-            await session.execute(
-                select(UserUsage).where(UserUsage.user_id == user_id)
-            )
+            await session.execute(select(UserUsage).where(UserUsage.user_id == user_id))
         ).scalar_one()
 
 
@@ -104,9 +94,7 @@ class TestEnsureQuotaRows:
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             quota, usage = await ensure_quota_rows(session, owner)
             await session.commit()
         assert quota.max_bytes == 42
@@ -132,25 +120,19 @@ class TestCheckPushAllowed:
             # Pin the cap so the math is independent of `default_quota_bytes`.
             await ensure_quota_rows(session, owner)
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == owner.id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == owner.id))
             ).scalar_one()
             quota.max_bytes = 1000
             await session.commit()
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             with pytest.raises(QuotaExceededError):
                 await check_push_allowed(session, owner, 1500)
             await session.commit()
 
-    @pytest.mark.parametrize(
-        "delta", [-10**9, 0], ids=["negative", "zero"]
-    )
+    @pytest.mark.parametrize("delta", [-(10**9), 0], ids=["negative", "zero"])
     async def test_non_positive_delta_always_passes(
         self,
         session_factory: async_sessionmaker[AsyncSession],
@@ -168,18 +150,14 @@ class TestCheckPushAllowed:
         async with session_factory() as session:
             await ensure_quota_rows(session, owner)
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == owner.id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == owner.id))
             ).scalar_one()
             quota.max_bytes = 1000
             await session.commit()
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             # Boundary: equal to cap is allowed (the rule is `>` not `>=`).
             await check_push_allowed(session, owner, 1000)
             await session.commit()
@@ -207,9 +185,7 @@ class TestAddUsage:
             await session.commit()
         assert (await _usage(session_factory, owner.id)).used_bytes == 2048
 
-    async def test_clamps_at_zero(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_clamps_at_zero(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         owner = await _seed_user(session_factory, "jane")
         async with session_factory() as session:
             await add_usage(session, owner, -1000)  # no positive to subtract

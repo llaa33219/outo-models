@@ -81,9 +81,7 @@ def _settings_for_request(request: Request) -> Settings:
     return get_settings()
 
 
-def _resolve_session_user(
-    request: Request, settings: Settings
-) -> int | None:
+def _resolve_session_user(request: Request, settings: Settings) -> int | None:
     """Return the user id encoded in the session cookie, or `None`.
 
     A bad signature / expired cookie surfaces as `None` so the caller can
@@ -103,9 +101,7 @@ def _resolve_session_user(
     return int(user_id) if isinstance(user_id, int) else None
 
 
-async def _resolve_pat_user(
-    db: AsyncSession, *, bearer: str
-) -> int | None:
+async def _resolve_pat_user(db: AsyncSession, *, bearer: str) -> int | None:
     """Return the user id owning the bearer PAT, or `None`.
 
     The PAT may belong to any user; we cannot know without iterating the
@@ -117,12 +113,16 @@ async def _resolve_pat_user(
     fingerprint.
     """
     candidates = (
-        await db.execute(
-            select(PersonalAccessToken).where(
-                PersonalAccessToken.expires_at.is_(None),
+        (
+            await db.execute(
+                select(PersonalAccessToken).where(
+                    PersonalAccessToken.expires_at.is_(None),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for pat in candidates:
         if pat.is_expired:
@@ -145,9 +145,7 @@ async def get_current_user_optional(
     """
     settings = _settings_for_request(request)
     user_id = _resolve_session_user(request, settings)
-    if user_id is None and authorization and authorization.lower().startswith(
-        "bearer "
-    ):
+    if user_id is None and authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
         if token:
             user_id = await _resolve_pat_user(db, bearer=token)
@@ -156,9 +154,7 @@ async def get_current_user_optional(
     if user_id is None:
         return None
 
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None or not user.is_active:
         # Treat deleted or deactivated accounts as anonymous — the cookie
         # may outlive the row, and surfacing a 403 on every request would

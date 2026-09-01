@@ -157,9 +157,7 @@ def _ensure_runtime_enabled(settings: Settings) -> JSONResponse | None:
 
 async def _load_owner_gpu_ids(db: AsyncSession, username: str) -> list[str]:
     row = (
-        await db.execute(
-            select(WebSetting).where(WebSetting.key == f"gpu:{username}")
-        )
+        await db.execute(select(WebSetting).where(WebSetting.key == f"gpu:{username}"))
     ).scalar_one_or_none()
     if row is None:
         return []
@@ -201,11 +199,7 @@ async def create_space_route(
     await db.commit()
     await db.refresh(repo)
     reloaded = (
-        await db.execute(
-            select(Repo)
-            .where(Repo.id == repo.id)
-            .options(selectinload(Repo.owner))
-        )
+        await db.execute(select(Repo).where(Repo.id == repo.id).options(selectinload(Repo.owner)))
     ).scalar_one()
     return _summary(reloaded)
 
@@ -220,9 +214,7 @@ async def list_spaces_route(
     include_private = False
     if owner is not None:
         validate_slug(owner)
-        include_private = is_admin or (
-            viewer is not None and viewer.username == owner
-        )
+        include_private = is_admin or (viewer is not None and viewer.username == owner)
     rows = await list_spaces(
         db,
         owner_name=owner,
@@ -234,11 +226,11 @@ async def list_spaces_route(
             row.id: row
             for row in (
                 await db.execute(
-                    select(Repo)
-                    .where(Repo.id.in_(ids))
-                    .options(selectinload(Repo.owner))
+                    select(Repo).where(Repo.id.in_(ids)).options(selectinload(Repo.owner))
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         }
         for row in rows:
             fresh = owners.get(row.id)
@@ -347,9 +339,7 @@ async def _run_lifecycle(
     async def _do_action() -> RuntimeStatus:
         if action == "stop":
             await manager.stop(owner_name, space_name)
-            return await runtime_status_async(
-                repo, settings=settings, manager=manager
-            )
+            return await runtime_status_async(repo, settings=settings, manager=manager)
         if action == "restart":
             if sdk == "static":
                 export_static_site(
@@ -365,9 +355,7 @@ async def _run_lifecycle(
             await manager.stop(owner_name, space_name)
             await manager.build_image(owner_name, space_name)
             await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
-            return await runtime_status_async(
-                repo, settings=settings, manager=manager
-            )
+            return await runtime_status_async(repo, settings=settings, manager=manager)
         if sdk == "static":
             export_static_site(
                 owner_name,
@@ -382,8 +370,7 @@ async def _run_lifecycle(
         if sdk == "docker":
             fs_root = repo_fs_path(owner_name, space_name)
             if not any(
-                (fs_root / candidate).exists()
-                for candidate in ("Dockerfile", "Containerfile")
+                (fs_root / candidate).exists() for candidate in ("Dockerfile", "Containerfile")
             ):
                 raise ValidationFailedError(
                     "A docker SDK Space must have a Dockerfile or "
@@ -391,9 +378,7 @@ async def _run_lifecycle(
                 )
         await manager.build_image(owner_name, space_name)
         await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
-        return await runtime_status_async(
-            repo, settings=settings, manager=manager
-        )
+        return await runtime_status_async(repo, settings=settings, manager=manager)
 
     try:
         async with REPO_LOCKS.acquire(owner_name, space_name):
@@ -419,9 +404,7 @@ async def _run_lifecycle(
             action=f"space.{action}",
             target_type="space",
             target_id=audit_target_id,
-            detail=json.dumps(
-                {"ok": True, "state": result.state.value}, ensure_ascii=False
-            ),
+            detail=json.dumps({"ok": True, "state": result.state.value}, ensure_ascii=False),
         )
     )
     await db.commit()
@@ -729,15 +712,11 @@ async def _proxy_dispatch(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "error": "space_not_running",
-                "message": (
-                    "The Space is not running. Please start it and try again."
-                ),
+                "message": ("The Space is not running. Please start it and try again."),
             },
         )
     target_url = f"http://127.0.0.1:{host_port}/{path}"
-    forward_headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
-    }
+    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     return await _stream_proxy_response(method, target_url, body, forward_headers)
 
 

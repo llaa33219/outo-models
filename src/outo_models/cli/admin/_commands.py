@@ -11,6 +11,7 @@ command is a 3-line diff.
 # expression of the dispatch; further splitting would force the import
 # surface to grow without buying anything.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -105,17 +106,13 @@ def list_users_command(
 ) -> None:
     """Print the list of users."""
     if status_filter is not None and status_filter not in VALID_STATUSES:
-        render_error(
-            ValidationFailedError(f"--status must be one of {VALID_STATUSES}.")
-        )
+        render_error(ValidationFailedError(f"--status must be one of {VALID_STATUSES}."))
         raise typer_exit(1)
     users = _dispatch_remote_or_local(
         api_url,
         token,
         remote_action=lambda c: c.list_users(status_filter=status_filter),
-        local_action=lambda: _local_db.run_async(
-            _local_db._list_users_async(status_filter)
-        ),
+        local_action=lambda: _local_db.run_async(_local_db._list_users_async(status_filter)),
     )
     _print_users_table(users)
 
@@ -129,9 +126,7 @@ def pending_command(
         api_url,
         token,
         remote_action=lambda c: c.list_users(status_filter="pending"),
-        local_action=lambda: _local_db.run_async(
-            _local_db._list_users_async("pending")
-        ),
+        local_action=lambda: _local_db.run_async(_local_db._list_users_async("pending")),
     )
     _print_users_table(users)
 
@@ -249,9 +244,7 @@ def quota_set_command(
         raise typer_exit(1) from exc
 
     def _local_set() -> dict[str, Any]:
-        _local_db.run_async(
-            _local_db._set_quota_async(username, _require_admin(), new_max)
-        )
+        _local_db.run_async(_local_db._set_quota_async(username, _require_admin(), new_max))
         return {"max_bytes": new_max}
 
     result = _dispatch_remote_or_local(
@@ -273,9 +266,7 @@ def gpu_show_command(
         api_url,
         token,
         remote_action=lambda c: c._request_json("GET", f"/users/{username}/gpu"),
-        local_action=lambda: {
-            "gpu_ids": _local_db.run_async(_local_db._get_gpu_async(username))
-        },
+        local_action=lambda: {"gpu_ids": _local_db.run_async(_local_db._get_gpu_async(username))},
     )
     gpu_ids = list(payload.get("gpu_ids", []))
     if not gpu_ids:

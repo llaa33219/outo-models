@@ -43,6 +43,7 @@ def captured() -> list[httpx.Request]:
 
 def _client_for(handler, captured: list[httpx.Request]) -> httpx.AsyncClient:
     """Build a `MockTransport`-backed client and remember every request."""
+
     def h(request: httpx.Request) -> httpx.Response:
         captured.append(request)
         return handler(request)
@@ -110,9 +111,7 @@ class TestListManaged:
 class TestErrorMapping:
     async def test_unreachable_maps_to_podman_unreachable(self, settings) -> None:
         transport = httpx.MockTransport(
-            lambda request: (_ for _ in ()).throw(
-                httpx.ConnectError("socket missing")
-            )
+            lambda request: (_ for _ in ()).throw(httpx.ConnectError("socket missing"))
         )
         client = httpx.AsyncClient(base_url="http://d", transport=transport)
         manager = SpaceRuntimeManager(settings, client=client)
@@ -144,6 +143,7 @@ class TestBuildImage:
         from dulwich import porcelain
 
         from outo_models.config import get_settings as _gs
+
         s = _gs()
         data_dir = s.data_dir / "repos" / "alice" / "demo.git"
         os.makedirs(str(s.data_dir / "repos" / "alice"), exist_ok=True)
@@ -193,17 +193,16 @@ class TestBuildImage:
         from dulwich import porcelain
 
         from outo_models.config import get_settings as _gs
+
         s = _gs()
         data_dir = s.data_dir / "repos" / "alice" / "demo.git"
         os.makedirs(str(s.data_dir / "repos" / "alice"), exist_ok=True)
         work = s.data_dir / "_w2"
         work.mkdir(exist_ok=True)
-        (work / "app.py").write_text('x')
+        (work / "app.py").write_text("x")
         porcelain.init(str(work))
         porcelain.add(str(work), paths=["app.py"])
-        porcelain.commit(
-            str(work), message=b"x", author=b"a <a@a>", committer=b"a <a@a>"
-        )
+        porcelain.commit(str(work), message=b"x", author=b"a <a@a>", committer=b"a <a@a>")
         porcelain.clone(str(work), str(data_dir), bare=True)
         with pytest.raises(OutoError) as excinfo:
             await manager.build_image("alice", "demo")
@@ -252,9 +251,7 @@ class TestStartStopAndInspect:
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("0", "1"))
         await client.aclose()
-        create_request = next(
-            r for r in captured if str(r.url).endswith("/containers/create")
-        )
+        create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
         payload = json.loads(create_request.content)
         assert payload["name"] == "outo-space-alice-demo"
         labels = payload["labels"]

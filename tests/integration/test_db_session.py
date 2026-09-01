@@ -45,9 +45,7 @@ async def factory(tmp_data_dir: Path) -> AsyncIterator[async_sessionmaker[AsyncS
 class TestSessionScopeCommit:
     """`session_scope` commits on clean exit so the row is visible afterwards."""
 
-    async def test_commit_on_clean_exit(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_commit_on_clean_exit(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_scope() as session:
             session.add(
                 User(
@@ -59,9 +57,7 @@ class TestSessionScopeCommit:
 
         async with session_scope() as verify_session:
             user = (
-                await verify_session.execute(
-                    select(User).where(User.username == "happy")
-                )
+                await verify_session.execute(select(User).where(User.username == "happy"))
             ).scalar_one()
             assert user.email == "happy@example.com"
 
@@ -87,19 +83,21 @@ class TestSessionScopeCommit:
 
         async with session_scope() as verify_session:
             users = (
-                await verify_session.execute(
-                    select(User).where(User.username.in_(("second", "third")))
+                (
+                    await verify_session.execute(
+                        select(User).where(User.username.in_(("second", "third")))
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert {u.username for u in users} == {"second", "third"}
 
 
 class TestSessionScopeRollback:
     """An exception inside `session_scope` rolls back and re-raises."""
 
-    async def test_rollback_on_exception(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_rollback_on_exception(self, factory: async_sessionmaker[AsyncSession]) -> None:
         class _BoomError(Exception):
             """Synthetic exception used to trigger rollback."""
 
@@ -115,9 +113,7 @@ class TestSessionScopeRollback:
                 raise _BoomError("boom")
 
         async with session_scope() as verify_session:
-            result = await verify_session.execute(
-                select(User).where(User.username == "doomed")
-            )
+            result = await verify_session.execute(select(User).where(User.username == "doomed"))
             assert result.scalar_one_or_none() is None
 
 

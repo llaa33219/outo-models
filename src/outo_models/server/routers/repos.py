@@ -96,9 +96,7 @@ def _summary(row: Repo) -> RepoSummary:
     )
 
 
-async def _load_repo(
-    db: AsyncSession, *, owner: str, name: str
-) -> Repo:
+async def _load_repo(db: AsyncSession, *, owner: str, name: str) -> Repo:
     """Fetch a repo by `(owner, name)` or raise `NotFoundError`."""
     return (
         await db.execute(
@@ -149,11 +147,7 @@ async def create_repo_route(
     await db.refresh(repo)
     # Re-load with the owner relationship populated for the summary.
     repo = (
-        await db.execute(
-            select(Repo)
-            .where(Repo.id == repo.id)
-            .options(selectinload(Repo.owner))
-        )
+        await db.execute(select(Repo).where(Repo.id == repo.id).options(selectinload(Repo.owner)))
     ).scalar_one()
     return _summary(repo)
 
@@ -179,9 +173,7 @@ async def list_repos(
         stmt = stmt.join(Repo.owner).where(User.username == owner)
 
     is_admin = viewer is not None and viewer.role == "admin"
-    is_owner_of_query = (
-        viewer is not None and owner is not None and viewer.username == owner
-    )
+    is_owner_of_query = viewer is not None and owner is not None and viewer.username == owner
     if not (is_admin or is_owner_of_query):
         stmt = stmt.where(Repo.visibility == Visibility.PUBLIC.value)
 

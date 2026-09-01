@@ -38,9 +38,7 @@ class Repo(IntIdMixin, TimestampWithUpdateMixin, Base):
     default_branch: Mapped[str] = mapped_column(
         String(64), nullable=False, default="main", server_default="main"
     )
-    size_bytes: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     path: Mapped[str] = mapped_column(String(500), nullable=False)
 
     __table_args__ = (

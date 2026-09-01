@@ -89,33 +89,23 @@ async def _seed_user(
         await session.commit()
         user_id = user.id
     async with factory() as session:
-        owner = (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        owner = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         await ensure_quota_rows(session, owner)
         if quota_bytes is not None:
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == owner.id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == owner.id))
             ).scalar_one()
             quota.max_bytes = quota_bytes
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner.id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner.id))
             ).scalar_one()
             usage.used_bytes = used_bytes
             await session.commit()
         async with factory() as session2:
-            return (
-                await session2.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            return (await session2.execute(select(User).where(User.id == user_id))).scalar_one()
 
 
-async def _mint_pat(
-    factory: async_sessionmaker[AsyncSession], user: User, raw: str
-) -> None:
+async def _mint_pat(factory: async_sessionmaker[AsyncSession], user: User, raw: str) -> None:
     async with factory() as session:
         session.add(
             PersonalAccessToken(
@@ -148,9 +138,7 @@ async def _seed_repo(
         )
         session.add(repo)
         await session.commit()
-        return (
-            await session.execute(select(Repo).where(Repo.id == repo.id))
-        ).scalar_one()
+        return (await session.execute(select(Repo).where(Repo.id == repo.id))).scalar_one()
 
 
 from sqlalchemy import select  # noqa: E402  (placed after use in fixtures)
@@ -399,9 +387,7 @@ class TestHandleBatchUpload:
         self, tmp_path: Path, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         store = _store(tmp_path)
-        owner = await _seed_user(
-            session_factory, "alice", quota_bytes=1000, used_bytes=500
-        )
+        owner = await _seed_user(session_factory, "alice", quota_bytes=1000, used_bytes=500)
         await _seed_repo(session_factory, owner)
 
         objs = [
@@ -497,9 +483,7 @@ class TestAuthMatrix:
         from outo_models.git_smart.auth import GitAction, authorize
 
         owner = await _seed_user(session_factory, "alice")
-        repo = await _seed_repo(
-            session_factory, owner, visibility=Visibility.PUBLIC
-        )
+        repo = await _seed_repo(session_factory, owner, visibility=Visibility.PUBLIC)
         # No user → must not raise.
         await authorize(None, repo=repo, owner=owner, action=GitAction.PULL)
 
@@ -510,9 +494,7 @@ class TestAuthMatrix:
         from outo_models.git_smart.auth import GitAction, authorize
 
         owner = await _seed_user(session_factory, "alice")
-        repo = await _seed_repo(
-            session_factory, owner, visibility=Visibility.PUBLIC
-        )
+        repo = await _seed_repo(session_factory, owner, visibility=Visibility.PUBLIC)
         with pytest.raises(UnauthorizedError):
             await authorize(None, repo=repo, owner=owner, action=GitAction.PUSH)
 
@@ -524,8 +506,6 @@ class TestAuthMatrix:
 
         owner = await _seed_user(session_factory, "alice")
         intruder = await _seed_user(session_factory, "mallory")
-        repo = await _seed_repo(
-            session_factory, owner, visibility=Visibility.PUBLIC
-        )
+        repo = await _seed_repo(session_factory, owner, visibility=Visibility.PUBLIC)
         with pytest.raises(ForbiddenError):
             await authorize(intruder, repo=repo, owner=owner, action=GitAction.PUSH)

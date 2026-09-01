@@ -31,9 +31,7 @@ _CSP_HEADER = (
     "form-action 'self'; "
     "frame-ancestors 'none'"
 )
-_PERMISSIONS_POLICY = (
-    "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-)
+_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
 
 class SecurityHeadersMiddleware:
@@ -91,9 +89,7 @@ class SecurityHeadersMiddleware:
         async def wrapped_send(message: Message) -> None:
             nonlocal response_started
             if message["type"] == "http.response.start" and not response_started:
-                raw_headers: list[tuple[bytes, bytes]] = list(
-                    message.get("headers", [])
-                )
+                raw_headers: list[tuple[bytes, bytes]] = list(message.get("headers", []))
                 # Existing headers can override only with the right intent;
                 # we deliberately add ours FIRST so app-provided values win.
                 message["headers"] = [*security_headers, *raw_headers]

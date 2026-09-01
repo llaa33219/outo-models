@@ -19,9 +19,7 @@ from fastapi.testclient import TestClient
 class TestPublicPages:
     """Anonymous pages render 200 and set the CSRF cookie."""
 
-    async def test_root_renders_list_page(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    async def test_root_renders_list_page(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.get("/")
         assert response.status_code == 200
@@ -67,9 +65,7 @@ class TestRepoDetailPage:
         assert response.status_code == 200
         assert "show-me" in response.text
 
-    async def test_unknown_repo_returns_404(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    async def test_unknown_repo_returns_404(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.get("/nobody/nothing")
         assert response.status_code == 404

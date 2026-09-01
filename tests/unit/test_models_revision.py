@@ -61,9 +61,7 @@ async def _make_user_and_repo(session: AsyncSession) -> tuple[int, int]:
         )
     )
     await session.commit()
-    repo_id = (
-        await session.execute(select(Repo.id).where(Repo.name == "r1"))
-    ).scalar_one()
+    repo_id = (await session.execute(select(Repo.id).where(Repo.name == "r1"))).scalar_one()
     return owner_id, repo_id
 
 
@@ -88,9 +86,7 @@ class TestRevisionCreateRead:
 
         async with session_factory() as session:
             rev = (
-                await session.execute(
-                    select(Revision).where(Revision.commit_sha == "a" * 40)
-                )
+                await session.execute(select(Revision).where(Revision.commit_sha == "a" * 40))
             ).scalar_one()
             assert rev.repo_id == repo_id
             assert rev.branch == "main"
@@ -116,9 +112,7 @@ class TestRevisionCreateRead:
 
         async with session_factory() as session:
             rev = (
-                await session.execute(
-                    select(Revision).where(Revision.commit_sha == "b" * 40)
-                )
+                await session.execute(select(Revision).where(Revision.commit_sha == "b" * 40))
             ).scalar_one()
             assert rev.author_id == owner_id
             assert rev.branch == "feature"
@@ -127,9 +121,7 @@ class TestRevisionCreateRead:
 class TestRevisionUpdate:
     """`message` / `size_bytes` are mutable; PK is immutable."""
 
-    async def test_update_message(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_message(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_factory() as session:
             _owner_id, repo_id = await _make_user_and_repo(session)
             session.add(
@@ -141,9 +133,7 @@ class TestRevisionUpdate:
             )
             await session.commit()
             rev_id = (
-                await session.execute(
-                    select(Revision.id).where(Revision.commit_sha == "c" * 40)
-                )
+                await session.execute(select(Revision.id).where(Revision.commit_sha == "c" * 40))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -175,9 +165,7 @@ class TestRevisionDelete:
             )
             await session.commit()
             rev_id = (
-                await session.execute(
-                    select(Revision.id).where(Revision.commit_sha == "d" * 40)
-                )
+                await session.execute(select(Revision.id).where(Revision.commit_sha == "d" * 40))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -188,9 +176,7 @@ class TestRevisionDelete:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(Revision).where(Revision.commit_sha == "d" * 40)
-                )
+                await session.execute(select(Revision).where(Revision.commit_sha == "d" * 40))
             ).scalar_one_or_none() is None
 
 
@@ -211,9 +197,7 @@ class TestRevisionForeignKeys:
             )
             await session.commit()
             rev_id = (
-                await session.execute(
-                    select(Revision.id).where(Revision.commit_sha == "e" * 40)
-                )
+                await session.execute(select(Revision.id).where(Revision.commit_sha == "e" * 40))
             ).scalar_one()
 
         async with session_factory() as session:
@@ -223,9 +207,7 @@ class TestRevisionForeignKeys:
 
         async with session_factory() as session:
             owner_id = (
-                await session.execute(
-                    select(User.id).where(User.username == "author")
-                )
+                await session.execute(select(User.id).where(User.username == "author"))
             ).scalar_one()
             rev = await session.get(Revision, rev_id)
             assert rev is not None

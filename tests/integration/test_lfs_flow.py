@@ -202,27 +202,19 @@ async def _seed_owner_with_pat_and_repo(
 
     async with factory() as session:
         quota = (
-            await session.execute(
-                select(UserQuota).where(UserQuota.user_id == user_id)
-            )
+            await session.execute(select(UserQuota).where(UserQuota.user_id == user_id))
         ).scalar_one()
         if quota_bytes is not None:
             quota.max_bytes = quota_bytes
         usage = (
-            await session.execute(
-                select(UserUsage).where(UserUsage.user_id == user_id)
-            )
+            await session.execute(select(UserUsage).where(UserUsage.user_id == user_id))
         ).scalar_one()
         usage.used_bytes = used_bytes
         await session.commit()
 
     async with factory() as session:
-        owner = (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
-        repo_row = (
-            await session.execute(select(Repo).where(Repo.id == repo_id))
-        ).scalar_one()
+        owner = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+        repo_row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
         return owner, raw_pat, repo_row
 
 
@@ -244,9 +236,7 @@ class TestFullLfsRoundTrip:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_data_dir: Path,
     ) -> None:
-        owner, pat, _repo = await _seed_owner_with_pat_and_repo(
-            session_factory, username="alice"
-        )
+        owner, pat, _repo = await _seed_owner_with_pat_and_repo(session_factory, username="alice")
 
         payload = os.urandom(2 * 1024 * 1024)  # 2 MiB
         oid = _oid(payload)
@@ -291,9 +281,7 @@ class TestFullLfsRoundTrip:
             assert put_resp.status_code == 200, put_resp.text
 
             # The store must contain the bytes at the sharded path.
-            store = LocalObjectStore(
-                store_root, base_url=live_lfs_server, presign_ttl=600
-            )
+            store = LocalObjectStore(store_root, base_url=live_lfs_server, presign_ttl=600)
             assert await store.has_object(oid)
             assert await store.object_size(oid) == len(payload)
 
@@ -394,9 +382,7 @@ class TestQuotaExceededPartialSuccess:
             )
             assert put_resp.status_code == 200, put_resp.text
 
-            store = LocalObjectStore(
-                lfs_dir(), base_url=live_lfs_server, presign_ttl=600
-            )
+            store = LocalObjectStore(lfs_dir(), base_url=live_lfs_server, presign_ttl=600)
             assert await store.has_object(small_oid)
             # The over-quota object must NOT have landed.
             assert not await store.has_object(big_oid)

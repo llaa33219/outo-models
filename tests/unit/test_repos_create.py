@@ -59,16 +59,12 @@ async def _make_user(session: AsyncSession, username: str) -> User:
     user = User(username=username, email=f"{username}@example.com", password_hash="h")
     session.add(user)
     await session.commit()
-    return (
-        await session.execute(select(User).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
 async def _user_id(session: AsyncSession, username: str) -> int:
     """Return `User.id` after commit has expired in-memory ORM objects."""
-    row = (
-        await session.execute(select(User.id).where(User.username == username))
-    ).one_or_none()
+    row = (await session.execute(select(User.id).where(User.username == username))).one_or_none()
     assert row is not None, f"User {username!r} not found"
     return row[0]
 
@@ -81,9 +77,7 @@ class TestCreateRepoSuccess:
     ) -> None:
         async with session_factory() as session:
             owner = await _make_user(session, "alice")
-            await create_repo(
-                session, owner=owner, name="model-a", kind=RepoKind.MODEL
-            )
+            await create_repo(session, owner=owner, name="model-a", kind=RepoKind.MODEL)
             await session.commit()
 
         fs_path = repo_fs_path("alice", "model-a")
@@ -94,9 +88,7 @@ class TestCreateRepoSuccess:
         alice_id = await _user_id_in_new_session(session_factory, "alice")
         async with session_factory() as session:
             row = (
-                await session.execute(
-                    select(Repo).where(Repo.owner_id == alice_id)
-                )
+                await session.execute(select(Repo).where(Repo.owner_id == alice_id))
             ).scalar_one()
             assert row.name == "model-a"
             assert row.kind == "model"
@@ -114,11 +106,7 @@ class TestCreateRepoSuccess:
             await session.commit()
 
         async with session_factory() as session:
-            row = (
-                await session.execute(
-                    select(Repo).where(Repo.name == "ds-b")
-                )
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.name == "ds-b"))).scalar_one()
             # `tmp_data_dir / "repos"` is the repos_dir — `path` must be
             # relative so the row survives `OUTO_DATA_DIR` changes.
             assert row.path == "bob/ds-b.git"
@@ -140,9 +128,7 @@ class TestCreateRepoSuccess:
             await session.commit()
 
         async with session_factory() as session:
-            row = (
-                await session.execute(select(Repo).where(Repo.name == "sp-c"))
-            ).scalar_one()
+            row = (await session.execute(select(Repo).where(Repo.name == "sp-c"))).scalar_one()
             assert row.kind == "space"
             assert row.visibility == "public"
             assert row.description == "hello world"
@@ -158,14 +144,10 @@ class TestCreateRepoSuccess:
         dave_id = await _user_id_in_new_session(session_factory, "dave")
         async with session_factory() as session:
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == dave_id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == dave_id))
             ).scalar_one()
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == dave_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == dave_id))
             ).scalar_one()
             assert quota.max_bytes == get_settings().default_quota_bytes
             assert usage.used_bytes == 0
@@ -180,9 +162,7 @@ class TestCreateRepoSuccess:
 
         async with session_factory() as session:
             entry = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "repo.create")
-                )
+                await session.execute(select(AuditLog).where(AuditLog.action == "repo.create"))
             ).scalar_one()
             assert entry.target_type == "repo"
             assert '"model-e"' in (entry.detail or "")
@@ -199,22 +179,16 @@ class TestCreateRepoSuccess:
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
             await create_repo(session, owner=owner, name="model-f", kind=RepoKind.MODEL)
             await session.commit()
 
         async with session_factory() as session:
             quota = (
-                await session.execute(
-                    select(UserQuota).where(UserQuota.user_id == owner_id)
-                )
+                await session.execute(select(UserQuota).where(UserQuota.user_id == owner_id))
             ).scalar_one()
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert quota.max_bytes == 999_999_999
             assert usage.used_bytes == 1234
@@ -236,9 +210,7 @@ class TestCreateRepoConflict:
                 await session.execute(select(User).where(User.username == "greg"))
             ).scalar_one()
             with pytest.raises(ConflictError):
-                await create_repo(
-                    session, owner=owner, name="model-g", kind=RepoKind.MODEL
-                )
+                await create_repo(session, owner=owner, name="model-g", kind=RepoKind.MODEL)
 
 
 class TestCreateRepoSlugValidation:
@@ -250,18 +222,14 @@ class TestCreateRepoSlugValidation:
         async with session_factory() as session:
             owner = await _make_user(session, "ivy")
             with pytest.raises(ValidationFailedError):
-                await create_repo(
-                    session, owner=owner, name="Bad Name!", kind=RepoKind.MODEL
-                )
+                await create_repo(session, owner=owner, name="Bad Name!", kind=RepoKind.MODEL)
             await session.commit()
 
         # And no bare repo on disk.
         assert not repo_exists("ivy", "Bad Name!")
 
 
-async def _user_id_in_new_session(
-    factory: async_sessionmaker[AsyncSession], username: str
-) -> int:
+async def _user_id_in_new_session(factory: async_sessionmaker[AsyncSession], username: str) -> int:
     """Look up `User.id` for `username` using a fresh session from `factory`."""
     async with factory() as session:
         row = (

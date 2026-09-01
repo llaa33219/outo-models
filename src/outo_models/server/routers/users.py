@@ -24,17 +24,13 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 async def _load_user(db: AsyncSession, username: str) -> User:
     """Fetch the user by slug or raise `NotFoundError`."""
     validate_slug(username)
-    user = (
-        await db.execute(select(User).where(User.username == username))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
     if user is None:
         raise NotFoundError(f"user {username!r} not found")
     return user
 
 
-def _user_can_see_private(
-    viewer: User | None, target: User
-) -> bool:
+def _user_can_see_private(viewer: User | None, target: User) -> bool:
     """`True` when `viewer` may see `target`'s private repos."""
     if viewer is None:
         return False

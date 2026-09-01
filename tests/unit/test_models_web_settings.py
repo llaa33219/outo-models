@@ -44,9 +44,7 @@ class TestWebSettingCreateRead:
 
         async with session_factory() as session:
             setting = (
-                await session.execute(
-                    select(WebSetting).where(WebSetting.key == "homepage.banner")
-                )
+                await session.execute(select(WebSetting).where(WebSetting.key == "homepage.banner"))
             ).scalar_one()
             assert setting.value == "Welcome to outo-models"
 
@@ -70,9 +68,7 @@ class TestWebSettingCreateRead:
 class TestWebSettingUpdate:
     """`value` is the operator-editable field; updating it is a normal flow."""
 
-    async def test_update_value(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_update_value(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         async with session_factory() as session:
             session.add(WebSetting(key="homepage.banner", value="first"))
             await session.commit()
@@ -115,9 +111,7 @@ class TestWebSettingDelete:
 
         async with session_factory() as session:
             assert (
-                await session.execute(
-                    select(WebSetting).where(WebSetting.key == "homepage.banner")
-                )
+                await session.execute(select(WebSetting).where(WebSetting.key == "homepage.banner"))
             ).scalar_one_or_none() is None
 
 

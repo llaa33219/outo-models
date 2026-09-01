@@ -232,9 +232,7 @@ async def set_gpu(
     """Replace the GPU assignment list and audit the change."""
     user = await load_target_user(db, username)
     key = gpu_setting_key(username)
-    row = (
-        await db.execute(select(WebSetting).where(WebSetting.key == key))
-    ).scalar_one_or_none()
+    row = (await db.execute(select(WebSetting).where(WebSetting.key == key))).scalar_one_or_none()
     encoded = json.dumps(list(body.gpu_ids), ensure_ascii=False)
     if row is None:
         db.add(WebSetting(key=key, value=encoded))
@@ -260,9 +258,7 @@ async def clear_gpu(
     """Drop the GPU assignment list entirely."""
     user = await load_target_user(db, username)
     key = gpu_setting_key(username)
-    row = (
-        await db.execute(select(WebSetting).where(WebSetting.key == key))
-    ).scalar_one_or_none()
+    row = (await db.execute(select(WebSetting).where(WebSetting.key == key))).scalar_one_or_none()
     if row is not None:
         await db.delete(row)
         write_admin_audit(
@@ -289,12 +285,16 @@ async def audit_feed(
 ) -> list[dict[str, object]]:
     """Return the most-recent `AuditLog` rows, newest first."""
     rows = (
-        await db.execute(
-            select(AuditLog)
-            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-            .limit(limit)
+        (
+            await db.execute(
+                select(AuditLog)
+                .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [
         {
             "id": r.id,

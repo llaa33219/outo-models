@@ -11,6 +11,7 @@ in tests). The non-interactive path raises a `ConfigError` when a
 required flag is missing, so the operator gets a clean error rather
 than a hung prompt.
 """
+
 from __future__ import annotations
 
 import os

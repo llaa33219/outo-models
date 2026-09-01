@@ -63,9 +63,7 @@ def _load_config() -> dict[str, object]:
     """
     path = _config_path()
     if not path.exists():
-        raise ConfigError(
-            f"config file not found ({path}). Run 'outo-models setup' first."
-        )
+        raise ConfigError(f"config file not found ({path}). Run 'outo-models setup' first.")
     with path.open("r", encoding="utf-8") as fh:
         payload = yaml.safe_load(fh) or {}
     if not isinstance(payload, dict):

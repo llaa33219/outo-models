@@ -9,6 +9,7 @@ container entrypoint. We exercise both:
     * `serve` — we monkeypatch `uvicorn.Server.run` so we capture the
       server boot without blocking.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -70,9 +71,7 @@ class TestServe:
         # the call and short-circuit it.
         captured: dict[str, Any] = {}
 
-        def _fake_run(
-            app: Any, host: str = "127.0.0.1", port: int = 8000, **kwargs: Any
-        ) -> None:
+        def _fake_run(app: Any, host: str = "127.0.0.1", port: int = 8000, **kwargs: Any) -> None:
             captured["app"] = app
             captured["host"] = host
             captured["port"] = port

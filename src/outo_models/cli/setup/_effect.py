@@ -10,6 +10,7 @@ argon2id hash reaches disk, via `auth.passwords.hash_password`. The
 literal password lives in memory only for the duration of the wizard
 run.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -120,11 +121,7 @@ async def ensure_dns_record(answers: SetupAnswers) -> None:
     """Create (or report instructions for) the A record pointing at the server."""
     provider = create_provider(
         answers.dns_provider,
-        (
-            {"api_token": answers.cloudflare_api_token}
-            if answers.cloudflare_api_token
-            else {}
-        ),
+        ({"api_token": answers.cloudflare_api_token} if answers.cloudflare_api_token else {}),
         domain=answers.domain,
     )
     record = DnsRecord(

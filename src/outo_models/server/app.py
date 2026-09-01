@@ -73,9 +73,7 @@ def _caddy_manager_factory(settings: Settings) -> Callable[[], CaddyManager]:
     return _factory
 
 
-def _register_routes_and_middleware(
-    app: FastAPI, settings: Settings
-) -> None:
+def _register_routes_and_middleware(app: FastAPI, settings: Settings) -> None:
     """Attach every router + middleware the contract specifies."""
     # Stash the settings so deps.py can resolve them per-request without
     # touching the global cache. Tests build apps with their own Settings;
@@ -107,9 +105,7 @@ def _register_routes_and_middleware(
 
 
 @asynccontextmanager
-async def _lifespan(
-    app: FastAPI, settings: Settings
-) -> AsyncIterator[None]:
+async def _lifespan(app: FastAPI, settings: Settings) -> AsyncIterator[None]:
     """Boot the app: migrations, scheduler; teardown the scheduler, dispose engine.
 
     Scheduler failures during boot are tolerated in development so an

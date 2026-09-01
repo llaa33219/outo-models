@@ -103,9 +103,7 @@ async def _seed_user_with_pat(
         await session.commit()
         user_id = user.id
     async with factory() as session:
-        owner = (
-            await session.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        owner = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         return owner, pat
 
 
@@ -128,9 +126,7 @@ async def _seed_repo(
         )
         session.add(repo)
         await session.commit()
-        return (
-            await session.execute(select(Repo).where(Repo.id == repo.id))
-        ).scalar_one()
+        return (await session.execute(select(Repo).where(Repo.id == repo.id))).scalar_one()
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +242,7 @@ class TestPutTransfer:
         transport = httpx.ASGITransport(
             app=_lfs_put_app(owner="alice", repo="model", oid=oid, body=payload)
         )
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.put(
                 f"/alice/model.git/info/lfs/objects/{oid}",
                 headers={
@@ -260,9 +254,7 @@ class TestPutTransfer:
             )
 
         assert response.status_code == 200
-        store = LocalObjectStore(
-            tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600
-        )
+        store = LocalObjectStore(tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600)
         assert await store.has_object(oid)
         assert await store.object_size(oid) == len(payload)
 
@@ -275,13 +267,9 @@ class TestPutTransfer:
         wrong_oid = hashlib.sha256(b"different").hexdigest()
 
         transport = httpx.ASGITransport(
-            app=_lfs_put_app(
-                    owner="alice", repo="model", oid=wrong_oid, body=payload
-                )
+            app=_lfs_put_app(owner="alice", repo="model", oid=wrong_oid, body=payload)
         )
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.put(
                 f"/alice/model.git/info/lfs/objects/{wrong_oid}",
                 headers={
@@ -294,9 +282,7 @@ class TestPutTransfer:
 
         assert response.status_code == 422
         assert response.headers["content-type"].startswith(LFS_CONTENT_TYPE)
-        store = LocalObjectStore(
-            tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600
-        )
+        store = LocalObjectStore(tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600)
         assert not await store.has_object(wrong_oid)
 
     async def test_put_anonymous_returns_401(
@@ -306,13 +292,9 @@ class TestPutTransfer:
         await _seed_repo(session_factory, owner)
         payload = b"data"
         transport = httpx.ASGITransport(
-            app=_lfs_put_app(
-                owner="alice", repo="model", oid="0" * 64, body=payload
-            )
+            app=_lfs_put_app(owner="alice", repo="model", oid="0" * 64, body=payload)
         )
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.put(
                 f"/alice/model.git/info/lfs/objects/{'0' * 64}",
                 headers={"content-type": "application/octet-stream"},
@@ -337,9 +319,7 @@ class TestGetTransfer:
         payload = b"round-trip body\n" * 5000
         oid = hashlib.sha256(payload).hexdigest()
 
-        store = LocalObjectStore(
-            tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600
-        )
+        store = LocalObjectStore(tmp_data_dir / "lfs", base_url="http://lfs.test", presign_ttl=600)
 
         async def _aiter() -> AsyncIterator[bytes]:
             yield payload
@@ -347,9 +327,7 @@ class TestGetTransfer:
         await store.write_object(oid, _aiter(), expected_size=len(payload))
 
         transport = httpx.ASGITransport(app=_lfs_get_app("alice", "model", oid))
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.get(
                 f"/alice/model.git/info/lfs/objects/{oid}",
                 headers={"authorization": _basic("alice", pat)},
@@ -366,9 +344,7 @@ class TestGetTransfer:
         missing = "ff" * 32
 
         transport = httpx.ASGITransport(app=_lfs_get_app("alice", "model", missing))
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.get(
                 f"/alice/model.git/info/lfs/objects/{missing}",
                 headers={"authorization": _basic("alice", pat)},
@@ -379,14 +355,10 @@ class TestGetTransfer:
         self, tmp_data_dir: Path, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         owner, _pat = await _seed_user_with_pat(session_factory, "alice")
-        await _seed_repo(
-            session_factory, owner, name="priv", visibility=Visibility.PRIVATE
-        )
+        await _seed_repo(session_factory, owner, name="priv", visibility=Visibility.PRIVATE)
 
         transport = httpx.ASGITransport(app=_lfs_get_app("alice", "priv", "0" * 64))
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.get(f"/alice/priv.git/info/lfs/objects/{'0' * 64}")
         assert response.status_code == 401
 
@@ -404,14 +376,10 @@ class TestBatchContentNegotiation:
     ) -> None:
         owner, pat = await _seed_user_with_pat(session_factory, "alice")
         await _seed_repo(session_factory, owner)
-        body = (
-            b'{"operation":"download","objects":[{"oid":"' + b"0" * 64 + b'","size":1}]}'
-        )
+        body = b'{"operation":"download","objects":[{"oid":"' + b"0" * 64 + b'","size":1}]}'
 
         transport = httpx.ASGITransport(app=_lfs_batch_app(body))
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.post(
                 "/alice/model.git/info/lfs/objects/batch",
                 headers={
@@ -427,14 +395,10 @@ class TestBatchContentNegotiation:
     ) -> None:
         owner, pat = await _seed_user_with_pat(session_factory, "alice")
         await _seed_repo(session_factory, owner)
-        body = (
-            b'{"operation":"download","objects":[{"oid":"' + b"0" * 64 + b'","size":1}]}'
-        )
+        body = b'{"operation":"download","objects":[{"oid":"' + b"0" * 64 + b'","size":1}]}'
 
         transport = httpx.ASGITransport(app=_lfs_batch_app(body))
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://lfs.test"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://lfs.test") as client:
             response = await client.post(
                 "/alice/model.git/info/lfs/objects/batch",
                 headers={

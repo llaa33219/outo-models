@@ -91,9 +91,7 @@ def open_signup_settings(monkeypatch: pytest.MonkeyPatch, tmp_data_dir) -> Setti
         get_settings.cache_clear()
 
 
-async def _create_admin(
-    session: AsyncSession, *, username: str = "root"
-) -> User:
+async def _create_admin(session: AsyncSession, *, username: str = "root") -> User:
     """Insert and return an admin user usable as a `decided_by` actor."""
     admin = User(
         username=username,
@@ -141,10 +139,10 @@ class TestRegisterUserWithApprovalRequired:
 
         async with factory() as session:
             pending_approvals = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == user.id)
-                )
-            ).scalars().all()
+                (await session.execute(select(Approval).where(Approval.user_id == user.id)))
+                .scalars()
+                .all()
+            )
             assert len(pending_approvals) == 1
             assert pending_approvals[0].decision == "pending"
             assert pending_approvals[0].decided_at is None
@@ -320,9 +318,7 @@ class TestRegisterUserWithApprovalRequired:
 
         async with factory() as verify_session:
             row = (
-                await verify_session.execute(
-                    select(User).where(User.username == "henry")
-                )
+                await verify_session.execute(select(User).where(User.username == "henry"))
             ).scalar_one_or_none()
             assert row is None
 
@@ -353,10 +349,10 @@ class TestRegisterUserWithApprovalDisabled:
 
         async with factory() as session:
             approvals = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == user.id)
-                )
-            ).scalars().all()
+                (await session.execute(select(Approval).where(Approval.user_id == user.id)))
+                .scalars()
+                .all()
+            )
             assert approvals == []
 
     async def test_can_login_succeeds_when_auto_approved(
@@ -444,9 +440,7 @@ class TestApproveUser:
 
         async with factory() as session:
             approval_row = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == approved.id)
-                )
+                await session.execute(select(Approval).where(Approval.user_id == approved.id))
             ).scalar_one()
             assert approval_row.decision == "approved"
             assert approval_row.decided_by_id == admin.id
@@ -538,9 +532,7 @@ class TestDenyUser:
             await session.commit()
 
         async with factory() as session:
-            denied = await deny_user(
-                session, username="olive", admin=admin, reason="not a fit"
-            )
+            denied = await deny_user(session, username="olive", admin=admin, reason="not a fit")
             await session.commit()
 
         assert denied.status == "denied"
@@ -548,18 +540,14 @@ class TestDenyUser:
 
         async with factory() as session:
             approval_row = (
-                await session.execute(
-                    select(Approval).where(Approval.user_id == denied.id)
-                )
+                await session.execute(select(Approval).where(Approval.user_id == denied.id))
             ).scalar_one()
             assert approval_row.decision == "denied"
             assert approval_row.decided_by_id == admin.id
             assert approval_row.reason == "not a fit"
             assert approval_row.decided_at is not None
 
-    async def test_writes_deny_audit_log(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_writes_deny_audit_log(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
             admin = await _create_admin(session)
             pending = User(
@@ -674,9 +662,7 @@ class TestBanUser:
             with pytest.raises(ConflictError):
                 await ban_user(session, username="repeat", admin=admin)
 
-    async def test_self_ban_is_forbidden(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_self_ban_is_forbidden(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
             admin = await _create_admin(session, username="self")
             await session.commit()
@@ -814,9 +800,7 @@ class TestListPending:
 
         assert [u.username for u in pending] == ["u0", "u2"]
 
-    async def test_empty_when_no_pending(
-        self, factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    async def test_empty_when_no_pending(self, factory: async_sessionmaker[AsyncSession]) -> None:
         async with factory() as session:
             session.add(
                 User(
@@ -903,12 +887,16 @@ class TestFullLifecycle:
         # Full audit trail is present in order.
         async with factory() as session:
             actions = (
-                await session.execute(
-                    select(AuditLog.action)
-                    .where(AuditLog.target_id == str(refreshed.id))
-                    .order_by(AuditLog.created_at, AuditLog.id)
+                (
+                    await session.execute(
+                        select(AuditLog.action)
+                        .where(AuditLog.target_id == str(refreshed.id))
+                        .order_by(AuditLog.created_at, AuditLog.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert actions == ["user.signup", "user.approve", "user.ban", "user.unban"]
 
 

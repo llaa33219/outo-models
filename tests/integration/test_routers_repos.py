@@ -12,9 +12,7 @@ from fastapi.testclient import TestClient
 class TestCreateRepo:
     """`POST /api/repos` requires auth + creates the bare repo on disk."""
 
-    async def test_create_requires_auth(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
+    async def test_create_requires_auth(self, app: tuple[TestClient, FastAPI, object]) -> None:
         client, _, _ = app
         response = client.post(
             "/api/repos",

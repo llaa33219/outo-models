@@ -203,21 +203,15 @@ class TestMakeUploadAction:
 
     async def test_returns_lfs_action_with_presigned_put(self) -> None:
         store = _make()
-        action = await store.make_upload_action(
-            owner="alice", repo="model", oid=_OID, size=1024
-        )
+        action = await store.make_upload_action(owner="alice", repo="model", oid=_OID, size=1024)
         # href points at path-style S3 endpoint + bucket + sharded key.
         assert action.headers == {}
         assert action.expires_in == _TTL
-        _UrlAsserts.assert_presigned_put_get_url(
-            action.href, method_token="PUT", ttl=_TTL
-        )
+        _UrlAsserts.assert_presigned_put_get_url(action.href, method_token="PUT", ttl=_TTL)
 
     async def test_includes_all_required_x_amz_params(self) -> None:
         store = _make()
-        action = await store.make_upload_action(
-            owner="alice", repo="model", oid=_OID, size=1024
-        )
+        action = await store.make_upload_action(owner="alice", repo="model", oid=_OID, size=1024)
         params = parse_qs(urlparse(action.href).query)
         # Every X-Amz-* parameter the LFS spec / AWS S3 presign requires.
         for name in (
@@ -232,9 +226,7 @@ class TestMakeUploadAction:
 
     async def test_ttl_propagates_to_expires(self) -> None:
         store = _make(presign_ttl=1234)
-        action = await store.make_upload_action(
-            owner="alice", repo="model", oid=_OID, size=1024
-        )
+        action = await store.make_upload_action(owner="alice", repo="model", oid=_OID, size=1024)
         assert parse_qs(urlparse(action.href).query)["X-Amz-Expires"] == ["1234"]
         assert action.expires_in == 1234
 
@@ -251,20 +243,14 @@ class TestMakeDownloadAction:
 
     async def test_returns_lfs_action_with_presigned_get(self) -> None:
         store = _make()
-        action = await store.make_download_action(
-            owner="alice", repo="model", oid=_OID, size=1024
-        )
+        action = await store.make_download_action(owner="alice", repo="model", oid=_OID, size=1024)
         assert action.headers == {}
         assert action.expires_in == _TTL
-        _UrlAsserts.assert_presigned_put_get_url(
-            action.href, method_token="GET", ttl=_TTL
-        )
+        _UrlAsserts.assert_presigned_put_get_url(action.href, method_token="GET", ttl=_TTL)
 
     async def test_get_signature_differs_from_put(self) -> None:
         store = _make()
-        upload = await store.make_upload_action(
-            owner="alice", repo="model", oid=_OID, size=1024
-        )
+        upload = await store.make_upload_action(owner="alice", repo="model", oid=_OID, size=1024)
         download = await store.make_download_action(
             owner="alice", repo="model", oid=_OID, size=1024
         )

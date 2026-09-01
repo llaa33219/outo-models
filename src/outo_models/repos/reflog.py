@@ -71,9 +71,7 @@ def _read_revisions(path: Path, limit: int) -> list[RevisionInfo]:
     return results
 
 
-async def recent_revisions(
-    owner: str, name: str, limit: int = 20
-) -> list[RevisionInfo]:
+async def recent_revisions(owner: str, name: str, limit: int = 20) -> list[RevisionInfo]:
     """Return the most recent commits in `owner/name`, newest first.
 
     `limit` is clamped to a sane upper bound (200) so a buggy caller cannot
@@ -82,9 +80,7 @@ async def recent_revisions(
     without a try/except.
     """
     safe_limit = max(0, min(limit, _MAX_LIMIT))
-    return await asyncio.to_thread(
-        _read_revisions, repo_fs_path(owner, name), safe_limit
-    )
+    return await asyncio.to_thread(_read_revisions, repo_fs_path(owner, name), safe_limit)
 
 
 __all__ = ["RevisionInfo", "recent_revisions"]

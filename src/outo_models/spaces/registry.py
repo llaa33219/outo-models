@@ -125,8 +125,7 @@ def _validate_sdk(sdk: str) -> str:
     """
     if sdk not in SUPPORTED_SDKS:
         raise ValidationFailedError(
-            f"unsupported space sdk: {sdk!r} "
-            f"(supported: {', '.join(SUPPORTED_SDKS)})"
+            f"unsupported space sdk: {sdk!r} (supported: {', '.join(SUPPORTED_SDKS)})"
         )
     return sdk
 
@@ -170,16 +169,12 @@ async def create_space(
     # On-disk sidecar last so the DB-side rollback path (a flush error
     # after create_repo) cannot leave an orphan JSON file pointing at
     # a repo that does not exist.
-    write_space_meta(
-        owner.username, name, SpaceMeta(sdk=sdk, updated_at=utcnow())
-    )
+    write_space_meta(owner.username, name, SpaceMeta(sdk=sdk, updated_at=utcnow()))
 
     return repo
 
 
-async def get_space(
-    session: AsyncSession, *, owner_name: str, name: str
-) -> Repo:
+async def get_space(session: AsyncSession, *, owner_name: str, name: str) -> Repo:
     """Return the Space row for `<owner_name>/<name>` or raise `NotFoundError`.
 
     Eager-loads `owner` so routers can render `owner.username` without a
@@ -196,14 +191,10 @@ async def get_space(
         .options(selectinload(Repo.owner))
     )
     repo = (
-        await session.execute(
-            stmt.join(Repo.owner).where(User.username == owner_name)
-        )
+        await session.execute(stmt.join(Repo.owner).where(User.username == owner_name))
     ).scalar_one_or_none()
     if repo is None:
-        raise NotFoundError(
-            f"space not found: {owner_name}/{name}"
-        )
+        raise NotFoundError(f"space not found: {owner_name}/{name}")
     return repo
 
 

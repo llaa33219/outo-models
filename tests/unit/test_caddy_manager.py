@@ -208,9 +208,7 @@ class TestCaddyManagerReload:
 
     async def test_reload_success(self, respx_mock: respx.MockRouter) -> None:
         route = respx_mock.post("/load").mock(return_value=httpx.Response(200, text=""))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             await manager.reload()
         finally:
@@ -226,13 +224,9 @@ class TestCaddyManagerReload:
         self, respx_mock: respx.MockRouter
     ) -> None:
         respx_mock.post("/load").mock(
-            return_value=httpx.Response(
-                400, text="unrecognized directive: wibble"
-            )
+            return_value=httpx.Response(400, text="unrecognized directive: wibble")
         )
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             with pytest.raises(ConfigError) as exc_info:
                 await manager.reload()
@@ -244,9 +238,7 @@ class TestCaddyManagerReload:
         self, respx_mock: respx.MockRouter
     ) -> None:
         respx_mock.post("/load").mock(side_effect=httpx.ConnectError("connection refused"))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             with pytest.raises(OutoError) as exc_info:
                 await manager.reload()
@@ -254,13 +246,9 @@ class TestCaddyManagerReload:
         finally:
             await manager.close()
 
-    async def test_reload_5xx_maps_to_caddy_unreachable(
-        self, respx_mock: respx.MockRouter
-    ) -> None:
+    async def test_reload_5xx_maps_to_caddy_unreachable(self, respx_mock: respx.MockRouter) -> None:
         respx_mock.post("/load").mock(return_value=httpx.Response(503, text="boom"))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             with pytest.raises(OutoError) as exc_info:
                 await manager.reload()
@@ -274,9 +262,7 @@ class TestCaddyManagerHealth:
 
     async def test_healthy_returns_true_on_200(self, respx_mock: respx.MockRouter) -> None:
         respx_mock.get("/config/").mock(return_value=httpx.Response(200, text="{}"))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             assert await manager.healthy() is True
         finally:
@@ -284,9 +270,7 @@ class TestCaddyManagerHealth:
 
     async def test_healthy_returns_false_on_non_200(self, respx_mock: respx.MockRouter) -> None:
         respx_mock.get("/config/").mock(return_value=httpx.Response(500, text="boom"))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             assert await manager.healthy() is False
         finally:
@@ -296,9 +280,7 @@ class TestCaddyManagerHealth:
         self, respx_mock: respx.MockRouter
     ) -> None:
         respx_mock.get("/config/").mock(side_effect=httpx.ConnectError("refused"))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             assert await manager.healthy() is False
         finally:
@@ -309,9 +291,7 @@ class TestCaddyManagerHealth:
     ) -> None:
         body = b'{"apps":{"http":{}}}'
         respx_mock.get("/config/").mock(return_value=httpx.Response(200, content=body))
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         try:
             digest = await manager.current_config_hash()
         finally:
@@ -323,9 +303,7 @@ class TestCaddyManagerLifecycle:
     """Lifecycle: explicit `close()` and injected client."""
 
     async def test_close_is_idempotent(self) -> None:
-        manager = CaddyManager(
-            TlsConfig(domain="models.example.com", email="admin@example.com")
-        )
+        manager = CaddyManager(TlsConfig(domain="models.example.com", email="admin@example.com"))
         await manager.close()
         await manager.close()  # must not raise
 

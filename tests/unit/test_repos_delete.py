@@ -55,9 +55,7 @@ async def _make_user(session: AsyncSession, username: str) -> User:
     user = User(username=username, email=f"{username}@example.com", password_hash="h")
     session.add(user)
     await session.commit()
-    return (
-        await session.execute(select(User).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User).where(User.username == username))).scalar_one()
 
 
 async def _seed_repo_with_revision(
@@ -97,21 +95,15 @@ class TestDeleteRepoSuccess:
             from outo_models.db import UserUsage as _UserUsage
 
             usage_row = (
-                await session.execute(
-                    select(_UserUsage).where(_UserUsage.user_id == owner.id)
-                )
+                await session.execute(select(_UserUsage).where(_UserUsage.user_id == owner.id))
             ).scalar_one()
             usage_row.used_bytes = 4096
             await session.commit()
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="model-a", kind=RepoKind.MODEL
-            )
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
+            await delete_repo(session, owner=owner, name="model-a", kind=RepoKind.MODEL)
             await session.commit()
 
         fs_path = repo_fs_path("alice", "model-a")
@@ -120,23 +112,19 @@ class TestDeleteRepoSuccess:
 
         async with session_factory() as session:
             repo_count = (
-                await session.execute(
-                    select(Repo).where(Repo.id == repo_id)
-                )
+                await session.execute(select(Repo).where(Repo.id == repo_id))
             ).scalar_one_or_none()
             assert repo_count is None
 
             rev_count = (
-                await session.execute(
-                    select(Revision).where(Revision.repo_id == repo_id)
-                )
-            ).scalars().all()
+                (await session.execute(select(Revision).where(Revision.repo_id == repo_id)))
+                .scalars()
+                .all()
+            )
             assert rev_count == []
 
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage.used_bytes == 0
 
@@ -149,20 +137,16 @@ class TestDeleteRepoSuccess:
             await session.commit()
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.username == "bob"))
-            ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="ds-b", kind=RepoKind.DATASET
-            )
+            owner = (await session.execute(select(User).where(User.username == "bob"))).scalar_one()
+            await delete_repo(session, owner=owner, name="ds-b", kind=RepoKind.DATASET)
             await session.commit()
 
         async with session_factory() as session:
             entries = (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "repo.delete")
-                )
-            ).scalars().all()
+                (await session.execute(select(AuditLog).where(AuditLog.action == "repo.delete")))
+                .scalars()
+                .all()
+            )
             assert len(entries) == 1
             assert entries[0].target_type == "repo"
 
@@ -179,28 +163,20 @@ class TestDeleteRepoSuccess:
             from outo_models.db import UserUsage as _UserUsage
 
             usage_row = (
-                await session.execute(
-                    select(_UserUsage).where(_UserUsage.user_id == owner.id)
-                )
+                await session.execute(select(_UserUsage).where(_UserUsage.user_id == owner.id))
             ).scalar_one()
             usage_row.used_bytes = 5_000  # less than recorded size
             await session.commit()
             owner_id = owner.id
 
         async with session_factory() as session:
-            owner = (
-                await session.execute(select(User).where(User.id == owner_id))
-            ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="model-c", kind=RepoKind.MODEL
-            )
+            owner = (await session.execute(select(User).where(User.id == owner_id))).scalar_one()
+            await delete_repo(session, owner=owner, name="model-c", kind=RepoKind.MODEL)
             await session.commit()
 
         async with session_factory() as session:
             usage = (
-                await session.execute(
-                    select(UserUsage).where(UserUsage.user_id == owner_id)
-                )
+                await session.execute(select(UserUsage).where(UserUsage.user_id == owner_id))
             ).scalar_one()
             assert usage.used_bytes == 0
             # Cleanup sanity: row really did disappear.
@@ -228,9 +204,7 @@ class TestDeleteRepoSuccess:
             owner = (
                 await session.execute(select(User).where(User.username == "dave"))
             ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="sp-d", kind=RepoKind.SPACE
-            )
+            await delete_repo(session, owner=owner, name="sp-d", kind=RepoKind.SPACE)
             await session.commit()
 
 
@@ -243,9 +217,7 @@ class TestDeleteRepoMissing:
         async with session_factory() as session:
             owner = await _make_user(session, "erin")
             with pytest.raises(NotFoundError):
-                await delete_repo(
-                    session, owner=owner, name="nope", kind=RepoKind.MODEL
-                )
+                await delete_repo(session, owner=owner, name="nope", kind=RepoKind.MODEL)
 
     async def test_wrong_kind_raises_not_found(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -260,9 +232,7 @@ class TestDeleteRepoMissing:
                 await session.execute(select(User).where(User.username == "frank"))
             ).scalar_one()
             with pytest.raises(NotFoundError):
-                await delete_repo(
-                    session, owner=owner, name="x", kind=RepoKind.DATASET
-                )
+                await delete_repo(session, owner=owner, name="x", kind=RepoKind.DATASET)
 
     async def test_double_delete_raises_not_found(
         self, session_factory: async_sessionmaker[AsyncSession]
@@ -276,9 +246,7 @@ class TestDeleteRepoMissing:
             owner = (
                 await session.execute(select(User).where(User.username == "greg"))
             ).scalar_one()
-            await delete_repo(
-                session, owner=owner, name="model-g", kind=RepoKind.MODEL
-            )
+            await delete_repo(session, owner=owner, name="model-g", kind=RepoKind.MODEL)
             await session.commit()
 
         async with session_factory() as session:
@@ -286,6 +254,4 @@ class TestDeleteRepoMissing:
                 await session.execute(select(User).where(User.username == "greg"))
             ).scalar_one()
             with pytest.raises(NotFoundError):
-                await delete_repo(
-                    session, owner=owner, name="model-g", kind=RepoKind.MODEL
-                )
+                await delete_repo(session, owner=owner, name="model-g", kind=RepoKind.MODEL)

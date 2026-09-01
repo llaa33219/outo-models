@@ -46,9 +46,7 @@ class UserUsage(IntIdMixin, TimestampMixin, Base):
         unique=True,
         nullable=False,
     )
-    used_bytes: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    used_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 __all__ = ["UserQuota", "UserUsage"]

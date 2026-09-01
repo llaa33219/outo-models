@@ -61,9 +61,7 @@ async def create_repo(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        raise ConflictError(
-            f"repository already exists: {owner.username}/{name} ({kind.value})"
-        )
+        raise ConflictError(f"repository already exists: {owner.username}/{name} ({kind.value})")
 
     fs_path = repo_fs_path(owner.username, name)
     async with REPO_LOCKS.acquire(owner.username, name):

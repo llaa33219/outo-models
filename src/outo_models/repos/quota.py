@@ -19,9 +19,7 @@ from outo_models.exceptions import QuotaExceededError
 from outo_models.repos.storage import disk_usage, repo_fs_path
 
 
-async def ensure_quota_rows(
-    session: AsyncSession, user: User
-) -> tuple[UserQuota, UserUsage]:
+async def ensure_quota_rows(session: AsyncSession, user: User) -> tuple[UserQuota, UserUsage]:
     """Make sure `user` has both a `UserQuota` and a `UserUsage` row.
 
     Idempotent: existing rows are returned unchanged; missing rows are
@@ -48,9 +46,7 @@ async def ensure_quota_rows(
     return quota, usage
 
 
-async def check_push_allowed(
-    session: AsyncSession, user: User, incoming_bytes: int
-) -> None:
+async def check_push_allowed(session: AsyncSession, user: User, incoming_bytes: int) -> None:
     """Raise `QuotaExceededError` if `used + incoming` would exceed the cap.
 
     `incoming_bytes` is the bytes-about-to-be-added by the push; negative
@@ -92,17 +88,13 @@ async def reconcile_user(session: AsyncSession, user: User) -> int:
     """
     old_used = 0
     existing_usage = (
-        await session.execute(
-            select(UserUsage).where(UserUsage.user_id == user.id)
-        )
+        await session.execute(select(UserUsage).where(UserUsage.user_id == user.id))
     ).scalar_one_or_none()
     if existing_usage is not None:
         old_used = existing_usage.used_bytes
 
     rows = (
-        await session.execute(
-            select(Repo.name, Repo.kind).where(Repo.owner_id == user.id)
-        )
+        await session.execute(select(Repo.name, Repo.kind).where(Repo.owner_id == user.id))
     ).all()
 
     total = 0

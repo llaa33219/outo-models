@@ -58,21 +58,16 @@ _REF_CANONICAL_REQUEST = (
 
 # sha256 hex of the canonical request above. Independently verified with
 # `printf '<canon>' | sha256sum` — see the derivation script.
-_REF_HASHED_CANONICAL = (
-    "dc8363da928b583992e2b1c2a3e09dc8266219e4a303b5d4f1be51892f2b88f6"
-)
+_REF_HASHED_CANONICAL = "dc8363da928b583992e2b1c2a3e09dc8266219e4a303b5d4f1be51892f2b88f6"
 
 _REF_STRING_TO_SIGN = (
     "AWS4-HMAC-SHA256\n"
     "20150830T123600Z\n"
-    "20150830/us-east-1/s3/aws4_request\n"
-    + _REF_HASHED_CANONICAL
+    "20150830/us-east-1/s3/aws4_request\n" + _REF_HASHED_CANONICAL
 )
 
 # Final signature for the reference vector.
-_REF_SIGNATURE = (
-    "4899acb483d782755170c55689ebc761a142c2ebccb2e0f89c764b95d7b96548"
-)
+_REF_SIGNATURE = "4899acb483d782755170c55689ebc761a142c2ebccb2e0f89c764b95d7b96548"
 
 _REF_URL = (
     "https://s3.amazonaws.com/examplebucket/test.txt"
@@ -103,12 +98,8 @@ class TestAwsReferenceVector:
         re-derivation or the published intermediate changes, the
         presigner is broken.
         """
-        expected = _expected_k_signing(
-            _REF_SECRET_KEY, _REF_DATE_STAMP, _REF_REGION, _REF_SERVICE
-        )
-        assert _signing_key(
-            _REF_SECRET_KEY, _REF_DATE_STAMP, _REF_REGION, _REF_SERVICE
-        ) == expected
+        expected = _expected_k_signing(_REF_SECRET_KEY, _REF_DATE_STAMP, _REF_REGION, _REF_SERVICE)
+        assert _signing_key(_REF_SECRET_KEY, _REF_DATE_STAMP, _REF_REGION, _REF_SERVICE) == expected
 
     def test_canonical_request_matches(self) -> None:
         """The canonical request string must match byte-for-byte.
@@ -124,9 +115,7 @@ class TestAwsReferenceVector:
 
         params = {
             "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
-            "X-Amz-Credential": (
-                f"{_REF_ACCESS_KEY}/{_REF_CREDENTIAL_SCOPE}"
-            ),
+            "X-Amz-Credential": (f"{_REF_ACCESS_KEY}/{_REF_CREDENTIAL_SCOPE}"),
             "X-Amz-Date": _REF_AMZ_DATE,
             "X-Amz-Expires": str(_REF_TTL),
             "X-Amz-SignedHeaders": "host",

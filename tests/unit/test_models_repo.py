@@ -36,9 +36,7 @@ async def session_factory(tmp_data_dir) -> AsyncIterator[async_sessionmaker[Asyn
 async def _make_user(session: AsyncSession, username: str) -> int:
     session.add(User(username=username, email=f"{username}@example.com", password_hash="h"))
     await session.commit()
-    return (
-        await session.execute(select(User.id).where(User.username == username))
-    ).scalar_one()
+    return (await session.execute(select(User.id).where(User.username == username))).scalar_one()
 
 
 class TestRepoCreateRead:
@@ -61,9 +59,7 @@ class TestRepoCreateRead:
             await session.commit()
 
         async with session_factory() as session:
-            repo = (
-                await session.execute(select(Repo).where(Repo.name == "my-model"))
-            ).scalar_one()
+            repo = (await session.execute(select(Repo).where(Repo.name == "my-model"))).scalar_one()
             assert repo.kind == "model"
             assert repo.visibility == "private"
             assert repo.default_branch == "main"

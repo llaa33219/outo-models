@@ -5,6 +5,7 @@ an httpx mock transport; here we test the DB-backed commands against a
 fresh sqlite schema per test, asserting both the user-visible CLI
 output and the AuditLog rows the service functions emit.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -256,9 +257,7 @@ class TestGpu:
 class TestResetPassword:
     """`admin reset-password` writes a new hash and prints the new password."""
 
-    def test_reset_password_prints_once(
-        self, runner: CliRunner, tmp_data_dir: Path
-    ) -> None:
+    def test_reset_password_prints_once(self, runner: CliRunner, tmp_data_dir: Path) -> None:
         _bootstrap_admin_user("root")
 
         async def _add_gabe(engine: Any, factory: Any) -> None:
@@ -304,9 +303,7 @@ class TestResetPassword:
 class TestRemoteAdminApi:
     """The `--api-url` / `--token` flag pair drives `AdminApiClient`."""
 
-    def test_remote_list_uses_httpx_mock(
-        self, runner: CliRunner, tmp_data_dir: Path
-    ) -> None:
+    def test_remote_list_uses_httpx_mock(self, runner: CliRunner, tmp_data_dir: Path) -> None:
         import httpx
 
         from outo_models.cli_remote import AdminApiClient

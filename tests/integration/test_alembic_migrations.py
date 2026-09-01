@@ -76,9 +76,7 @@ class TestMigrationsApply:
             async with eng.connect() as conn:
                 tables = await conn.run_sync(_table_names)
             expected = set(Base.metadata.tables)
-            assert expected.issubset(tables), (
-                f"missing tables: {expected - tables}"
-            )
+            assert expected.issubset(tables), f"missing tables: {expected - tables}"
         finally:
             await eng.dispose()
             await dispose_engines()
@@ -93,12 +91,8 @@ class TestMigrationRoundTrip:
         eng = get_engine(settings)
         try:
             cfg = Config()
-            cfg.set_main_option(
-                "script_location", "src/outo_models/db/migrations"
-            )
-            cfg.set_main_option(
-                "sqlalchemy.url", eng.url.render_as_string(hide_password=False)
-            )
+            cfg.set_main_option("script_location", "src/outo_models/db/migrations")
+            cfg.set_main_option("sqlalchemy.url", eng.url.render_as_string(hide_password=False))
 
             # Start clean so we measure exactly what migrations produce.
             async with eng.begin() as conn:
