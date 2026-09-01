@@ -103,10 +103,12 @@ Two GitHub Actions are added.
 - `.github/workflows/ci.yml` — main / PR trigger. Enforces ruff + mypy
   + pytest + `scripts/check-docs.sh`.
 - `.github/workflows/release-image.yml` — `vX.Y.Z-stable` /
-  `vX.Y.Z-dev` tag trigger. After tests pass, runs
-  `podman build --build-arg IMAGE_FLAVOR=stable|dev ...` and pushes
-  `ghcr.io/<repo>:X.Y.Z-<flavor>`, `:stable` / `:dev`, and (for stable
-  only) `:latest`. Tag convention:
+  `vX.Y.Z-dev` tag trigger. After tests pass, builds **natively per
+  architecture** (amd64 on `ubuntu-24.04`, arm64 on `ubuntu-24.04-arm` —
+  no QEMU), pushes per-arch tags `:X.Y.Z-<flavor>-amd64` / `-arm64`, then
+  combines them into manifest lists: `:X.Y.Z-<flavor>`, `:stable` /
+  `:dev`, and (for stable only) `:latest`. A plain `podman pull` on an
+  ARM server resolves to arm64 automatically. Tag convention:
   [architecture.md §CI/CD](architecture.md#cicd).
 
 ### New environment variables summary

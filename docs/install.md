@@ -41,6 +41,12 @@ publishes these tags automatically, so no build tooling is required.
 | `:latest` | Latest **stable** release | Default for production (in sync with `:stable`) |
 | `:X.Y.Z-dev` | Pinned dev image (includes debugpy / ipython) | Test machines, debugging |
 | `:dev` | Most recent dev release | Test machines, debugging |
+| `:X.Y.Z-<flavor>-amd64` / `-arm64` | Per-architecture image | Debugging, or pinning a specific arch |
+
+All tags above except the per-arch variants are **manifest lists covering
+linux/amd64 and linux/arm64** (built natively on GitHub's amd64 and ARM
+runners — no QEMU). `podman pull` on an ARM server (Ampere, AWS Graviton,
+Oracle A1, ...) automatically gets the arm64 image.
 
 ```bash
 # Production server host (pulling the image to run)

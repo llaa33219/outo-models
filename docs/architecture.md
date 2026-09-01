@@ -342,20 +342,27 @@ Forced on every PR and push to `main`:
 #### `release-image.yml` — tag trigger
 
 A Git tag matching `vX.Y.Z-stable` or `vX.Y.Z-dev` triggers the workflow.
+Both flavors are built for **two architectures** — natively, never under
+QEMU emulation: `amd64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`
+(free for public repos). The per-arch images are then combined into a
+manifest list, so a plain `podman pull` always resolves to the host arch.
 
 ```
-vX.Y.Z-stable  →  IMAGE_FLAVOR=stable  →  ghcr.io/<repo>:X.Y.Z-stable
-                                              ghcr.io/<repo>:stable
-                                              ghcr.io/<repo>:latest      (stable only)
-vX.Y.Z-dev     →  IMAGE_FLAVOR=dev     →  ghcr.io/<repo>:X.Y.Z-dev
-                                              ghcr.io/<repo>:dev
+vX.Y.Z-stable  →  IMAGE_FLAVOR=stable  →  ghcr.io/<repo>:X.Y.Z-stable        (manifest: amd64+arm64)
+                                              ghcr.io/<repo>:stable          (manifest)
+                                              ghcr.io/<repo>:latest          (manifest, stable only)
+                                              ghcr.io/<repo>:X.Y.Z-stable-amd64 / -arm64  (per-arch)
+vX.Y.Z-dev     →  IMAGE_FLAVOR=dev     →  ghcr.io/<repo>:X.Y.Z-dev           (manifest)
+                                              ghcr.io/<repo>:dev             (manifest)
+                                              ghcr.io/<repo>:X.Y.Z-dev-amd64 / -arm64     (per-arch)
 ```
 
-The workflow runs the `test` job (`pytest` + `check-docs.sh`) before the
-`image` job. The build runs
-`podman build --build-arg IMAGE_FLAVOR=<flavor> --tag ...` once and tags
-two images (`X.Y.Z-<flavor>` + `<flavor>`); the `stable` flavor also
-pushes `:latest`.
+Job graph: `test` (`pytest` + `check-docs.sh`) → `build-arch` (matrix:
+amd64 + arm64; each builds with
+`podman build --platform linux/<arch> --build-arg IMAGE_FLAVOR=<flavor>`,
+pushes the per-arch tag, and smoke-runs `--help` on the same-arch runner)
+→ `manifest` (pulls both per-arch images, creates and pushes the
+`X.Y.Z-<flavor>` and `<flavor>` manifest lists, plus `latest` for stable).
 
 > **The tag convention is recommended by AGENTS.md §6.6.** Any other tag
 > format is rejected with `Tag '...' must match vX.Y.Z-stable or vX.Y.Z-dev`.

@@ -1,8 +1,19 @@
 name: release-image
 
-# Tag-driven image builds. Push a tag of the form:
-#   v1.2.3-stable   → IMAGE_FLAVOR=stable → ghcr.io/<owner>/outo-models:1.2.3{,-stable}, :stable
-#   v1.2.3-dev      → IMAGE_FLAVOR=dev    → ghcr.io/<owner>/outo-models:1.2.3-dev, :dev
+# Tag-driven multi-arch image builds. Push a tag of the form:
+#   v1.2.3-stable   → IMAGE_FLAVOR=stable
+#   v1.2.3-dev      → IMAGE_FLAVOR=dev
+#
+# Each flavor is built natively per architecture (amd64 on ubuntu-24.04,
+# arm64 on ubuntu-24.04-arm — free for public repos) and combined into a
+# manifest list, so `podman pull ghcr.io/<owner>/outo-models:1.2.3-stable`
+# resolves to the right arch automatically.
+#
+# Published tags (ghcr.io/<owner>/outo-models):
+#   :X.Y.Z-<flavor>          manifest list (amd64 + arm64)
+#   :X.Y.Z-<flavor>-<arch>   per-arch images (debugging / pinning)
+#   :<flavor>                moving manifest tag
+#   :latest                  moving manifest tag, stable releases only
 on:
   push:
     tags:
@@ -24,9 +35,17 @@ jobs:
       - run: uv run pytest
       - run: bash scripts/check-docs.sh
 
-  image:
+  build-arch:
     needs: test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -49,38 +68,75 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Build image
+      - name: Build image (${{ matrix.arch }})
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           FLAVOR: ${{ steps.tag.outputs.flavor }}
           IMAGE: ghcr.io/${{ github.repository }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           podman build \
+            --platform "linux/$ARCH" \
             --build-arg IMAGE_FLAVOR="$FLAVOR" \
-            --tag "$IMAGE:$VERSION-$FLAVOR" \
-            --tag "$IMAGE:$FLAVOR" \
+            --tag "$IMAGE:$VERSION-$FLAVOR-$ARCH" \
             .
 
-      - name: Push image
+      - name: Push image (${{ matrix.arch }})
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          FLAVOR: ${{ steps.tag.outputs.flavor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          ARCH: ${{ matrix.arch }}
+        run: podman push "$IMAGE:$VERSION-$FLAVOR-$ARCH"
+
+      - name: Smoke check the built image (${{ matrix.arch }})
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          FLAVOR: ${{ steps.tag.outputs.flavor }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          ARCH: ${{ matrix.arch }}
+        run: podman run --rm --platform "linux/$ARCH" "$IMAGE:$VERSION-$FLAVOR-$ARCH" --help
+
+  manifest:
+    needs: build-arch
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Parse tag
+        id: tag
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(stable|dev)$ ]]
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "flavor=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Create and push manifest lists
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           FLAVOR: ${{ steps.tag.outputs.flavor }}
           IMAGE: ghcr.io/${{ github.repository }}
         run: |
           set -euo pipefail
-          podman push "$IMAGE:$VERSION-$FLAVOR"
-          podman push "$IMAGE:$FLAVOR"
+          podman pull "$IMAGE:$VERSION-$FLAVOR-amd64"
+          podman pull "$IMAGE:$VERSION-$FLAVOR-arm64"
+
+          TAGS=("$VERSION-$FLAVOR" "$FLAVOR")
           # The moving latest tag only tracks stable releases.
           if [[ "$FLAVOR" == "stable" ]]; then
-            podman tag "$IMAGE:$VERSION-$FLAVOR" "$IMAGE:latest"
-            podman push "$IMAGE:latest"
+            TAGS+=("latest")
           fi
 
-      - name: Smoke check the built image
-        env:
-          VERSION: ${{ steps.tag.outputs.version }}
-          FLAVOR: ${{ steps.tag.outputs.flavor }}
-          IMAGE: ghcr.io/${{ github.repository }}
-        run: |
-          podman run --rm "$IMAGE:$VERSION-$FLAVOR" --help
+          for t in "${TAGS[@]}"; do
+            podman manifest rm "$IMAGE:$t" 2>/dev/null || true
+            podman manifest create "$IMAGE:$t" \
+              "$IMAGE:$VERSION-$FLAVOR-amd64" \
+              "$IMAGE:$VERSION-$FLAVOR-arm64"
+            podman manifest push --all "$IMAGE:$t" "docker://$IMAGE:$t"
+          done
