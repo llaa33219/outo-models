@@ -67,7 +67,7 @@ ENV IMAGE_FLAVOR=${IMAGE_FLAVOR} \
 # the named volume on the host can be chowned consistently across rebuilds.
 RUN groupadd -r app -g 1000 \
     && useradd -r -g app -u 1000 -d /app -s /sbin/nologin app \
-    && mkdir -p /var/lib/outo-models /etc/outo-models /opt/outo-models/scripts \
+    && mkdir -p /var/lib/outo-models /etc/outo-models /opt/outo-models/scripts /app \
     && chown -R app:app /var/lib/outo-models /etc/outo-models /opt/outo-models /app
 
 # Python venv from the uv builder. --chown ensures app owns the whole tree so
