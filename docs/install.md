@@ -2,8 +2,12 @@
 
 `outo-models` ships as a **single Podman image**. The FastAPI app and Caddy
 both run inside the container; only the data directory and config file live
-on the host. This page walks you from image build all the way to the first
+on the host. This page walks you from image pull all the way to the first
 container run.
+
+> **The CLI also lives inside the image.** Pulling an image never puts an
+> `outo-models` command on the host by itself — install the host shim
+> (`scripts/install-cli.sh`, section 3) once per machine.
 
 > **The development environment does not have podman** (AGENTS.md §4). Build
 > and verify the container on a separate test machine. In this repo's dev
@@ -106,6 +110,30 @@ Do not deploy the `dev` flavor to production. The entrypoint rejects
 - **Operational patches or air-gapped**: build locally (e.g.
   `make build-stable`)
 - **Testing / debugging**: use `:dev` from ghcr.io or `make build-dev`
+
+### 2-C. Install the host CLI shim (required once per host)
+
+The operator CLI (`outo-models setup`, `start`, `admin`, …) lives inside the
+image, so a bare `podman pull` leaves no `outo-models` command on the host.
+The shim script writes `/usr/local/bin/outo-models`, a small wrapper that
+runs the CLI from the image with the mounts it needs (`/etc/outo-models`,
+the `outo-models-data` volume, and the host Podman socket):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+# or, from a cloned repo:
+sudo bash scripts/install-cli.sh            # default image tag: stable
+sudo bash scripts/install-cli.sh dev        # shim defaults to the dev image
+```
+
+After this, `outo-models --help` works on the host. Override the image per
+invocation with `OUTO_IMAGE` (e.g. `OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models status`).
+
+> Through the shim, the wizard cannot open host firewall ports by itself
+> (the firewall tools are not in the image). Run
+> `outo-models setup run --skip-firewall`, then open the ports on the host
+> once with sudo — see the firewall one-liners in
+> [troubleshooting.md](troubleshooting.md).
 
 ## 3. Container-external data directory
 

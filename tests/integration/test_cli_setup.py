@@ -357,3 +357,42 @@ class TestInteractive:
         assert result.exit_code == 0, result.output
         # 4 prompt calls: pw1, pw2, pw3, pw4 (third and fourth match).
         assert len(calls) >= 4
+
+
+class TestBareSetupRunsWizard:
+    """Bare `outo-models setup` (no subcommand) must run the wizard.
+
+    The operator-facing form documented in README/install.md is `setup`,
+    not `setup run` — the callback forwards to `setup run` with defaults.
+    """
+
+    def test_bare_setup_forwards_to_run_with_defaults(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import outo_models.cli.setup as setup_mod
+
+        captured: dict[str, Any] = {}
+
+        def _spy(**kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        monkeypatch.setattr(setup_mod, "setup_run", _spy)
+        result = runner.invoke(app, ["setup"])
+        assert result.exit_code == 0, result.output
+        # Defaults identical to `setup run` without any flags.
+        assert captured == {
+            "non_interactive": False,
+            "domain": None,
+            "acme_email": None,
+            "dns_provider": None,
+            "public_ipv4": None,
+            "admin_username": None,
+            "admin_email": None,
+            "admin_password": None,
+            "skip_dns": False,
+            "skip_firewall": False,
+            "skip_ip_detect": False,
+            "yes": False,
+            "ports": None,
+            "require_approval": None,
+        }

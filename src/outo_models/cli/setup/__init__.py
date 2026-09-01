@@ -40,15 +40,35 @@ from outo_models.exceptions import OutoError
 setup_app = typer.Typer(
     name="setup",
     help="First-run interactive setup wizard",
-    no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="rich",
 )
 
 
-@setup_app.callback()
-def _setup_callback() -> None:
-    """`outo-models setup` — first-install wizard."""
+@setup_app.callback(invoke_without_command=True)
+def _setup_callback(ctx: typer.Context) -> None:
+    """`outo-models setup` — first-install wizard.
+
+    Bare `setup` (no subcommand) is the common case, so it runs the wizard
+    with defaults — identical to `setup run` without flags.
+    """
+    if ctx.invoked_subcommand is None:
+        setup_run(
+            non_interactive=False,
+            domain=None,
+            acme_email=None,
+            dns_provider=None,
+            public_ipv4=None,
+            admin_username=None,
+            admin_email=None,
+            admin_password=None,
+            skip_dns=False,
+            skip_firewall=False,
+            skip_ip_detect=False,
+            yes=False,
+            ports=None,
+            require_approval=None,
+        )
 
 
 @setup_app.command("run")

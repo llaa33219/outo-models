@@ -57,13 +57,14 @@ outo-models
 
 ## setup
 
-`setup_app` (Typer sub-app) has exactly one command, `run`. See
-[setup-wizard.md](setup-wizard.md) for the full prompt and automation
-details.
+`setup_app` (Typer sub-app) has exactly one command, `run`. Bare `setup`
+(with no flags) is equivalent to `setup run` with defaults; all flags live
+on `setup run`. See [setup-wizard.md](setup-wizard.md) for the full prompt
+and automation details.
 
 ```bash
-sudo outo-models setup                                # interactive
-sudo outo-models setup --non-interactive --yes ...     # non-interactive
+sudo outo-models setup                                     # interactive
+sudo outo-models setup run --non-interactive --yes ...     # non-interactive
 ```
 
 | Flag | Meaning |

@@ -156,7 +156,6 @@ The directory created by `setup` ships with the right permissions, but
 host-side tooling can change them.
 
 ## 6. podman missing (development machine)
-
 The development machine (AGENTS.md §4) does not have podman. `start` /
 `stop` / `restart` / `update` / `reset` print an English message and exit
 1.
@@ -463,6 +462,25 @@ ls /etc/cdi/nvidia.yaml
 podman run --rm --device nvidia.com/gpu=0 docker.io/library/cuda-vectoradd:nvidia-12.0.0
 # If this fails, it's a host setup issue — update nvidia-container-toolkit
 # and the CDI specification
+```
+
+## 13. `outo-models: command not found` after `podman pull`
+
+Pulling the image never installs a host command — the CLI lives inside the
+image. Install the host shim once per machine:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+```
+
+If you cannot install the shim (no root), any CLI command still works ad hoc
+through podman:
+
+```bash
+podman run --rm -it --network=host \
+  -v /etc/outo-models:/etc/outo-models \
+  -v outo-models-data:/var/lib/outo-models \
+  ghcr.io/llaa33219/outo-models:stable --help
 ```
 
 ## Next steps
