@@ -7,6 +7,7 @@ individual submodules.
 
 from outo_models.utils.git_url import clone_url
 from outo_models.utils.hashing import hash_secret, verify_secret
+from outo_models.utils.net import detect_lan_ipv4, is_ip_address
 from outo_models.utils.paths import (
     audit_dir,
     certs_dir,
@@ -25,8 +26,10 @@ __all__ = [
     "certs_dir",
     "clone_url",
     "data_dir",
+    "detect_lan_ipv4",
     "ensure_dirs",
     "hash_secret",
+    "is_ip_address",
     "lfs_dir",
     "normalize_slug",
     "repo_path",

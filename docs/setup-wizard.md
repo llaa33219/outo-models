@@ -12,6 +12,19 @@ This page is a direct mirror of what
 [cli/setup/_effect.py](../src/outo_models/cli/setup/_effect.py) actually do.
 If you spot a divergence, open a PR to update the docs.
 
+## Two install modes
+
+The wizard supports two distinct install modes, picked by the `--domain`
+flag (or the interactive prompt):
+
+| Mode | `--domain` value | What happens |
+| --- | --- | --- |
+| **Hostname mode** | `models.example.com` (any DNS-resolvable name) | Wizard asks for ACME email, DNS provider, public IPv4; Caddy renders with TLS + ACME; the server is reachable over `https://`. |
+| **Internal / IP mode** | empty / `192.168.1.10` / `::1` / any IP literal | Wizard skips ACME / DNS provider / public-IP prompts; Caddy renders plain `:80`; the server is reachable over `http://` from a trusted private network. |
+
+The two flows share the admin password / DB migration steps — only the
+network-layer configuration differs.
+
 ## One-liner
 
 ```bash
@@ -21,20 +34,35 @@ sudo outo-models setup
 In interactive mode, the prompts appear in the order below. Each default is
 the value picked automatically when `--yes` is passed.
 
+### Hostname mode prompt sequence
+
 | # | Prompt | Validation / notes |
 | --- | --- | --- |
 | 1 | `Which image track?` (followed by `[1] stable`, `[2] dev`, `[3] custom`) | `stable` is the recommended default; `dev` includes debug tooling; `custom` triggers a free-form text prompt (`Image reference or tag:`) validated + normalized through `normalize_image_ref`. |
-| 2 | `Enter the server domain (e.g. models.example.com):` | `validate_domain` — rejects whitespace / slashes, lowercases |
-| 3 | `Enter the ACME (Let's Encrypt) account email:` | The address that receives expiry warnings |
-| 4 | `Choose the DNS provider (cloudflare / manual):` | Only `cloudflare` or `manual` accepted |
-| 5 | `Enter the Cloudflare API token (Zone.DNS:Edit permission):` | Only when the DNS provider is `cloudflare` (hidden input) |
-| 6 | `Server's public IPv4 address (DNS A record):` | If `--skip-ip-detect` is not set, `https://api.ipify.org` is used for auto-detection and shown as the default |
+| 2 | `Enter the server domain (e.g. models.example.com):` | `validate_domain_or_ip` — empty accepted (internal mode), IP literals accepted verbatim, hostnames lowercased + must not contain spaces/slashes |
+| 3 | `Enter the ACME (Let's Encrypt) account email:` | The address that receives expiry warnings — only in hostname mode |
+| 4 | `Choose the DNS provider (cloudflare / manual):` | Only `cloudflare` or `manual` accepted — only in hostname mode |
+| 5 | `Enter the Cloudflare API token (Zone.DNS:Edit permission):` | Only when the DNS provider is `cloudflare` (hidden input) — only in hostname mode |
+| 6 | `Server's public IPv4 address (DNS A record):` | If `--skip-ip-detect` is not set, `https://api.ipify.org` is used for auto-detection and shown as the default — only in hostname mode |
 | 7 | `Admin account name (slug, e.g. admin):` | `validate_slug` (lowercase letters / digits / `.` `_` `-`, 1–63 chars) |
 | 8 | `Enter the admin account email:` | Must contain `@` |
 | 9 | `Enter the admin password (8+ characters):` | Minimum 8 characters |
 | 10 | `Re-enter the admin password:` | Must match the first entry |
 | 11 | `External ports to open (comma-separated, default 80,443):` | Each port must be in 1–65535 |
 | 12 | `Require admin approval for new signups?` | Default `true` (y/N) |
+
+### Internal / IP mode prompt sequence
+
+| # | Prompt | Validation / notes |
+| --- | --- | --- |
+| 1 | `Which image track?` | Same as hostname mode |
+| 2 | `Enter the server domain (e.g. models.example.com) or leave blank for internal / IP mode:` | Empty answer → internal mode |
+| — | (skipped: ACME email) | — |
+| — | (skipped: DNS provider / Cloudflare token) | — |
+| 3 | `Server address (LAN IPv4 or hostname):` | `detect_lan_ipv4()` is called (UDP probe to `192.0.2.1:80`, no packets sent) and the result shown as the default; the operator may edit |
+| 4–8 | (admin account) | Same as hostname mode |
+| 9 | `External ports to open (comma-separated, default 80,443):` | Same as hostname mode |
+| 10 | `Require admin approval for new signups?` | Same as hostname mode |
 
 The image track is the **first** prompt because the choice frames every
 later step — the in-container process is the same image, and the
@@ -43,20 +71,23 @@ later step — the in-container process is the same image, and the
 
 In `--non-interactive` mode, every value above must come from a flag or an
 environment variable. Any missing value exits immediately with `ConfigError`.
+In internal mode (`--domain` omitted or an IP literal), only
+`--public-ipv4` / admin credentials are required; ACME / DNS provider are
+skipped entirely.
 
 ## Flags
 
 | Flag | Meaning | Default |
 | --- | --- | --- |
 | `--non-interactive` | Disable interactive prompts; rely on flags / env vars | `false` |
-| `--domain <domain>` | Server domain | (none) |
-| `--acme-email <email>` | ACME (Let's Encrypt) account email | (none) |
-| `--dns-provider <name>` | `cloudflare` or `manual` | (none) |
-| `--public-ipv4 <IPv4>` | Public IPv4 for the DNS A record | (none) |
+| `--domain <domain-or-ip>` | Server hostname (hostname mode) **or** omit / pass an IP (internal mode) | (none) |
+| `--acme-email <email>` | ACME (Let's Encrypt) account email — hostname mode only | (none) |
+| `--dns-provider <name>` | `cloudflare` or `manual` — hostname mode only | (none) |
+| `--public-ipv4 <IPv4>` | Public IPv4 for the DNS A record (hostname mode) **or** LAN IPv4 (internal mode) | (none) |
 | `--admin-username <slug>` | Admin account name | (none) |
 | `--admin-email <email>` | Admin account email | (none) |
 | `--admin-password <password>` | Admin password (8+ characters) | (none) |
-| `--skip-dns` | Skip the DNS record creation step | `false` |
+| `--skip-dns` | Skip the DNS record creation step (auto-skipped in internal mode) | `false` |
 | `--skip-firewall` | Skip the firewall port-opening step | `false` |
 | `--skip-ip-detect` | Skip automatic IPv4 detection | `false` |
 | `--yes` | Auto-accept defaults for safe steps | `false` |
@@ -100,9 +131,15 @@ The file contains secret keys and DNS API tokens in plaintext, so the
 wizard writes a warning to stderr reminding the operator to keep the
 `0o600` permission.
 
+In internal mode `dns_provider` is the sentinel `"none"` and `acme_email`
+is empty.
+
 ### 3) DNS A record (`ensure_dns_record`)
 
-Unless `--skip-dns` is passed:
+Skipped automatically when `answers.is_internal` is True (no DNS provider
+was collected), or when `--skip-dns` is passed.
+
+When hostname mode is active:
 
 - `outo_models.dns.factory.create_provider` builds the `cloudflare` or
   `manual` implementation
@@ -125,9 +162,18 @@ Unless `--skip-firewall` is passed:
 - When not running as root, `sudo -n` is attached automatically
   (`firewall-open.sh` runs with `set -euo pipefail`)
 
-If `sudo -n` fails, the wizard raises `OutoError(code="firewall_permission")`
-and converts it into a `ConfigError` telling the operator to re-run as root
-or to add a NOPASSWD rule for `/etc/sudoers.d/outo-models`.
+Two error codes are handled distinctly:
+
+- `firewall_permission` — `sudo -n` failed. The wizard raises
+  `ConfigError` telling the operator to re-run as root or add a
+  NOPASSWD rule for `/etc/sudoers.d/outo-models`.
+- `firewall_container_host_required` — the shim noticed the wizard is
+  running inside a container without host-side privilege. The wizard
+  prints a yellow warning with the host command the operator must run
+  (e.g. `/usr/local/share/outo-models/firewall-open.sh firewalld 80 443`)
+  and **continues**. This is the documented behavior for internal-mode
+  installs via the host shim: the firewall step is tolerant so the
+  install can complete, with the operator opening ports by hand.
 
 See the firewall section in [troubleshooting.md](troubleshooting.md).
 
@@ -153,8 +199,17 @@ No password is ever echoed again after the wizard. If it is lost, run
 
 `outo_models.tls.caddy_manager.render_caddyfile` renders
 [container/caddy/Caddyfile.j2](../container/caddy/Caddyfile.j2) to
-`/etc/outo-models/Caddyfile`. `TlsConfig.dns_provider` is only active when
-the provider is `cloudflare`.
+`/etc/outo-models/Caddyfile`. The wizard passes `TlsConfig.tls_enabled =
+not answers.is_internal`, so:
+
+- **Hostname mode** (default): full ACME block + site block on
+  `<domain>` with optional `tls { dns cloudflare … }` for DNS-01.
+- **Internal / IP mode** (`tls_enabled=False`): the global `email` /
+  `acme_ca` block and every per-site `tls { … }` block are dropped; the
+  site binds on plain `:80` and reverse-proxies to `127.0.0.1:8000`.
+  The `:8080/healthz` listener is preserved regardless of mode.
+
+The health probe listener (`:8080/healthz`) is always present.
 
 See the "Caddy and ACME" section of [security.md](security.md#caddy-and-acme)
 for the rendered output.
@@ -206,6 +261,27 @@ sudo outo-models setup --non-interactive \
     --admin-email admin@example.com \
     --admin-password "$(openssl rand -base64 24)" \
     --skip-dns --yes
+```
+
+```bash
+# Internal / IP mode — no domain, plain HTTP, no DNS / ACME
+sudo outo-models setup --non-interactive \
+    --public-ipv4 192.168.1.10 \
+    --admin-username admin \
+    --admin-email admin@example.com \
+    --admin-password "$(openssl rand -base64 24)" \
+    --yes
+```
+
+```bash
+# Internal / IP mode with an explicit IP domain
+sudo outo-models setup --non-interactive \
+    --domain 192.168.1.10 \
+    --public-ipv4 192.168.1.10 \
+    --admin-username admin \
+    --admin-email admin@example.com \
+    --admin-password "$(openssl rand -base64 24)" \
+    --yes
 ```
 
 ## Next steps

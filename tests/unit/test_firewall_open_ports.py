@@ -1,10 +1,9 @@
 """Tests for `outo_models.firewall.open_ports`.
 
 The orchestrator runs `container/scripts/firewall-open.sh` via
-`asyncio.create_subprocess_exec`. These tests monkeypatch both that and
-`os.geteuid` so nothing escapes to the real firewall, and point
-`OUTO_FIREWALL_SCRIPT` at a tmp file so path resolution does not depend on
-the install layout.
+`asyncio.create_subprocess_exec`. These tests monkeypatch both that and the
+in-container detector so nothing escapes to the real firewall. `OUTO_FIREWALL_SCRIPT`
+points at a tmp file so path resolution does not depend on the install layout.
 """
 
 from __future__ import annotations
@@ -27,8 +26,13 @@ from outo_models.firewall.open_ports import (
 # its `__init__.py`, so `import outo_models.firewall.open_ports as m` would
 # resolve to the function (not the module). Reach into `sys.modules` to get
 # the actual module object — needed because the orchestrator module imports
-# `os` / `asyncio` that the tests monkeypatch at the module level.
+# `asyncio` that the tests monkeypatch at the module level.
 open_ports_mod = sys.modules["outo_models.firewall.open_ports"]
+
+# Exact host command the wizard prints to operators when the firewall cannot
+# run inside the container. The contract is fixed: the message MUST contain
+# this placeholder command verbatim so agent A's setup wizard can surface it.
+EXPECTED_HOST_COMMAND = "/usr/local/share/outo-models/firewall-open.sh <kind> <ports...>"
 
 
 @dataclass
@@ -88,15 +92,15 @@ def fake_script(tmp_path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
-def as_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pretend the current process is uid 0 so no `sudo -n` prefix is added."""
-    monkeypatch.setattr(open_ports_mod.os, "geteuid", lambda: 0)
+def not_in_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the orchestrator is running on a bare host (not a container)."""
+    monkeypatch.setattr(open_ports_mod, "_in_container", lambda: False)
 
 
 @pytest.fixture
-def as_non_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pretend the current process is unprivileged so `sudo -n` is required."""
-    monkeypatch.setattr(open_ports_mod.os, "geteuid", lambda: 1000)
+def in_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend the orchestrator is running inside a container (dockerenv / .containerenv)."""
+    monkeypatch.setattr(open_ports_mod, "_in_container", lambda: True)
 
 
 class TestRequiredPorts:
@@ -110,63 +114,131 @@ class TestRequiredPorts:
         assert isinstance(REQUIRED_PORTS, tuple)
 
 
+class TestInContainerDetection:
+    """When running inside a container, the orchestrator MUST refuse to spawn the
+    host script and instead surface the exact host command the operator must run."""
+
+    async def test_raises_firewall_container_host_required(
+        self, proc: _ProcRecorder, fake_script: str, in_container: None
+    ) -> None:
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(80,), kind=FirewallKind.UFW)
+
+        assert excinfo.value.code == "firewall_container_host_required"
+        # The wizard prints this verbatim; the placeholder command MUST be exact.
+        assert EXPECTED_HOST_COMMAND in str(excinfo.value)
+        # No subprocess was spawned — we must never reach the host script.
+        assert proc.calls == []
+
+    async def test_raises_before_dry_run_too(
+        self, proc: _ProcRecorder, fake_script: str, in_container: None
+    ) -> None:
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(80,), kind=FirewallKind.UFW, dry_run=True)
+
+        assert excinfo.value.code == "firewall_container_host_required"
+        assert EXPECTED_HOST_COMMAND in str(excinfo.value)
+        assert proc.calls == []
+
+    async def test_message_mentions_self_elevation(
+        self, proc: _ProcRecorder, fake_script: str, in_container: None
+    ) -> None:
+        # Operators run the shim through a container; they need to know the
+        # script will prompt for sudo on its own when needed.
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(443,), kind=FirewallKind.FIREWALLD)
+
+        assert "sudo" in str(excinfo.value).lower()
+
+    async def test_no_raise_when_not_in_container(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
+    ) -> None:
+        # Sanity: the default path does NOT raise. (Other fixtures handle the
+        # rest of the argv; this only proves detection is wired correctly.)
+        result = await open_ports(ports=(80,), kind=FirewallKind.UFW, dry_run=True)
+        assert result.kind == FirewallKind.UFW
+
+
+class TestInContainerHelper:
+    """`_in_container` reads the standard /.dockerenv and /run/.containerenv markers."""
+
+    def test_dockerenv_marker(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        # The helper uses Path.exists internally; we patch the module's _MARKER_PATHS
+        # to point at a tmp dir where we control which files exist.
+        dockerenv = tmp_path / "dockerenv"
+        dockerenv.write_text("")
+        monkeypatch.setattr(open_ports_mod, "_MARKER_PATHS", (dockerenv,))
+        assert open_ports_mod._in_container() is True
+
+    def test_containerenv_marker(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        containerenv = tmp_path / "containerenv"
+        containerenv.write_text("")
+        monkeypatch.setattr(open_ports_mod, "_MARKER_PATHS", (containerenv,))
+        assert open_ports_mod._in_container() is True
+
+    def test_neither_marker(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        # Point at a tmp dir with no markers.
+        monkeypatch.setattr(open_ports_mod, "_MARKER_PATHS", (tmp_path / "absent",))
+        assert open_ports_mod._in_container() is False
+
+
 class TestOpenPortsDryRun:
     """`dry_run=True` returns the planned argv without spawning anything."""
 
     async def test_returns_commands_without_spawning(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
         result = await open_ports(ports=(8080,), kind=FirewallKind.UFW, dry_run=True)
 
         assert isinstance(result, OpenPortsResult)
         assert result.kind == FirewallKind.UFW
         assert result.opened == []
-        assert result.needs_sudo is False
         assert result.commands == [["bash", fake_script, "ufw", "8080"]]
         # Critical: zero subprocess invocations.
         assert proc.calls == []
 
     async def test_dry_run_with_required_ports_default(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
         result = await open_ports(kind=FirewallKind.FIREWALLD, dry_run=True)
 
         assert result.commands == [["bash", fake_script, "firewalld", "80", "443"]]
         assert proc.calls == []
 
-    async def test_dry_run_with_sudo_when_non_root(
-        self, proc: _ProcRecorder, fake_script: str, as_non_root: None
+    async def test_argv_never_contains_sudo(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
+        # The script self-elevates; the Python side must NEVER prefix sudo.
         result = await open_ports(ports=(80,), kind=FirewallKind.UFW, dry_run=True)
 
-        assert result.needs_sudo is True
-        assert result.commands == [["sudo", "-n", "bash", fake_script, "ufw", "80"]]
-        assert proc.calls == []
+        assert "sudo" not in result.commands[0]
+        assert result.commands[0][0] == "bash"
+        assert result.commands[0][1] == fake_script
 
 
 class TestOpenPortsExecutes:
     """Without dry-run, the script is spawned once with the planned argv."""
 
-    async def test_root_runs_bash_script_directly(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+    async def test_runs_bash_script_directly(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
         result = await open_ports(ports=(80, 443), kind=FirewallKind.FIREWALLD)
 
-        assert result.needs_sudo is False
         assert result.opened == [80, 443]
         assert proc.calls == [["bash", fake_script, "firewalld", "80", "443"]]
 
-    async def test_non_root_prefixes_sudo_n(
-        self, proc: _ProcRecorder, fake_script: str, as_non_root: None
+    async def test_argv_never_contains_sudo(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
-        result = await open_ports(ports=(443,), kind=FirewallKind.UFW)
+        # Critical regression guard: the orchestrator must NEVER prefix sudo.
+        # Elevation is the host script's job, not the Python orchestrator's.
+        await open_ports(ports=(443,), kind=FirewallKind.UFW)
 
-        assert result.needs_sudo is True
-        assert result.opened == [443]
-        assert proc.calls == [["sudo", "-n", "bash", fake_script, "ufw", "443"]]
+        assert "sudo" not in proc.calls[0]
+        assert proc.calls[0][0] == "bash"
 
     async def test_accepts_arbitrary_iterable(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
         # Generators / sets must work — REQUIRED_PORTS is a tuple but callers may pass a set.
         ports = {80, 443}
@@ -180,9 +252,9 @@ class TestOpenPortsExecutes:
         assert set(argv[3:]) == {"80", "443"}
 
     async def test_none_kind_still_invokes_script(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
-        # The host script prints Korean guidance and exits 0 when kind=none.
+        # The host script prints guidance and exits 0 when kind=none.
         result = await open_ports(kind=FirewallKind.NONE)
 
         assert result.kind == FirewallKind.NONE
@@ -190,37 +262,51 @@ class TestOpenPortsExecutes:
         assert proc.calls == [["bash", fake_script, "none", "80", "443"]]
 
 
-class TestSudoPermissionError:
-    """When `sudo -n` fails the orchestrator surfaces a typed error."""
+class TestScriptFailure:
+    """When the host script returns non-zero, the orchestrator surfaces a typed
+    error that includes the script's stderr tail."""
 
-    async def test_sudo_failure_raises_outo_error_with_firewall_permission_code(
-        self, proc: _ProcRecorder, fake_script: str, as_non_root: None
+    async def test_nonzero_exit_raises_firewall_command_failed(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
-        # Pre-script the failed sudo -n.
-        proc._scripted = [_ScriptedCall(returncode=1, stderr="sudo: a password is required\n")]
+        proc._scripted = [_ScriptedCall(returncode=1, stderr="firewall-cmd: permission denied\n")]
 
         with pytest.raises(OutoError) as excinfo:
-            await open_ports(kind=FirewallKind.UFW)
+            await open_ports(ports=(80,), kind=FirewallKind.FIREWALLD)
 
-        assert excinfo.value.code == "firewall_permission"
+        assert excinfo.value.code == "firewall_command_failed"
+        # The stderr tail must be reachable from the message so the wizard can
+        # surface it verbatim.
+        assert "firewall-cmd: permission denied" in str(excinfo.value)
 
-    async def test_sudo_failure_does_not_re_execute(
-        self, proc: _ProcRecorder, fake_script: str, as_non_root: None
+    async def test_failure_message_includes_exit_code(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
-        proc._scripted = [_ScriptedCall(returncode=1)]
-        with pytest.raises(OutoError):
-            await open_ports(kind=FirewallKind.UFW)
+        proc._scripted = [_ScriptedCall(returncode=2, stderr="boom\n")]
 
-        # The script itself must NOT have been invoked after sudo failed.
-        assert len(proc.calls) == 1
-        assert proc.calls[0][0] == "sudo"
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(80,), kind=FirewallKind.UFW)
+
+        # The exit code is part of the operator-visible message; assert its
+        # presence rather than exact format to keep refactors honest.
+        assert "exit" in str(excinfo.value).lower()
+        assert "2" in str(excinfo.value)
+
+    async def test_failure_with_empty_stderr_still_raises(
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
+    ) -> None:
+        proc._scripted = [_ScriptedCall(returncode=1, stderr="")]
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(80,), kind=FirewallKind.UFW)
+
+        assert excinfo.value.code == "firewall_command_failed"
 
 
 class TestScriptPathResolution:
     """`OUTO_FIREWALL_SCRIPT` overrides the package-relative default."""
 
     async def test_env_override_used_when_set(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None
+        self, proc: _ProcRecorder, fake_script: str, not_in_container: None
     ) -> None:
         result = await open_ports(kind=FirewallKind.UFW, dry_run=True)
 
@@ -250,7 +336,11 @@ class TestOpenPortsAutoDetect:
     """`kind=None` triggers `detect_firewall` and uses the discovered backend."""
 
     async def test_kind_none_runs_detection_and_uses_result(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None, monkeypatch: pytest.MonkeyPatch
+        self,
+        proc: _ProcRecorder,
+        fake_script: str,
+        not_in_container: None,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         async def fake_detect() -> FirewallKind:
             return FirewallKind.NFTABLES
@@ -263,7 +353,11 @@ class TestOpenPortsAutoDetect:
         assert proc.calls == [["bash", fake_script, "nftables", "80"]]
 
     async def test_detection_failure_still_returns_none_kind(
-        self, proc: _ProcRecorder, fake_script: str, as_root: None, monkeypatch: pytest.MonkeyPatch
+        self,
+        proc: _ProcRecorder,
+        fake_script: str,
+        not_in_container: None,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         async def fake_detect() -> FirewallKind:
             return FirewallKind.NONE
@@ -285,9 +379,12 @@ class TestOpenPortsResultShape:
             kind=FirewallKind.UFW,
             opened=[80, 443],
             commands=[["bash", sample_script, "ufw", "80", "443"]],
-            needs_sudo=True,
         )
         assert r.kind == FirewallKind.UFW
         assert r.opened == [80, 443]
         assert r.commands == [["bash", sample_script, "ufw", "80", "443"]]
-        assert r.needs_sudo is True
+
+    def test_no_needs_sudo_attribute(self) -> None:
+        # Hard regression guard: the orchestrator dropped sudo handling; the
+        # dataclass must not expose `needs_sudo` even as a default-True field.
+        assert "needs_sudo" not in OpenPortsResult.__dataclass_fields__

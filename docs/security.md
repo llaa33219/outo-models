@@ -81,8 +81,12 @@ Storage: [src/outo_models/auth/sessions.py](../src/outo_models/auth/sessions.py)
 - `Secure=True` (production) / `False` (development) — chosen from
   `Settings.env`
 
-HSTS: when `domain` is not loopback, responses automatically include
-`strict-transport-security: max-age=31536000; includeSubDomains`.
+HSTS: when `domain` is a real hostname (anything that isn't an IP
+literal), responses automatically include
+`strict-transport-security: max-age=31536000; includeSubDomains`. In
+internal / IP mode (`Settings.is_internal=True`) HSTS is suppressed
+because the server speaks plain HTTP — a browser that cached HSTS would
+refuse the very request the operator is trying to make.
 
 ## 4. CSRF
 
@@ -137,7 +141,7 @@ automatically.
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
 | `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=()` |
 | `Content-Security-Policy` | `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (only when not loopback) |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (only for real hostnames — internal / IP mode suppresses HSTS) |
 
 The CSP allows `'unsafe-inline'` for `style-src` only — the bundled Jinja
 templates use inline `<style>` blocks. `script-src` stays `'self'`; no
@@ -175,11 +179,24 @@ Storage: [src/outo_models/tls/caddy_manager.py](../src/outo_models/tls/caddy_man
 - `OUTO_TLS_STAGING=true` (or the equivalent flag) switches to the Let's
   Encrypt staging CA — useful for avoiding rate-limit losses from a typo
   in the domain
+- **Internal / IP mode** (`Settings.is_internal=True`): Caddy binds
+  plain `:80` and the rendered Caddyfile drops the global `email` /
+  `acme_ca` / per-site `tls { … }` blocks. The `:8080/healthz` health
+  probe listener is preserved. The wizard passes
+  `TlsConfig.tls_enabled=not answers.is_internal` so the renderer stays
+  in lockstep with the wizard's prompt logic.
 
 The Cloudflare token is never written into the Caddyfile body — it is
 substituted via `{env.CLOUDFLARE_API_TOKEN}` from the Caddy process's
 environment. See [dns-providers.md](dns-providers.md) and
 [security.md §secret hygiene](#secret-hygiene) for details.
+
+> **Internal mode is plaintext HTTP.** The security-headers middleware
+> suppresses HSTS, the Caddyfile drops every TLS block, and the
+> scheduler skips the cert renewal handshake. The server must stay on
+> a trusted private network (LAN / VPN / loopback). Operators who need
+> encryption should switch to hostname mode (a real DNS name with
+> ACME) or terminate TLS at a reverse proxy in front of the container.
 
 ## 9. Secret hygiene
 

@@ -14,10 +14,37 @@ container run.
 > environment we only guarantee `uv sync` → `make lint` → `make typecheck` →
 > `make test`.
 
+## Two install paths
+
+The wizard supports two install paths. Pick the one that matches your
+network reach.
+
+### A. Hostname / public-internet path
+
+The server is reachable over the public internet on a DNS name
+(`models.example.com`). The wizard asks for ACME email + DNS provider,
+Caddy serves `https://`, and Let's Encrypt issues the certificate
+automatically.
+
+This is the canonical install path; the rest of the docs assume it unless
+this section is explicitly mentioned.
+
+### B. Internal / IP-only path
+
+The operator only opens the machine's firewall (no router port-forwarding,
+no public domain). The wizard skips the ACME / DNS provider prompts,
+Caddy serves plain `http://`, and the server is reachable from a trusted
+private network (LAN / VPN / loopback) on its IP address.
+
+This is documented in [Internal-mode install](#internal-mode-install)
+below; the rest of the docs note where the flow diverges.
+
 ## 1. Prerequisites
 
 Check the following on the server host that will run the production
 deployment.
+
+### Hostname mode
 
 - **podman** 4.x or later (check with `podman --version`)
 - One of **firewalld / ufw / nftables** (see the "Firewall not detected"
@@ -27,6 +54,14 @@ deployment.
 - Optional: an email contact for ACME issuance
 - Optional: a Cloudflare API token for DNS automation (permission
   `Zone.DNS:Edit`)
+
+### Internal mode
+
+- **podman** 4.x or later
+- A reachable IP on the operator's LAN / VPN (the wizard's
+  `detect_lan_ipv4()` probe can suggest one)
+- Optional: outbound access for the image pull only — no ACME / DNS
+  dependencies
 
 ## 2. Pulling the image
 
@@ -181,7 +216,7 @@ and `update`, so picking `dev` here means every later `update` will pull
 the dev image unless `--image` overrides it. The full prompt order is
 documented in [setup-wizard.md](setup-wizard.md).
 
-The command runs the following steps in order:
+### Hostname mode prompt sequence
 
 1. Ask for the image track (`stable` / `dev` / `custom`)
 2. Prompt for domain and ACME email
@@ -228,6 +263,87 @@ precedence over `--admin-password`-style flags.
 > set `OUTO_IMAGE` once and pass `--image <ref>` to `setup` (or pick
 > `custom` interactively).
 
+## Internal-mode install
+
+Skip this section if you only ever expose the server over a public
+hostname. The internal path exists for operators behind a NAT who don't
+forward ports and don't own a DNS name.
+
+### When to pick internal mode
+
+- The server is on a private LAN / VPN / loopback.
+- There is no port-forwarding from the router, and no DNS delegation.
+- Operators reach the server by IP, e.g. `http://192.168.1.10`.
+- HTTPS / Let's Encrypt is not desired (or not possible — ACME cannot
+  issue certs to raw IP addresses).
+
+### Interactive flow
+
+```bash
+sudo outo-models setup
+```
+
+Walk through the prompts:
+
+1. **Image track** — `stable` / `dev` / `custom` (same as hostname mode)
+2. **Domain** — leave blank, or type an IP literal (e.g. `192.168.1.10`)
+3. *(ACME email prompt is skipped)*
+4. *(DNS provider prompt is skipped)*
+5. **Server address** — the wizard probes the host's LAN interface
+   (UDP `connect()` to `192.0.2.1:80` — no traffic) and shows the
+   detected IP as the default. Press Enter to accept or type a
+   different address.
+6. **Admin account** — same as hostname mode
+7. **Ports** — same as hostname mode (still defaults to `80,443`)
+8. **Require approval** — same as hostname mode
+
+The wizard writes `config.yaml` with `dns_provider: "none"` and
+`acme_email: ""`, then skips the DNS step, renders the Caddyfile in
+internal mode (plain `:80` site block, no global email / acme_ca /
+per-site TLS), and prints the next-step banner.
+
+### Non-interactive flow
+
+```bash
+sudo outo-models setup --non-interactive \
+    --public-ipv4 192.168.1.10 \
+    --admin-username admin \
+    --admin-email admin@example.com \
+    --admin-password '<a strong password you generated>' \
+    --yes
+```
+
+Or with an explicit IP `domain`:
+
+```bash
+sudo outo-models setup --non-interactive \
+    --domain 192.168.1.10 \
+    --public-ipv4 192.168.1.10 \
+    --admin-username admin \
+    --admin-email admin@example.com \
+    --admin-password '<a strong password you generated>' \
+    --yes
+```
+
+### Through the host shim
+
+The CLI shim (`scripts/install-cli.sh`) runs the wizard inside the
+container, where it cannot open host firewall ports by itself. The
+firewall step is tolerant in internal mode: if `open_ports` raises
+`OutoError(code="firewall_container_host_required")`, the wizard prints
+the host command (e.g.
+`/usr/local/share/outo-models/firewall-open.sh firewalld 80 443`) and
+continues — the install still completes. Open the ports on the host by
+hand before clients try to reach the server.
+
+### Security note
+
+Internal mode is **plaintext HTTP**. The security headers middleware
+suppresses HSTS in internal mode for exactly this reason. The server
+must stay on a trusted private network; exposing port 80 to the public
+internet in this mode ships no transport-layer encryption. See
+[security.md](security.md) for the full security policy.
+
 ## 5. Start the container
 
 Once setup completes, start the container with one host-side command:
@@ -257,6 +373,9 @@ entrypoint (`/usr/local/bin/outo-entrypoint.sh`) prints the banner and then
 `exec`s `outo-models serve`. See the request flow in
 [architecture.md](architecture.md#request-flow).
 
+In internal mode the `OUTO_DOMAIN` is the IP the operator entered; the
+server is reachable on `http://<that-ip>/`.
+
 Confirm the container is up:
 
 ```bash
@@ -264,17 +383,25 @@ outo-models status
 # [status] running: outo-models
 ```
 
-You can now browse to `https://models.example.com/`. Log in with the admin
-account you created during `setup`.
+You can now browse to `https://models.example.com/` (hostname mode) or
+`http://192.168.1.10/` (internal mode). Log in with the admin account
+you created during `setup`.
 
 ## 6. Post-install checks
 
-Run through these before going live:
+Hostname mode:
 
 - `https://<domain>/admin` renders (admin login required)
 - `https://<domain>/api/admin/users` returns 200 with an admin PAT
 - `git clone https://<domain>/<admin>/test.git` then a first push succeeds
   (see [git-repos.md](git-repos.md))
+- `outo-models status` reports `[status] running`
+
+Internal mode:
+
+- `http://<ip>/admin` renders (admin login required)
+- `http://<ip>/api/admin/users` returns 200 with an admin PAT
+- `git clone http://<ip>/<admin>/test.git` then a first push succeeds
 - `outo-models status` reports `[status] running`
 
 If anything looks off, head to [troubleshooting.md](troubleshooting.md).

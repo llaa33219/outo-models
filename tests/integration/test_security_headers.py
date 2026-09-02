@@ -2,15 +2,30 @@
 
 The contract: every response — successful page, successful API, 404,
 422 validation, 401 auth, 500 generic — carries the security header
-bundle. HSTS is omitted on the loopback dev domain.
+bundle. HSTS is omitted in internal / IP mode and emitted for real
+hostnames — see `TestHsts` below for the matrix.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 # `app` fixture is auto-discovered from tests/integration/conftest.py.
+
+
+@dataclass
+class _StubSettings:
+    """Bare-bones stand-in for `Settings` exposing only `is_internal`.
+
+    `SecurityHeadersMiddleware` reads `_settings.is_internal`. Tests for
+    the internal-mode branches build a stub instead of bootstrapping a
+    full Settings via `create_app`.
+    """
+
+    is_internal: bool
 
 
 class TestSecurityHeadersOnSuccess:
@@ -28,10 +43,16 @@ class TestSecurityHeadersOnSuccess:
         assert response.status_code == 200
         self._assert_common_headers(response.headers)
 
-    def test_no_hsts_on_localhost(self, app: tuple[TestClient, FastAPI, object]) -> None:
+    def test_hsts_present_for_localhost_hostname(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        # The default test settings use `domain="localhost"`, which is a
+        # hostname — internal mode is False — so HSTS IS emitted.
         client, _, _ = app
         response = client.get("/")
-        assert "strict-transport-security" not in response.headers
+        assert response.headers.get("strict-transport-security") == (
+            "max-age=31536000; includeSubDomains"
+        )
 
 
 class TestSecurityHeadersOnErrors:
@@ -77,6 +98,25 @@ class TestCspContents:
         response = client.get("/")
         csp = response.headers["content-security-policy"]
         assert "style-src 'self' 'unsafe-inline'" in csp
+
+
+class TestHstsByInternalMode:
+    """`_should_emit_hsts` follows `Settings.is_internal` directly."""
+
+    def _should_emit(self, *, is_internal: bool) -> bool:
+        from outo_models.server.middleware import SecurityHeadersMiddleware
+
+        async def _noop_app(scope, receive, send):
+            return None
+
+        mw = SecurityHeadersMiddleware(_noop_app, settings=_StubSettings(is_internal=is_internal))  # type: ignore[arg-type]
+        return mw._should_emit_hsts()
+
+    def test_emitted_when_external(self) -> None:
+        assert self._should_emit(is_internal=False) is True
+
+    def test_suppressed_when_internal(self) -> None:
+        assert self._should_emit(is_internal=True) is False
 
 
 def _assert_common_headers(headers) -> None:

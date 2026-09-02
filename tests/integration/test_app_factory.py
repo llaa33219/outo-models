@@ -68,8 +68,11 @@ class TestCreateApp:
         assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert response.headers["permissions-policy"].startswith("camera=()")
         assert response.headers["content-security-policy"].startswith("default-src")
-        # No HSTS on localhost (development default).
-        assert "strict-transport-security" not in response.headers
+        # `localhost` is a hostname → internal-mode flag is False → HSTS
+        # is emitted. The old "loopback allow-list" special-case is gone.
+        assert response.headers.get("strict-transport-security") == (
+            "max-age=31536000; includeSubDomains"
+        )
 
 
 class TestErrorEnvelope:

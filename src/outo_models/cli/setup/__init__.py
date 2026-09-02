@@ -199,8 +199,9 @@ def _run_setup(
     config_path = _effect.resolve_config_path()
     _effect.write_config(config_path, answers)
 
-    # (2) DNS A record (unless skipped).
-    if not skip_dns:
+    # (2) DNS A record (unless skipped — automatically in internal mode).
+    dns_step_skipped = skip_dns or answers.is_internal
+    if not dns_step_skipped:
         asyncio.run(_effect.ensure_dns_record(answers))
 
     # (3) Firewall ports (unless skipped).

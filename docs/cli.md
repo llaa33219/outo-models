@@ -70,20 +70,28 @@ sudo outo-models setup run --non-interactive --yes ...     # non-interactive
 | Flag | Meaning |
 | --- | --- |
 | `--non-interactive` | Disable prompts (required flag / env-based) |
-| `--domain <domain>` | Server domain |
-| `--acme-email <email>` | ACME account email |
-| `--dns-provider <cloudflare\|manual>` | DNS provider |
-| `--public-ipv4 <IPv4>` | IPv4 for the DNS A record |
+| `--domain <domain-or-ip>` | Server hostname (hostname mode) **or** omit / pass an IP literal (internal mode) |
+| `--acme-email <email>` | ACME account email — hostname mode only |
+| `--dns-provider <cloudflare\|manual>` | DNS provider — hostname mode only |
+| `--public-ipv4 <IPv4>` | IPv4 for the DNS A record (hostname mode) **or** LAN IPv4 (internal mode, required in non-interactive) |
 | `--admin-username <slug>` | Admin account name |
 | `--admin-email <email>` | Admin account email |
 | `--admin-password <password>` | Admin password (8+ chars) |
-| `--skip-dns` | Skip the DNS step |
+| `--skip-dns` | Skip the DNS step (auto-skipped in internal mode) |
 | `--skip-firewall` | Skip the firewall step |
-| `--skip-ip-detect` | Skip automatic IPv4 detection |
+| `--skip-ip-detect` | Skip automatic IPv4 detection (and LAN detection in internal mode) |
 | `--yes` | Auto-accept defaults for safe steps |
 | `--ports <CSV>` | Comma-separated ports (default `80,443`) |
 | `--require-approval` / `--no-require-approval` | Signup approval policy |
 | `--image <ref>` | Image track / reference (default: `stable` track → `ghcr.io/llaa33219/outo-models:stable`) |
+
+In **hostname mode** `--domain` must be a real DNS name; `--acme-email`
+and `--dns-provider` are required in non-interactive mode.
+
+In **internal / IP mode** omit `--domain` entirely (or pass an IP
+literal); the wizard skips the ACME / DNS provider prompts and renders
+the Caddyfile in plain HTTP. `--public-ipv4` is required in non-interactive
+mode so the wizard knows which address to write into `config.yaml`.
 
 ## server
 
@@ -421,7 +429,7 @@ Pydantic Settings maps every `OUTO_*` environment variable by stripping the
 | Variable | Settings field | Default | Meaning |
 | --- | --- | --- | --- |
 | `OUTO_DATA_DIR` | `data_dir` | `/var/lib/outo-models` | Root for the DB, git repos, LFS, and cert cache |
-| `OUTO_DOMAIN` | `domain` | `localhost` | Public domain (loopback → http, otherwise https) |
+| `OUTO_DOMAIN` | `domain` | `localhost` | Server address: a hostname (https) or an IP literal / empty (internal mode, plain http) |
 | `OUTO_DB_URL` | `db_url` | `null` (→ `sqlite+aiosqlite:///${OUTO_DATA_DIR}/db.sqlite3`) | SQLAlchemy URL |
 | `OUTO_SECRET_KEY` | `secret_key` | `""` | Session / token signing key (32+ chars in production) |
 | `OUTO_ENV` | `env` | `development` | `development` or `production` |

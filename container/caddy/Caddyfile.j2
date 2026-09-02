@@ -7,7 +7,13 @@
    Environment so conditional directives collapse cleanly without blank lines.
    The right-trim `-%}` on every block tag strips the blank line that the
    source uses to visually separate `{% if %}` from its content.
-#}
+
+   Internal / IP mode (`tls_enabled=False`) drops:
+     * the global `email` / `acme_ca` block
+     * any per-site `tls { ... }` block
+   The site block binds on plain `:80` so the operator can reach the app
+   over plain HTTP from a trusted private network. #}
+{% if tls_enabled -%}
 {
 	email {{ email }}
 	{% if staging -%}
@@ -25,6 +31,11 @@
 	}
 	{% endif -%}
 }
+{% else -%}
+:80 {
+	reverse_proxy 127.0.0.1:8000
+}
+{% endif -%}
 
 # Caddy-level health probe — short-circuits before reverse-proxying to the app.
 # Bound to a dedicated listener so it does not collide with the Caddy admin

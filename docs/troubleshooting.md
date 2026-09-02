@@ -51,6 +51,34 @@ conflicts. Clean it up with:
 sudo nft delete table inet outo_models
 ```
 
+### "firewall_container_host_required" — running via the host shim
+
+When the wizard runs **inside a container** (the normal case for the
+host-shim install — see [install.md](install.md)), it cannot reach the
+host's firewall tools. The shim detects this and raises
+`OutoError(code="firewall_container_host_required")` whose message
+includes the host command the operator must run:
+
+```bash
+# The message looks like:
+# "firewall tool not available in container; run
+#  /usr/local/share/outo-models/firewall-open.sh firewalld 80 443 on the host"
+sudo /usr/local/share/outo-models/firewall-open.sh firewalld 80 443
+# or for ufw:
+sudo /usr/local/share/outo-models/firewall-open.sh ufw 80 443
+# or for nftables:
+sudo /usr/local/share/outo-models/firewall-open.sh nftables 80 443
+```
+
+The script self-elevates with `sudo -n` so the operator does not need to
+re-run it as root. The wizard prints a yellow warning with the host
+command and **continues** — the install still completes; the firewall
+rule is the operator's responsibility.
+
+In **internal mode** (no ACME / no public hostname), the firewall step
+is intentionally tolerant for exactly this reason: the install can
+finish without firewall ports being touched from inside the container.
+
 ## 2. Port 80 / 443 binding failures
 
 Binding 80 / 443 from a non-root process requires the `NET_BIND_SERVICE`
@@ -134,6 +162,16 @@ is unhealthy it nudges Caddy with a reload. If renewal still fails:
 1. Inspect `journalctl -u outo-models` for the Caddy log
 2. Run `curl -v https://<domain>/` to confirm external reachability
 3. Check the Caddy version with `podman exec outo-models caddy version`
+
+### Internal-mode installs skip renewal entirely
+
+`cert_renewal_job` short-circuits when `Settings.is_internal` is True
+(the domain is an IP literal / empty) — there is no cert to renew in
+plain-HTTP mode. The scheduler still ticks, but no `:443` handshake is
+attempted; the IP may not even have a `:443` listener. If you see
+"certificate unhealthy" log lines on an internal-mode install, the
+wizard was misconfigured — re-run it with `--skip-dns` cleared and a
+proper `--domain` (hostname) so ACME issuance can take over.
 
 ## 5. "unable to open database file"
 
@@ -514,6 +552,50 @@ sudo mkdir -p /etc/outo-models && sudo chown 1000:1000 /etc/outo-models
 Run every `outo-models` command as the SAME user (all rootless as yourself,
 or all via sudo) — rootless and rootful podman have separate image stores
 and containers, so mixing them makes images/containers seem to "vanish".
+
+## 14. Internal / IP-only mode
+
+The wizard supports an install path where the server is reachable only
+from a trusted private network on plain HTTP — no DNS name, no ACME, no
+TLS termination. See [install.md](install.md) for the full flow; this
+section only covers the operational gotchas.
+
+### HTTP only — no TLS
+
+Caddy binds plain `:80` in internal mode. The Caddyfile has no global
+`email` / `acme_ca` / per-site `tls { ... }` blocks. HSTS is suppressed
+in the security-headers middleware for the same reason. **Do not expose
+port 80 to the public internet in this mode** — transport-layer
+encryption is the operator's responsibility at the network edge.
+
+### Cert renewal is skipped
+
+`tls.renewal.renewal_job` short-circuits with `CertHealth(ok=True,
+not_after=None, days_remaining=None, error=None)` when `Settings.is_internal`
+is True. The scheduler still ticks daily; no network call is made.
+
+### Firewall step is tolerant
+
+When the wizard runs inside a container via the host shim,
+`open_ports` raises `firewall_container_host_required`. The wizard
+prints the host command (e.g.
+`/usr/local/share/outo-models/firewall-open.sh firewalld 80 443`) and
+**continues** with the install. The operator must open the ports on the
+host by hand before clients can reach the server.
+
+In non-interactive mode the host command is part of the wizard's stdout
+output. Run it once with `sudo` (the script self-elevates with `sudo -n`).
+
+### Switching from internal to hostname mode (and back)
+
+The wizard is idempotent. To switch an internal install to hostname
+mode, re-run `setup` with a real `--domain` and the rest of the
+hostname-mode flags. The Caddyfile is regenerated with TLS enabled and
+the wizard runs the DNS step.
+
+To switch back to internal mode, re-run `setup` with `--domain` set to
+an IP literal (or omitted). The Caddyfile drops the TLS blocks and the
+DNS step is skipped.
 
 ## Next steps
 

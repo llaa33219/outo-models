@@ -69,19 +69,67 @@ class TestResolvedDbUrl:
 
 
 class TestBaseUrl:
-    """`base_url` chooses http for localhost, https otherwise."""
+    """`base_url` chooses http for internal mode (IP / empty), https otherwise."""
 
     def test_https_for_real_domain(self) -> None:
         s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
         assert s.base_url == "https://models.example.com"
 
-    def test_http_for_localhost(self) -> None:
+    def test_https_for_localhost_hostname(self) -> None:
         s = Settings(domain="localhost", _env_file=None)  # type: ignore[call-arg]
-        assert s.base_url == "http://localhost"
+        assert s.base_url == "https://localhost"
 
-    def test_http_for_loopback_ip(self) -> None:
+    def test_http_for_loopback_ipv4(self) -> None:
         s = Settings(domain="127.0.0.1", _env_file=None)  # type: ignore[call-arg]
         assert s.base_url == "http://127.0.0.1"
+
+    def test_http_for_loopback_ipv6(self) -> None:
+        s = Settings(domain="::1", _env_file=None)  # type: ignore[call-arg]
+        assert s.base_url == "http://::1"
+
+    def test_http_for_lan_ipv4(self) -> None:
+        s = Settings(domain="192.168.1.10", _env_file=None)  # type: ignore[call-arg]
+        assert s.base_url == "http://192.168.1.10"
+
+    def test_http_for_empty_domain(self) -> None:
+        s = Settings(domain="", _env_file=None)  # type: ignore[call-arg]
+        assert s.base_url == "http://"
+
+
+class TestIsInternal:
+    """`is_internal` flags IP / empty values as the no-TLS branch."""
+
+    def test_true_for_loopback_ipv4(self) -> None:
+        s = Settings(domain="127.0.0.1", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_true_for_loopback_ipv6(self) -> None:
+        s = Settings(domain="::1", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_true_for_lan_ipv4(self) -> None:
+        s = Settings(domain="192.168.0.5", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_true_for_public_ipv4(self) -> None:
+        s = Settings(domain="203.0.113.10", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_true_for_empty(self) -> None:
+        s = Settings(domain="", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_false_for_hostname(self) -> None:
+        s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is False
+
+    def test_false_for_localhost_hostname(self) -> None:
+        s = Settings(domain="localhost", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is False
+
+    def test_true_for_ipv6_address(self) -> None:
+        s = Settings(domain="2001:db8::1", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
 
 
 class TestEnvLoading:

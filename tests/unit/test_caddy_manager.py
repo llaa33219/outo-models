@@ -1,7 +1,7 @@
 """Tests for `outo_models.tls.caddy_manager`.
 
 Covers the Jinja template (every variant of `staging x dns_provider`),
-the structural sanity of the rendered Caddyfile, and the `CaddyManager`
+the structural sanity of the rendered Caddyfile, the `CaddyManager`
 HTTP client — `reload()` success/4xx/network mapping, `healthy()`, and
 `current_config_hash()`. All HTTP interactions are mocked with `respx`
 so the unit test does not need a live Caddy.
@@ -15,6 +15,7 @@ import httpx
 import pytest
 import respx
 
+from outo_models.config import Settings
 from outo_models.exceptions import ConfigError, OutoError
 from outo_models.tls.caddy_manager import CaddyManager, TlsConfig, render_caddyfile
 
@@ -201,6 +202,104 @@ class TestTlsConfigReplace:
         assert original.staging is False
         assert mutated.staging is True
         assert mutated.domain == original.domain
+
+
+class TestTlsConfigFromSettings:
+    """`TlsConfig.from_settings` derives `tls_enabled` from `Settings.is_internal`."""
+
+    def test_tls_enabled_for_hostname_settings(self) -> None:
+        s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
+        config = TlsConfig.from_settings(s, email="ops@example.com")
+        assert config.tls_enabled is True
+        assert config.domain == "models.example.com"
+
+    def test_tls_disabled_for_ip_settings(self) -> None:
+        s = Settings(domain="192.168.1.10", _env_file=None)  # type: ignore[call-arg]
+        config = TlsConfig.from_settings(s, email="ops@example.com")
+        assert config.tls_enabled is False
+
+    def test_tls_disabled_for_empty_settings(self) -> None:
+        s = Settings(domain="", _env_file=None)  # type: ignore[call-arg]
+        config = TlsConfig.from_settings(s, email="ops@example.com")
+        assert config.tls_enabled is False
+
+    def test_overrides_are_honored(self) -> None:
+        s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
+        config = TlsConfig.from_settings(
+            s,
+            email="custom@example.com",
+            dns_provider="cloudflare",
+            staging=True,
+            admin_url="http://example:9999",
+        )
+        assert config.email == "custom@example.com"
+        assert config.dns_provider == "cloudflare"
+        assert config.staging is True
+        assert config.admin_url == "http://example:9999"
+
+
+class TestRenderCaddyfileInternal:
+    """`tls_enabled=False` produces the plain-HTTP site block."""
+
+    def test_internal_renders_port_80_block(self) -> None:
+        rendered = render_caddyfile(
+            TlsConfig(
+                domain="192.168.1.10",
+                email="admin@example.com",
+                tls_enabled=False,
+            )
+        )
+        assert ":80 {" in rendered
+        assert "reverse_proxy 127.0.0.1:8000" in rendered
+        assert "acme-staging" not in rendered
+        assert "email admin@example.com" not in rendered
+        assert "tls {" not in rendered
+        assert "/healthz" in rendered
+        assert _JINJA_LEFTOVER not in rendered
+        _assert_braces_balanced(rendered)
+
+    def test_internal_ignores_dns_provider_and_staging(self) -> None:
+        rendered = render_caddyfile(
+            TlsConfig(
+                domain="192.168.1.10",
+                email="admin@example.com",
+                dns_provider="cloudflare",
+                staging=True,
+                tls_enabled=False,
+            )
+        )
+        assert ":80 {" in rendered
+        assert "acme-staging" not in rendered
+        assert "tls {" not in rendered
+        assert "dns cloudflare" not in rendered
+        assert _JINJA_LEFTOVER not in rendered
+        _assert_braces_balanced(rendered)
+
+    def test_internal_does_not_leak_token(self) -> None:
+        rendered = render_caddyfile(
+            TlsConfig(
+                domain="192.168.1.10",
+                email="admin@example.com",
+                tls_enabled=False,
+            )
+        )
+        assert _FAKE_CF_TOKEN not in rendered
+
+    def test_hostname_flow_still_renders_acme_blocks(self) -> None:
+        # The hostname branch must keep emitting the email / per-site
+        # block — the internal-mode refactor must not break it.
+        rendered = render_caddyfile(
+            TlsConfig(
+                domain="models.example.com",
+                email="admin@example.com",
+                tls_enabled=True,
+            )
+        )
+        assert "email admin@example.com" in rendered
+        assert "acme-staging" not in rendered
+        assert "models.example.com {" in rendered
+        assert "tls {" not in rendered
+        _assert_braces_balanced(rendered)
 
 
 class TestCaddyManagerReload:

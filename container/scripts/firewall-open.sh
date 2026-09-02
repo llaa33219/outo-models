@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # outo-models firewall port-opening script
 #
-# The CLI invokes this on the host side via sudo + this script path. Missing
-# privileges / missing tools are validated beforehand by the caller (the setup
-# wizard), but this script is as idempotent as possible — invoking it multiple
-# times with the same arguments never errors.
+# The CLI invokes this on the host side as a non-root user. When it runs
+# unprivileged it `exec sudo bash "$0" "$@"`s itself so an interactive sudo
+# prompt can appear — `sudo -n` would deadlock the wizard. The Python
+# orchestrator never prefixes `sudo` and never inspects `geteuid`; elevation
+# lives entirely in this script. After elevation the script is as
+# idempotent as possible — invoking it multiple times with the same
+# arguments never errors.
 #
 # Usage:
 #   firewall-open.sh <kind> <port...>
@@ -17,6 +20,7 @@
 #
 # Exit codes:
 #   0  : success (or no change)
+#   1  : sudo not installed (cannot self-elevate)
 #   64 : usage error (EX_USAGE)
 #   otherwise : tool execution failure
 
@@ -42,6 +46,20 @@ for p in "$@"; do
         exit 64
     fi
 done
+
+# Self-elevation: the script is shipped as a world-readable file at
+# /usr/local/share/outo-models/firewall-open.sh. The container invokes it
+# directly (not via sudo), so on a non-root invocation we re-exec ourselves
+# under sudo. The exec replaces this process — there is no return path, so
+# the rest of the script only ever runs as root. An interactive password
+# prompt is allowed; the wizard waits for it.
+if [[ "$(id -u)" != "0" ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "[error] sudo is not installed; re-run this script as root, or install sudo." >&2
+        exit 1
+    fi
+    exec sudo bash "$0" "$@"
+fi
 
 add_firewalld() {
     local p

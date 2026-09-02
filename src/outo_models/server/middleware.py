@@ -12,6 +12,12 @@ inline styles because the bundled Jinja templates inline a single
 `<style>` block. Tightening to `'unsafe-inline'` for styles is the
 canonical workaround for the templated style block; script-src stays
 `'self'` (no inline scripts are ever shipped).
+
+HSTS is suppressed in internal / IP mode (any IP literal or empty
+domain). The decision lives in `Settings.is_internal` so the middleware
+stays aligned with the Caddyfile renderer and `base_url` — there is
+one definition of "this server speaks HTTPS" and three places that
+consult it.
 """
 
 from __future__ import annotations
@@ -39,10 +45,10 @@ class SecurityHeadersMiddleware:
 
     The middleware operates on the outgoing `http.response.start` message
     and prepends the security header pair to whatever headers the wrapped
-    application already produced. HSTS is omitted when the configured
-    `domain` is on the loopback allow-list — `localhost`/`127.0.0.1`
-    clients do not benefit from HSTS, and shipping it during development
-    would make `http://localhost:…` un-debuggable from the same browser.
+    application already produced. HSTS is omitted in internal mode (any IP
+    literal or empty domain) — a plain-HTTP server must never advertise
+    HSTS, otherwise the browser refuses the plain-HTTP request that the
+    internal-mode workflow depends on.
     """
 
     def __init__(self, app: ASGIApp, *, settings: Settings) -> None:
@@ -52,12 +58,12 @@ class SecurityHeadersMiddleware:
     def _should_emit_hsts(self) -> bool:
         """`True` when HSTS makes sense for the configured `domain`.
 
-        Loopback / `localhost` deployments must NOT advertise HSTS — the
-        browser would refuse the plain-HTTP request that the development
-        workflow depends on.
+        Internal mode (IP literal / empty domain) is plain HTTP — HSTS
+        would make the same browser refuse the very requests the operator
+        needs. Real hostnames (DNS-resolvable names that are not IPs) get
+        HSTS so the public-facing flow stays locked to HTTPS.
         """
-        domain = (self._settings.domain or "").lower()
-        return domain not in {"", "localhost", "127.0.0.1", "::1"}
+        return not self._settings.is_internal
 
     def _build_headers(self) -> list[tuple[bytes, bytes]]:
         """Return the security-header list to prepend to every response."""

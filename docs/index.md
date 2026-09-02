@@ -74,7 +74,7 @@ definition of every `OUTO_*` variable, see the [CLI reference](cli.md#environmen
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `OUTO_DATA_DIR` | Data directory (DB, git repos, LFS, cert cache) | `/var/lib/outo-models` |
-| `OUTO_DOMAIN` | Public domain the service responds on | `localhost` |
+| `OUTO_DOMAIN` | Server address: hostname (https) or IP literal / empty (internal mode, plain http) | `localhost` |
 | `OUTO_DB_URL` | DB URL (empty → `${OUTO_DATA_DIR}/db.sqlite3`) | (derived) |
 | `OUTO_SECRET_KEY` | Session / token signing key (32+ chars in production) | (none) |
 | `OUTO_ENV` | Runtime environment (`development` / `production`) | `development` |

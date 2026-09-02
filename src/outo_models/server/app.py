@@ -59,12 +59,16 @@ def _caddy_manager_factory(settings: Settings) -> Callable[[], CaddyManager]:
     The admin URL defaults to `http://localhost:2019` (matches the
     bundled Caddy container); operators override via `OUTO_CADDY_ADMIN_URL`
     in production setups.
+
+    `TlsConfig.from_settings` flips `tls_enabled` based on
+    `settings.is_internal` so a hostname install gets the full ACME
+    pipeline and an internal / IP install skips it.
     """
 
     def _factory() -> CaddyManager:
         return CaddyManager(
-            TlsConfig(
-                domain=settings.domain,
+            TlsConfig.from_settings(
+                settings,
                 email=f"admin@{settings.domain}",
                 admin_url="http://localhost:2019",
             )

@@ -10,6 +10,19 @@ The interactive path goes through `cli.prompts` (rich-backed, swappable
 in tests). The non-interactive path raises a `ConfigError` when a
 required flag is missing, so the operator gets a clean error rather
 than a hung prompt.
+
+Two install modes are supported:
+
+* **Hostname mode** — the operator supplies a real DNS name (e.g.
+  `models.example.com`). The wizard asks for ACME email, DNS provider,
+  and (when relevant) a Cloudflare token; the Caddyfile renders with
+  full TLS + ACME.
+* **Internal / IP mode** — the operator either leaves the domain prompt
+  empty or types an IP literal. The wizard skips the ACME / DNS /
+  Cloudflare prompts entirely; `dns_provider` is forced to the sentinel
+  `"none"`; the rendered Caddyfile is plain HTTP. The server is expected
+  to live behind a trusted private network (LAN / VPN / loopback), so
+  ACME issuance is neither possible nor desired.
 """
 
 from __future__ import annotations
@@ -23,12 +36,19 @@ from outo_models.cli import prompts
 from outo_models.config import get_settings
 from outo_models.exceptions import ConfigError, ValidationFailedError
 from outo_models.firewall.open_ports import REQUIRED_PORTS as _FIREWALL_REQUIRED_PORTS
+from outo_models.utils.net import detect_lan_ipv4, is_ip_address
 from outo_models.utils.slug import validate_slug
 
 _MIN_PASSWORD_LENGTH = 8
 
 _DEFAULT_IMAGE_REGISTRY = "ghcr.io/llaa33219/outo-models"
 _IMAGE_TRACK_CHOICES: tuple[str, ...] = ("stable", "dev", "custom")
+
+# Sentinel pushed into `SetupAnswers.dns_provider` when the operator picked
+# internal mode. The DNS factory never sees this — internal mode skips the
+# DNS step in `_effect.py` — but downstream readers (tests, docs) can rely
+# on the value to distinguish "no DNS configured" from a real provider.
+_INTERNAL_DNS_PROVIDER = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,19 +58,36 @@ class SetupAnswers:
     The dataclass is `frozen=True, slots=True` so an accidental mutation
     in a downstream step (e.g. an async race) cannot silently corrupt
     the value the DB write used.
+
+    `is_internal` mirrors `Settings.is_internal` — it is the single
+    predicate every downstream step uses to decide whether to render
+    the hostname / DNS / ACME flow or the plain-HTTP internal one.
     """
 
     image: str
     domain: str
     acme_email: str
     public_ipv4: str
-    dns_provider: str  # "cloudflare" | "manual"
+    dns_provider: str  # "cloudflare" | "manual" | "none"
     cloudflare_api_token: str | None  # only when dns_provider == "cloudflare"
     admin_username: str
     admin_email: str
     admin_password: str
     ports: list[int]
     require_approval: bool
+
+    @property
+    def is_internal(self) -> bool:
+        """True when `domain` is empty or parses as an IP literal.
+
+        Mirrors `Settings.is_internal`. Empty + IP both map to the
+        no-TLS branch (the wizard writes the address into the YAML
+        before this value is ever inspected).
+        """
+        value = (self.domain or "").strip()
+        if not value:
+            return True
+        return is_ip_address(value)
 
 
 def normalize_image_ref(value: str) -> str:
@@ -107,14 +144,23 @@ def collect_answers(
     `config.yaml`'s `image` key to know which tag to pull.
     """
     if non_interactive:
-        required = {
-            "domain": domain,
-            "acme_email": acme_email,
-            "dns_provider": dns_provider,
+        # Hostname mode is the legacy flow: the operator supplies a real
+        # DNS name, so ACME / DNS provider / public IPv4 stay required.
+        # Internal mode (--domain omitted / empty / an IP literal) drops
+        # the ACME and DNS provider requirement; the operator supplies
+        # --public-ipv4 to fill the address field, or omits both and
+        # expects the wizard to derive the address from LAN detection
+        # (interactive only — non-interactive mode requires --public-ipv4).
+        domain_supplied = (domain or "").strip() != ""
+        domain_is_hostname = domain_supplied and not is_ip_address((domain or "").strip())
+        required: dict[str, str | None] = {
             "admin_username": admin_username,
             "admin_email": admin_email,
             "admin_password": admin_password,
         }
+        if domain_is_hostname:
+            required["acme_email"] = acme_email
+            required["dns_provider"] = dns_provider
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise ConfigError(
@@ -122,14 +168,41 @@ def collect_answers(
             )
 
     image_value = _collect_image(image, non_interactive, yes)
+    # `domain` always holds the final server address (hostname or IP).
+    # The spec is explicit: "domain holds the final address (hostname
+    # or IP)". The order below — domain prompt first, public_ipv4
+    # prompt second, fallback at the end — keeps that contract.
     domain_value = _collect_domain(domain, non_interactive, yes)
-    acme_email_value = _collect_acme_email(acme_email, non_interactive, yes)
-    dns_provider_value = _collect_dns_provider(dns_provider, non_interactive, yes)
-    cloudflare_token: str | None = None
-    if dns_provider_value == "cloudflare":
-        cloudflare_token = _collect_cloudflare_token(non_interactive, yes)
+    domain_is_internal = (domain_value or "").strip() == "" or is_ip_address(
+        (domain_value or "").strip()
+    )
 
-    public_ipv4_value = _collect_public_ipv4(public_ipv4, non_interactive, yes, skip_ip_detect)
+    if domain_is_internal:
+        # Skip ACME / DNS provider / Cloudflare token entirely. The
+        # sentinel `_INTERNAL_DNS_PROVIDER` lets later readers distinguish
+        # "internal mode" from a real provider choice.
+        acme_email_value = ""
+        dns_provider_value = _INTERNAL_DNS_PROVIDER
+        cloudflare_token: str | None = None
+    else:
+        acme_email_value = _collect_acme_email(acme_email, non_interactive, yes)
+        dns_provider_value = _collect_dns_provider(dns_provider, non_interactive, yes)
+        cloudflare_token = None
+        if dns_provider_value == "cloudflare":
+            cloudflare_token = _collect_cloudflare_token(non_interactive, yes)
+
+    public_ipv4_value = _collect_public_ipv4(
+        public_ipv4,
+        non_interactive,
+        yes,
+        skip_ip_detect,
+        internal=domain_is_internal,
+    )
+
+    # Internal-mode address fallback: if the operator left the domain
+    # prompt blank, the public_ipv4 prompt's response is the address.
+    if not (domain_value or "").strip():
+        domain_value = public_ipv4_value
     admin_username_value = _collect_admin_username(admin_username, non_interactive, yes)
     admin_email_value = _collect_admin_email(admin_email, non_interactive, yes)
     admin_password_value = _collect_admin_password(admin_password, non_interactive, yes)
@@ -176,22 +249,37 @@ def _collect_image(flag_value: str | None, non_interactive: bool, yes: bool) -> 
 
 def _collect_domain(flag_value: str | None, non_interactive: bool, yes: bool) -> str:
     if flag_value:
-        return _validate_domain(flag_value)
+        return _validate_domain_or_ip(flag_value)
     if non_interactive:
-        raise ConfigError("--domain is required (--non-interactive mode).")
+        # In non-interactive mode the wizard falls back to `--public-ipv4`
+        # or LAN detection; an explicit empty string is the operator's way
+        # to opt into internal mode without an IP.
+        return ""
     default = "models.example.com" if yes else ""
     while True:
-        value = prompts.text("Enter the server domain (e.g. models.example.com):", default=default)
+        value = prompts.text(
+            "Enter the server domain (e.g. models.example.com) "
+            "or leave blank for internal / IP mode:",
+            default=default,
+        )
         try:
-            return _validate_domain(value)
+            return _validate_domain_or_ip(value)
         except ValidationFailedError as exc:
             Console(stderr=True).print(f"[red]{exc}[/red]")
 
 
-def _validate_domain(value: str) -> str:
+def _validate_domain_or_ip(value: str) -> str:
+    """Validate a domain-or-IP value, returning it lowercased / stripped.
+
+    Empty input is accepted (internal mode). IP literals are accepted
+    verbatim. Hostnames are lowercased and must not contain spaces or
+    slashes.
+    """
     stripped = value.strip().lower()
     if not stripped:
-        raise ValidationFailedError("A domain is required.")
+        return ""
+    if is_ip_address(stripped):
+        return stripped
     if " " in stripped or "/" in stripped:
         raise ValidationFailedError("The domain must not contain spaces or slashes.")
     return stripped
@@ -236,15 +324,29 @@ def _collect_cloudflare_token(non_interactive: bool, yes: bool) -> str:
 
 
 def _collect_public_ipv4(
-    flag_value: str | None, non_interactive: bool, yes: bool, skip_detect: bool
+    flag_value: str | None,
+    non_interactive: bool,
+    yes: bool,
+    skip_detect: bool,
+    *,
+    internal: bool,
 ) -> str:
     if flag_value:
         return flag_value.strip()
     if non_interactive:
+        # Internal mode: the operator may have left --domain empty and
+        # expects the wizard to derive the address from --public-ipv4 or
+        # LAN detection. In non-interactive mode, --public-ipv4 is the
+        # only source of truth, so require it explicitly.
+        if internal:
+            raise ConfigError("--public-ipv4 is required (--non-interactive internal mode).")
         raise ConfigError("--public-ipv4 is required (--non-interactive mode).")
 
+    # Interactive path: only probe the public ipify endpoint when the
+    # operator is in hostname mode (DNS A record). Internal mode derives
+    # the address from LAN detection and falls back to manual entry.
     detected: str | None = None
-    if not skip_detect:
+    if not internal and not skip_detect:
         try:
             import httpx
 
@@ -254,8 +356,18 @@ def _collect_public_ipv4(
         except Exception:
             detected = None
 
+    if internal and not skip_detect:
+        lan = detect_lan_ipv4()
+        if lan:
+            detected = lan
+
     default = detected or ""
-    value = prompts.text("Server public IPv4 address (DNS A record):", default=default)
+    message = (
+        "Server address (LAN IPv4 or hostname):"
+        if internal
+        else "Server public IPv4 address (DNS A record):"
+    )
+    value = prompts.text(message, default=default)
     return value.strip()
 
 

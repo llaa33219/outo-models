@@ -9,6 +9,11 @@ of that contract:
 * `CaddyManager`        — thin async client over Caddy's admin API (POST
                           `/load`, GET `/config/`).
 
+Internal / IP mode: `TlsConfig.tls_enabled=False` drops every ACME-related
+block from the rendered Caddyfile (no global `email`, no `acme_ca`, no
+per-site `tls { ... }`). The site block binds on plain `:80` — see
+`container/caddy/Caddyfile.j2` for the exact conditional layout.
+
 Secrets hygiene: the Cloudflare API token is read by Caddy from its
 environment at runtime (`{env.CLOUDFLARE_API_TOKEN}`) and is never embedded
 in the rendered Caddyfile. The `CaddyManager` never touches the token —
@@ -26,6 +31,7 @@ from typing import Any
 import httpx
 import jinja2
 
+from outo_models.config import Settings
 from outo_models.exceptions import ConfigError, OutoError
 
 # Env var that overrides the package-relative template lookup. Used by tests
@@ -47,6 +53,7 @@ class TlsConfig:
 
     Attributes:
         domain: The public hostname Caddy will serve (e.g. `models.example.com`).
+            An IP literal / empty value implies internal mode (no TLS).
         email: ACME account contact — Let's Encrypt sends expiry warnings here.
         dns_provider: `None` → Caddy uses HTTP-01. `"cloudflare"` → Caddy uses
             the caddy-dns/cloudflare plugin against the `CLOUDFLARE_API_TOKEN`
@@ -56,6 +63,9 @@ class TlsConfig:
             first installs so a typo in the domain does not burn rate limits.
         admin_url: Caddy admin API base. Default `http://localhost:2019`
             matches the bundled container's bind address.
+        tls_enabled: When False, the rendered Caddyfile omits every ACME /
+            TLS block and binds on plain `:80`. Default True preserves the
+            hostname / ACME flow; `from_settings()` flips it for internal mode.
     """
 
     domain: str
@@ -63,6 +73,36 @@ class TlsConfig:
     dns_provider: str | None = None
     staging: bool = False
     admin_url: str = "http://localhost:2019"
+    tls_enabled: bool = True
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Settings,
+        *,
+        email: str,
+        dns_provider: str | None = None,
+        staging: bool = False,
+        admin_url: str = "http://localhost:2019",
+    ) -> TlsConfig:
+        """Build a `TlsConfig` from runtime `Settings` + wizard-supplied knobs.
+
+        The single decision this helper owns is `tls_enabled`: it is the
+        negation of `settings.is_internal`, so a hostname-mode install
+        keeps the full TLS pipeline and an internal / IP install drops it
+        in lockstep with `Settings.base_url` and the middleware's HSTS
+        decision. Callers override `email` / `dns_provider` when they have
+        a fresher value than what's in `Settings` (the wizard collects the
+        ACME email up front; `Settings.email` is only the bootstrap default).
+        """
+        return cls(
+            domain=settings.domain,
+            email=email,
+            dns_provider=dns_provider,
+            staging=staging,
+            admin_url=admin_url,
+            tls_enabled=not settings.is_internal,
+        )
 
 
 def _resolve_template_path() -> Path:
@@ -107,6 +147,7 @@ def render_caddyfile(config: TlsConfig) -> str:
         email=config.email,
         dns_provider=config.dns_provider,
         staging=config.staging,
+        tls_enabled=config.tls_enabled,
     )
 
 

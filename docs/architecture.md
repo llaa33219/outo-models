@@ -164,6 +164,21 @@ uvicorn (127.0.0.1:8000) ← outo-models serve
                 └── on PUSH success: per-repo lock + record Revision + AuditLog
 ```
 
+Internal / IP mode (`Settings.is_internal=True`) drops the TLS layer:
+
+- Caddy binds plain `:80` only — no `email` / `acme_ca` / per-site
+  `tls { ... }` blocks in the rendered Caddyfile.
+- The security-headers middleware suppresses `Strict-Transport-Security`
+  so the browser doesn't refuse plain-HTTP requests.
+- `tls.renewal.renewal_job` short-circuits with
+  `CertHealth(ok=True, …)` — no `:443` handshake is attempted.
+
+The Caddyfile switch is owned by `TlsConfig.tls_enabled` (default
+`True`), which `TlsConfig.from_settings(settings, …)` derives from
+`Settings.is_internal`. The middleware reads `settings.is_internal`
+directly. `Settings.base_url` uses the same flag to pick `http://` vs
+`https://`.
+
 ### LFS request flow
 
 The path `/{owner}/{name}.git/info/lfs/*` is dispatched to
@@ -378,6 +393,12 @@ Typer app (cli/main.py) — OutoError → English one-liner + exit 1
         ├── setup / update / start / stop / restart / status
         │       │
         │       └── setup → _collect (prompts) → _effect (config.yaml, DNS, firewall, DB, admin)
+        │       │     ├── internal mode (--domain empty / IP): skip ACME/DNS prompts,
+        │       │     │   skip the DNS step, render Caddyfile with tls_enabled=False
+        │       │     ├── firewall step tolerates `firewall_container_host_required`
+        │       │     │   (prints the host command, continues) so the install completes
+        │       │     │   even when the wizard runs via the host shim
+        │       │     └── all other steps are unchanged
         │       └── update → container/scripts/update.sh
         │       └── start  → podman run (config.yaml driven)
         │       └── stop/restart/status → podman calls

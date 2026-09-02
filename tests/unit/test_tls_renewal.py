@@ -359,9 +359,64 @@ class TestRenewalJobAcceptsCaddyManager:
                 raise ConnectionRefusedError("refused")
 
             monkeypatch.setattr(asyncio, "open_connection", _refuse)
-            # The job returns a CertHealth; never raises.
-            result = await renewal_job("127.0.0.1", manager)
+            # A real hostname goes through the handshake path; the refused
+            # connection becomes `ok=False` + an error string.
+            result = await renewal_job("models.example.com", manager)
             assert result.ok is False
             assert result.error is not None
         finally:
             await manager.close()
+
+
+class TestRenewalJobInternalMode:
+    """`renewal_job` short-circuits when the domain is an IP / empty.
+
+    The scheduler ticks on, but no network call is made — there is no
+    cert to renew in plain-HTTP mode and the IP may not have a `:443`
+    listener at all.
+    """
+
+    async def test_short_circuits_for_ipv4(self) -> None:
+        manager = CaddyManager(TlsConfig(domain="127.0.0.1", email="admin@example.com"))
+        try:
+            health = await renewal_job("192.168.1.10", manager)
+            assert health.ok is True
+            assert health.not_after is None
+            assert health.days_remaining is None
+            assert health.error is None
+        finally:
+            await manager.close()
+
+    async def test_short_circuits_for_ipv6(self) -> None:
+        manager = CaddyManager(TlsConfig(domain="::1", email="admin@example.com"))
+        try:
+            health = await renewal_job("2001:db8::1", manager)
+            assert health.ok is True
+            assert health.error is None
+        finally:
+            await manager.close()
+
+    async def test_short_circuits_for_empty(self) -> None:
+        manager = CaddyManager(TlsConfig(domain="127.0.0.1", email="admin@example.com"))
+        try:
+            health = await renewal_job("", manager)
+            assert health.ok is True
+            assert health.error is None
+        finally:
+            await manager.close()
+
+    async def test_short_circuit_does_not_call_caddy(self) -> None:
+        # Caddy admin API is never consulted in internal mode — verify
+        # by passing a manager whose `healthy()` would explode if called.
+        class _ExplodingCaddy:
+            async def healthy(self) -> bool:
+                raise AssertionError("internal mode must not call caddy.healthy()")
+
+            async def reload(self) -> None:
+                raise AssertionError("internal mode must not call caddy.reload()")
+
+            async def close(self) -> None:
+                pass
+
+        health = await renewal_job("192.168.1.10", _ExplodingCaddy())  # type: ignore[arg-type]
+        assert health.ok is True

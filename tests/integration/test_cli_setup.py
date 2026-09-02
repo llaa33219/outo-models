@@ -723,3 +723,294 @@ class TestBareSetupRunsWizard:
             "require_approval": None,
             "image": None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Internal / IP mode — domain is optional, ACME/DNS prompts are skipped
+# ---------------------------------------------------------------------------
+
+
+class TestInternalModeNonInteractive:
+    """In internal mode (--domain empty or an IP), ACME / DNS prompts are skipped."""
+
+    def test_ip_domain_skips_acme_and_dns(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "192.168.1.10",
+                "--public-ipv4",
+                "192.168.1.10",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["domain"] == "192.168.1.10"
+        assert payload["dns_provider"] == "none"
+        assert payload["acme_email"] == ""
+        assert payload["public_ipv4"] == "192.168.1.10"
+
+    def test_missing_domain_skips_acme_and_dns(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Omitting --domain entirely lands the wizard in internal mode;
+        # the operator supplies --public-ipv4 to fill the address field.
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--public-ipv4",
+                "10.0.0.5",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["domain"] == "10.0.0.5"
+        assert payload["dns_provider"] == "none"
+        assert payload["acme_email"] == ""
+
+    def test_hostname_still_requires_acme_and_dns(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Hostname mode keeps the original requirement: --acme-email and
+        # --dns-provider must be passed in non-interactive mode.
+        config_path = tmp_path / "outo.yaml"
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--public-ipv4",
+                "203.0.113.10",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "acme_email" in result.output or "required" in result.output
+
+
+class TestInternalModeSkipsDnsStep:
+    """When `SetupAnswers.is_internal`, the DNS step is skipped automatically."""
+
+    def test_internal_mode_skips_ensure_dns_record(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        dns_calls = 0
+        import outo_models.cli.setup._effect as effect_mod
+
+        original = effect_mod.ensure_dns_record
+
+        async def _spy(answers):
+            nonlocal dns_calls
+            dns_calls += 1
+            await original(answers)
+
+        monkeypatch.setattr(effect_mod, "ensure_dns_record", _spy)
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "192.168.1.10",
+                "--public-ipv4",
+                "192.168.1.10",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert dns_calls == 0
+
+
+class TestFirewallContainerHostRequired:
+    """When `open_ports` raises `firewall_container_host_required`, the wizard
+    must print a warning and CONTINUE (the install is allowed to complete
+    without firewall ports being opened from inside the container)."""
+
+    def test_container_host_required_does_not_abort(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        import outo_models.cli.setup._effect as effect_mod
+        from outo_models.exceptions import OutoError
+
+        async def _raise(*_a, **_kw):
+            raise OutoError(
+                "firewall tool not available in container; run "
+                "/usr/local/share/outo-models/firewall-open.sh firewalld 80 443 on the host",
+                code="firewall_container_host_required",
+            )
+
+        monkeypatch.setattr(effect_mod, "open_ports", _raise)
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "192.168.1.10",
+                "--public-ipv4",
+                "192.168.1.10",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert config_path.exists()
+        assert "/usr/local/share/outo-models/firewall-open.sh" in result.output
+
+    def test_firewall_permission_still_aborts(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # `firewall_permission` is a real misconfig (NOPASSWD missing);
+        # the operator can fix it by re-running as root, so the wizard
+        # surfaces a ConfigError and aborts. Only the
+        # `firewall_container_host_required` branch is tolerant.
+        config_path = tmp_path / "outo.yaml"
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        import outo_models.cli.setup._effect as effect_mod
+        from outo_models.exceptions import OutoError
+
+        async def _raise(*_a, **_kw):
+            raise OutoError(
+                "firewall commands require elevated privileges",
+                code="firewall_permission",
+            )
+
+        monkeypatch.setattr(effect_mod, "open_ports", _raise)
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--public-ipv4",
+                "203.0.113.10",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 1
+        # `write_config` runs before the firewall step, so a partially
+        # written YAML is acceptable. The contract is that the wizard
+        # surfaces the error and exits non-zero — only the
+        # `firewall_container_host_required` branch is tolerant.

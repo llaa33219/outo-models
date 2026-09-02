@@ -5,6 +5,22 @@ touch `firewall-cmd` / `ufw` / `nft` directly. Instead, the setup wizard calls
 `open_ports()` from inside the container, which builds a precise argv for the
 bundled `container/scripts/firewall-open.sh` and executes it on the host.
 
+Elevation is the host script's responsibility, not ours: when the script is
+invoked without root it `exec sudo bash "$0" "$@"`s itself so an interactive
+password prompt is allowed. The Python side therefore never spawns `sudo`,
+never inspects `geteuid`, and never refuses to run because of missing
+privileges — if the host has sudo available, the script will prompt; if not,
+the script exits with a clear English error.
+
+When invoked from inside a container, opening host firewall ports is
+physically impossible (the container shares the host network namespace only
+when run with `--network=host`, and even then it cannot talk to
+`firewall-cmd` / `ufw` / `nft`). In that case `open_ports()` raises
+`OutoError("firewall_container_host_required")` whose message contains the
+exact host command the operator must run on the host. The setup wizard
+catches that code and prints the command verbatim, so the wizard can complete
+inside the container while still telling the operator what to do.
+
 Why a bash script and not a Python wrapper?
     * the script is short, declarative, and inspectable by the operator
       during `outo-models reset` / post-mortem
@@ -36,6 +52,19 @@ _SCRIPT_ENV_VAR = "OUTO_FIREWALL_SCRIPT"
 # parents[3] lands on the directory that contains `container/`.
 _DEFAULT_SCRIPT_RELATIVE = Path("container") / "scripts" / "firewall-open.sh"
 
+# Standard container marker files. The first is created by Docker; the second
+# by Podman / generic OCI runtimes. We probe both because the orchestrator
+# must behave the same regardless of which engine launched the container.
+_MARKER_PATHS: tuple[Path, ...] = (
+    Path("/.dockerenv"),
+    Path("/run/.containerenv"),
+)
+
+# Exact host command the wizard must tell operators to run on the host.
+# Lives at the module level so (a) tests can assert on it byte-for-byte and
+# (b) the wizard (cli/setup/_effect.py) can splice it into its guidance.
+HOST_FIREWALL_COMMAND = "/usr/local/share/outo-models/firewall-open.sh <kind> <ports...>"
+
 
 @dataclass(frozen=True, slots=True)
 class OpenPortsResult:
@@ -44,16 +73,22 @@ class OpenPortsResult:
     Attributes:
         kind: The firewall backend that was actually targeted (after detection).
         opened: Ports that were opened (or attempted). Empty in dry_run.
-        commands: Exact argv for every invocation. In dry_run this is the
-            planned argv; otherwise it records what was executed (including
-            the `sudo -n` prefix when the process is not uid 0).
-        needs_sudo: True iff the argv was prefixed with `sudo -n`.
+        commands: Exact argv for every invocation. The host script self-elevates
+            via `sudo`, so the argv never contains `sudo` on the Python side.
     """
 
     kind: FirewallKind
     opened: list[int]
     commands: list[list[str]]
-    needs_sudo: bool
+
+
+def _in_container() -> bool:
+    """True iff the current process is running inside a container.
+
+    Probes the standard Docker / Podman / OCI marker files. Cheap to call:
+    two `stat`s on absolute paths the kernel resolves instantly.
+    """
+    return any(p.exists() for p in _MARKER_PATHS)
 
 
 def _resolve_script_path() -> str:
@@ -67,21 +102,37 @@ def _resolve_script_path() -> str:
     return str(repo_root / _DEFAULT_SCRIPT_RELATIVE)
 
 
-def _build_argv(script: str, kind: FirewallKind, ports: list[int]) -> tuple[list[str], bool]:
-    """Build the host-side argv and report whether `sudo -n` must prefix it.
+def _build_argv(script: str, kind: FirewallKind, ports: list[int]) -> list[str]:
+    """Build the argv the orchestrator will spawn.
 
-    The container is unprivileged; we delegate to `sudo -n` (non-interactive)
-    so a password prompt cannot hang the wizard. Operators who want
-    interactive sudo can run the wizard under sudo themselves.
+    The script self-elevates (see `firewall-open.sh`); the Python side never
+    prefixes `sudo` and never inspects `geteuid`. This keeps the orchestrator
+    honest — one code path, one argv shape — and lets interactive sudo prompt
+    the operator instead of failing on `sudo -n`.
     """
-    base = ["bash", script, kind.value, *(str(p) for p in ports)]
-    if os.geteuid() == 0:
-        return base, False
-    return ["sudo", "-n", *base], True
+    return ["bash", script, kind.value, *(str(p) for p in ports)]
+
+
+def _container_error(kind: FirewallKind, ports: list[int]) -> OutoError:
+    """Build the typed error that tells the operator exactly what to run on the host.
+
+    The message MUST contain `HOST_FIREWALL_COMMAND` verbatim — the setup
+    wizard prints that placeholder command so the operator knows where the
+    host-side script lives and that it will prompt for sudo itself.
+    """
+    return OutoError(
+        (
+            "firewall port-opening cannot run inside a container; the host "
+            "firewall must be opened on the host. Run the following command "
+            "on the host (the script will prompt for sudo itself when "
+            f"needed): {HOST_FIREWALL_COMMAND}"
+        ),
+        code="firewall_container_host_required",
+    )
 
 
 async def _run_argv(argv: list[str]) -> None:
-    """Spawn `argv`, raise `OutoError(firewall_permission)` on sudo failure."""
+    """Spawn `argv`, raise `OutoError(firewall_command_failed)` on non-zero exit."""
     proc = await asyncio.create_subprocess_exec(
         *argv,
         stdout=asyncio.subprocess.PIPE,
@@ -89,20 +140,11 @@ async def _run_argv(argv: list[str]) -> None:
     )
     _, stderr_bytes = await proc.communicate()
     if proc.returncode != 0:
-        # `sudo -n` returns 1 with "a password is required" when NOPASSWD is
-        # not configured; treat that distinctly so the wizard can tell the
-        # operator exactly what to do.
-        if argv[0] == "sudo":
-            raise OutoError(
-                "firewall commands require elevated privileges; re-run the wizard under sudo "
-                "or grant NOPASSWD to the invoking user via /etc/sudoers.d/outo-models",
-                code="firewall_permission",
-            )
+        # Include the stderr tail verbatim so the wizard can surface the
+        # exact reason to the operator (missing tool, bad config, etc.).
         stderr = stderr_bytes.decode(errors="replace").strip()
-        raise OutoError(
-            f"firewall script failed (exit={proc.returncode}): {stderr or argv}",
-            code="firewall_command_failed",
-        )
+        message = f"firewall script failed (exit={proc.returncode}): {stderr or argv}"
+        raise OutoError(message, code="firewall_command_failed")
 
 
 async def open_ports(
@@ -119,23 +161,31 @@ async def open_ports(
         dry_run: If True, plan the argv but DO NOT spawn the script.
 
     Returns:
-        OpenPortsResult with `kind`, `opened`, `commands`, and `needs_sudo`.
+        OpenPortsResult with `kind`, `opened`, `commands`.
 
     Raises:
-        OutoError(firewall_permission): `sudo -n` failed (NOPASSWD missing).
-        OutoError(firewall_command_failed): the host script returned non-zero.
+        OutoError(firewall_container_host_required): the orchestrator is
+            running inside a container; the message contains the exact host
+            command the operator must run themselves.
+        OutoError(firewall_command_failed): the host script returned non-zero;
+            the message carries the script's stderr tail.
     """
     port_list = [int(p) for p in ports]
     resolved_kind = kind if kind is not None else await detect_firewall()
     script = _resolve_script_path()
-    argv, needs_sudo = _build_argv(script, resolved_kind, port_list)
+    argv = _build_argv(script, resolved_kind, port_list)
+
+    if _in_container():
+        # Refuse to spawn: the script will never reach the host firewall from
+        # inside the container. Surface the exact command the wizard should
+        # print to the operator.
+        raise _container_error(resolved_kind, port_list)
 
     if dry_run:
         return OpenPortsResult(
             kind=resolved_kind,
             opened=[],
             commands=[list(argv)],
-            needs_sudo=needs_sudo,
         )
 
     await _run_argv(argv)
@@ -143,5 +193,4 @@ async def open_ports(
         kind=resolved_kind,
         opened=port_list,
         commands=[list(argv)],
-        needs_sudo=needs_sudo,
     )

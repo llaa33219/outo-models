@@ -14,6 +14,12 @@ Two functions:
   ACME if needed). It never raises — every error mode is logged at warning
   level and reflected in the returned `CertHealth`.
 
+Internal / IP mode: when `domain` is empty or parses as an IP literal,
+`renewal_job` short-circuits with `CertHealth(ok=True, not_after=None,
+days_remaining=None, error=None)` — there is no cert to renew in plain-HTTP
+mode, and the daily scheduler must not waste cycles trying to dial `:443`
+on an address that has no listener.
+
 Why this lives separately from `caddy_manager.py`: the scheduler wiring
 (APScheduler job registration) is WP-11's work, but the health-check / nudge
 logic is a property of the TLS layer and is what WP-11 will call.
@@ -33,6 +39,7 @@ from cryptography.hazmat.backends import default_backend
 
 from outo_models.exceptions import OutoError
 from outo_models.tls.caddy_manager import CaddyManager
+from outo_models.utils.net import is_ip_address
 
 # Bound the entire handshake so a stalled endpoint cannot hang the scheduler.
 _DEFAULT_TIMEOUT: float = 10.0
@@ -167,7 +174,19 @@ async def renewal_job(domain: str, caddy: CaddyManager) -> CertHealth:
     The scheduler invokes this daily. The function never raises — a transient
     network blip or a Caddy restart that happens to coincide with our reload
     must not bring the scheduler down.
+
+    Internal / IP mode: when `domain` is empty or parses as an IP literal
+    (no TLS, no ACME), the job short-circuits with `ok=True` and no
+    `not_after` / `days_remaining`. The scheduler ticks on, but no network
+    call is made — the IP may not even have a `:443` listener.
     """
+    if not (domain or "").strip() or is_ip_address(domain.strip()):
+        return CertHealth(
+            ok=True,
+            not_after=None,
+            days_remaining=None,
+            error=None,
+        )
     try:
         health = await check_cert_health(domain)
     except (OSError, ssl.SSLError) as exc:

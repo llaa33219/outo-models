@@ -18,6 +18,33 @@ INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install-cli.sh"
 
 INSTALL_TEXT = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
+# Marker used to delimit the firewall-script heredoc inside the installer.
+# Quoted on the bash side so no expansion happens while writing the file.
+_FIREWALL_HEREDOC_START = "cat > \"${firewall_dest}\" <<'OUTO_FIREWALL_HEREDOC_END'"
+_FIREWALL_HEREDOC_END = "OUTO_FIREWALL_HEREDOC_END"
+
+
+def extract_embedded_firewall(text: str) -> str:
+    """Pull the firewall script body out of the installer's heredoc.
+
+    Returns the bytes between `<<'OUTO_FIREWALL_HEREDOC_END'` and the closing
+    terminator, with a single trailing newline appended so it compares
+    byte-for-byte against the on-disk file (the bash heredoc preserves the
+    newline before its terminator, and the file has a trailing newline too).
+    """
+    start_idx = text.find(_FIREWALL_HEREDOC_START)
+    assert start_idx != -1, "firewall heredoc marker not found in installer"
+    body_start = start_idx + len(_FIREWALL_HEREDOC_START) + 1  # skip the trailing newline
+    end_idx = text.find(_FIREWALL_HEREDOC_END, body_start)
+    assert end_idx != -1, "firewall heredoc terminator not found in installer"
+    body = text[body_start:end_idx]
+    # Real bash heredocs leave the line BEFORE the terminator intact and the
+    # terminator itself flushes the buffer without a trailing newline. We
+    # append one to match the on-disk file (which ends with a newline).
+    if not body.endswith("\n"):
+        body += "\n"
+    return body
+
 
 class TestInstallCliScript:
     def test_bash_syntax_ok(self) -> None:
@@ -77,6 +104,49 @@ class TestInstallCliScript:
         # Pull failure must print actionable guidance (not podman's raw error).
         assert "install-cli.sh" in INSTALL_TEXT
         assert "failed to pull" in INSTALL_TEXT
+
+    def test_installs_firewall_script_to_host_share(self) -> None:
+        # The wizard spawns this exact path on the host; a single-file
+        # `curl | sudo bash` install must place it there.
+        assert "/usr/local/share/outo-models/firewall-open.sh" in INSTALL_TEXT
+        assert "firewall_dest=" in INSTALL_TEXT
+        assert 'chmod 0755 "${firewall_dest}"' in INSTALL_TEXT
+
+    def test_embedded_firewall_script_matches_repo_byte_for_byte(self) -> None:
+        # Drift guard: a change to either file alone would silently desync
+        # the install from the container copy.
+        body = extract_embedded_firewall(INSTALL_TEXT)
+        repo_text = (REPO_ROOT / "container" / "scripts" / "firewall-open.sh").read_text(
+            encoding="utf-8"
+        )
+        assert body == repo_text, (
+            "embedded firewall-open.sh heredoc drifted from "
+            "container/scripts/firewall-open.sh — re-sync by copying the "
+            "repo file into the heredoc (and update this test only if the "
+            "wording of the drift message changed)."
+        )
+
+    def test_embedded_firewall_script_is_bash_clean(self) -> None:
+        # A syntax error in either copy must fail tests, not installs.
+        body = extract_embedded_firewall(INSTALL_TEXT)
+        extracted = REPO_ROOT / "tmp_embedded_firewall_check.sh"
+        try:
+            extracted.write_text(body, encoding="utf-8")
+            result = subprocess.run(  # noqa: S603
+                ["bash", "-n", str(extracted)],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+        finally:
+            extracted.unlink(missing_ok=True)
+
+    def test_embedded_firewall_self_elevates(self) -> None:
+        # `sudo -n` would deadlock the wizard; pin the interactive form.
+        body = extract_embedded_firewall(INSTALL_TEXT)
+        assert 'exec sudo bash "$0" "$@"' in body
+        assert "command -v sudo" in body
 
 
 def _render_wrapper(tmp_path: Path, default_tag: str = "stable") -> Path:

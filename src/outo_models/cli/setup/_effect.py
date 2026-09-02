@@ -9,6 +9,17 @@ The admin password is never written to the YAML config; only the
 argon2id hash reaches disk, via `auth.passwords.hash_password`. The
 literal password lives in memory only for the duration of the wizard
 run.
+
+Internal / IP mode notes:
+* the DNS step is skipped automatically (the wizard never asked for a
+  DNS provider or an ACME email)
+* the firewall step is **tolerant** — if `open_ports` raises
+  `OutoError(code="firewall_container_host_required")` (raised by the
+  host-script shim when invoked from inside a container without
+  privileged access), the wizard prints a warning with the host
+  command the operator needs to run and continues
+* the rendered Caddyfile drops the global email / acme_ca / TLS blocks
+  and binds on plain `:80`
 """
 
 from __future__ import annotations
@@ -51,6 +62,11 @@ _DEFAULT_CONFIG_PATH = Path("/etc/outo-models/config.yaml")
 # `answers.image`; the wizard no longer hard-codes a default image.
 _DEFAULT_VOLUME = "outo-models-data"
 
+# Internal-mode default for the public_ipv4 field. The wizard never asks
+# for a public IPv4 in internal mode (LAN detection fills it); we leave
+# the field empty in the YAML when nothing was supplied.
+_INTERNAL_IPV4_SENTINEL = ""
+
 
 def apply_settings_env(answers: SetupAnswers) -> None:
     """Push collected values into the process environment for downstream steps.
@@ -85,7 +101,7 @@ def write_config(path: Path, answers: SetupAnswers) -> None:
         "version": app_version.__version__,
         "domain": answers.domain,
         "acme_email": answers.acme_email,
-        "public_ipv4": answers.public_ipv4,
+        "public_ipv4": answers.public_ipv4 or _INTERNAL_IPV4_SENTINEL,
         "dns_provider": answers.dns_provider,
         "image": answers.image,
         "volume": _DEFAULT_VOLUME,
@@ -140,7 +156,17 @@ async def ensure_dns_record(answers: SetupAnswers) -> None:
 
 
 async def open_firewall_ports(ports: list[int]) -> None:
-    """Delegate to the host-side firewall script (see AGENTS.md §2.3)."""
+    """Delegate to the host-side firewall script (see AGENTS.md §2.3).
+
+    Tolerant behavior:
+        * `firewall_permission` → raises `ConfigError` (the operator must
+          grant NOPASSWD or rerun as root; this is a real misconfig).
+        * `firewall_container_host_required` → the shim noticed we're
+          running inside a container with no host-side privilege path.
+          The operator needs to run the script on the host directly; we
+          print the exact argv from the exception message and continue.
+        * any other `OutoError` → bubbles (the wizard aborts).
+    """
     try:
         result = await open_ports(ports=ports, dry_run=False)
     except OutoError as exc:
@@ -149,6 +175,12 @@ async def open_firewall_ports(ports: list[int]) -> None:
                 f"insufficient permissions to run the firewall command ({exc}). "
                 "Re-run as root, or add a NOPASSWD rule to /etc/sudoers.d/outo-models."
             ) from exc
+        if exc.code == "firewall_container_host_required":
+            Console().print(
+                f"[yellow][warning] firewall step skipped (running inside a "
+                f"container without host privilege): {exc}[/yellow]"
+            )
+            return
         raise
     Console().print(
         f"[green][done] firewall ports opened: {result.opened} ({result.kind.value})[/green]"
@@ -199,6 +231,7 @@ def render_caddyfile_setup(answers: SetupAnswers) -> str:
         email=answers.acme_email,
         dns_provider=answers.dns_provider if answers.dns_provider == "cloudflare" else None,
         staging=False,
+        tls_enabled=not answers.is_internal,
     )
     body = render_caddyfile(config)
     path = resolve_config_path().with_name("Caddyfile")

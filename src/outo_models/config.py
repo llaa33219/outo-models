@@ -21,9 +21,6 @@ from outo_models.exceptions import ConfigError
 # 32 ASCII characters ≈ 256 bits — comfortably above OWASP's minimum.
 _MIN_PRODUCTION_SECRET_LEN = 32
 
-# Schemes for which we never want HTTPS.
-_HTTP_SCHEME_DOMAINS = frozenset({"localhost", "127.0.0.1"})
-
 
 class Settings(BaseSettings):
     """Strongly-typed runtime configuration.
@@ -65,6 +62,33 @@ class Settings(BaseSettings):
     spaces_runtime_port_range_end: int = 21000
 
     @property
+    def is_internal(self) -> bool:
+        """True when `domain` is empty OR parses as an IP address.
+
+        "Internal mode" means the server is reachable only over a private
+        network (LAN / VPN / loopback) on plain HTTP — no ACME, no
+        TLS termination, no DNS record. The wizard uses this flag to skip
+        the domain / DNS / ACME prompts; the security-headers middleware
+        uses it to suppress HSTS; the Caddy manager uses it to drop the
+        TLS blocks from the rendered Caddyfile.
+
+        An empty `domain` is also "internal" because the operator may have
+        cleared the field during `setup`; in that case the wizard's
+        collect phase sets the address from `--public-ipv4` or LAN
+        detection before the config ever lands on disk.
+
+        `is_ip_address` is imported lazily to break the
+        `utils.__init__` → `utils.git_url` → `config` circular import a
+        top-level import would create.
+        """
+        domain = (self.domain or "").strip()
+        if not domain:
+            return True
+        from outo_models.utils.net import is_ip_address
+
+        return is_ip_address(domain)
+
+    @property
     def resolved_db_url(self) -> str:
         """Explicit `db_url` if set, otherwise a derived SQLite URL under `data_dir`."""
         if self.db_url is not None:
@@ -73,8 +97,8 @@ class Settings(BaseSettings):
 
     @property
     def base_url(self) -> str:
-        """`http://` for loopback domains, `https://` for everything else."""
-        scheme = "http" if self.domain in _HTTP_SCHEME_DOMAINS else "https"
+        """`http://` for internal mode (any IP), `https://` for real hostnames."""
+        scheme = "http" if self.is_internal else "https"
         return f"{scheme}://{self.domain}"
 
     def validate_for_production(self) -> None:
