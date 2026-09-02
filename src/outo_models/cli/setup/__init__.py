@@ -68,6 +68,7 @@ def _setup_callback(ctx: typer.Context) -> None:
             yes=False,
             ports=None,
             require_approval=None,
+            image=None,
         )
 
 
@@ -123,6 +124,16 @@ def setup_run(
         "--require-approval/--no-require-approval",
         help="Whether new signups require admin approval.",
     ),
+    image: str | None = typer.Option(
+        None,
+        "--image",
+        help=(
+            "Image reference for `start`/`update`. Accepts a track or "
+            "version tag (`stable`, `dev`, `0.2.0-stable`) or a full "
+            "reference (`localhost/outo-models:stable`, "
+            "`ghcr.io/<fork>/outo-models:tag`). Defaults to the stable track."
+        ),
+    ),
 ) -> None:
     """Run the setup wizard."""
     try:
@@ -141,6 +152,7 @@ def setup_run(
             yes=yes,
             ports=ports,
             require_approval=require_approval,
+            image=image,
         )
     except OutoError as exc:
         render_error(exc)
@@ -163,6 +175,7 @@ def _run_setup(
     yes: bool,
     ports: str | None,
     require_approval: bool | None,
+    image: str | None,
 ) -> None:
     """Top-level wizard — split out so the integration tests can stub phases."""
     answers = _collect.collect_answers(
@@ -178,6 +191,7 @@ def _run_setup(
         yes=yes,
         ports=ports,
         require_approval=require_approval,
+        image=image,
     )
     _effect.apply_settings_env(answers)
 
@@ -200,7 +214,7 @@ def _run_setup(
     caddyfile = _effect.render_caddyfile_setup(answers)
 
     # (6) Final next-steps message.
-    _effect.print_next_steps(config_path, caddyfile)
+    _effect.print_next_steps(config_path, caddyfile, answers.image)
 
 
 __all__ = ["SetupAnswers", "setup_app", "setup_run"]

@@ -23,17 +23,23 @@ the value picked automatically when `--yes` is passed.
 
 | # | Prompt | Validation / notes |
 | --- | --- | --- |
-| 1 | `Enter the server domain (e.g. models.example.com):` | `validate_domain` — rejects whitespace / slashes, lowercases |
-| 2 | `Enter the ACME (Let's Encrypt) account email:` | The address that receives expiry warnings |
-| 3 | `Choose the DNS provider (cloudflare / manual):` | Only `cloudflare` or `manual` accepted |
-| 4 | `Enter the Cloudflare API token (Zone.DNS:Edit permission):` | Only when the DNS provider is `cloudflare` (hidden input) |
-| 5 | `Server's public IPv4 address (DNS A record):` | If `--skip-ip-detect` is not set, `https://api.ipify.org` is used for auto-detection and shown as the default |
-| 6 | `Admin account name (slug, e.g. admin):` | `validate_slug` (lowercase letters / digits / `.` `_` `-`, 1–63 chars) |
-| 7 | `Enter the admin account email:` | Must contain `@` |
-| 8 | `Enter the admin password (8+ characters):` | Minimum 8 characters |
-| 9 | `Re-enter the admin password:` | Must match the first entry |
-| 10 | `External ports to open (comma-separated, default 80,443):` | Each port must be in 1–65535 |
-| 11 | `Require admin approval for new signups?` | Default `true` (y/N) |
+| 1 | `Which image track?` (followed by `[1] stable`, `[2] dev`, `[3] custom`) | `stable` is the recommended default; `dev` includes debug tooling; `custom` triggers a free-form text prompt (`Image reference or tag:`) validated + normalized through `normalize_image_ref`. |
+| 2 | `Enter the server domain (e.g. models.example.com):` | `validate_domain` — rejects whitespace / slashes, lowercases |
+| 3 | `Enter the ACME (Let's Encrypt) account email:` | The address that receives expiry warnings |
+| 4 | `Choose the DNS provider (cloudflare / manual):` | Only `cloudflare` or `manual` accepted |
+| 5 | `Enter the Cloudflare API token (Zone.DNS:Edit permission):` | Only when the DNS provider is `cloudflare` (hidden input) |
+| 6 | `Server's public IPv4 address (DNS A record):` | If `--skip-ip-detect` is not set, `https://api.ipify.org` is used for auto-detection and shown as the default |
+| 7 | `Admin account name (slug, e.g. admin):` | `validate_slug` (lowercase letters / digits / `.` `_` `-`, 1–63 chars) |
+| 8 | `Enter the admin account email:` | Must contain `@` |
+| 9 | `Enter the admin password (8+ characters):` | Minimum 8 characters |
+| 10 | `Re-enter the admin password:` | Must match the first entry |
+| 11 | `External ports to open (comma-separated, default 80,443):` | Each port must be in 1–65535 |
+| 12 | `Require admin approval for new signups?` | Default `true` (y/N) |
+
+The image track is the **first** prompt because the choice frames every
+later step — the in-container process is the same image, and the
+`start` / `update` commands read the `image` key the wizard writes into
+`config.yaml`.
 
 In `--non-interactive` mode, every value above must come from a flag or an
 environment variable. Any missing value exits immediately with `ConfigError`.
@@ -56,6 +62,7 @@ environment variable. Any missing value exits immediately with `ConfigError`.
 | `--yes` | Auto-accept defaults for safe steps | `false` |
 | `--ports <CSV>` | Comma-separated port list | `80,443` |
 | `--require-approval` / `--no-require-approval` | Signup approval policy | `true` |
+| `--image <ref>` | Image reference — track/version tag (`stable`, `0.2.0-stable`) or full ref (`localhost/outo-models:stable`, `ghcr.io/<fork>/outo-models:tag`) | stable track |
 
 ## What the automated steps actually do
 
@@ -79,7 +86,9 @@ written to stderr.
 
 - `version` — package version
 - `domain`, `acme_email`, `public_ipv4`, `dns_provider`
-- `image` — defaults to `outo-models:stable`
+- `image` — the full reference the operator chose (the first interactive
+  prompt, or `--image <ref>` in non-interactive mode). `start` and
+  `update` both read this key.
 - `volume` — defaults to `outo-models-data`
 - `ports` — the list provided by the operator
 - `require_approval`
@@ -158,12 +167,17 @@ The wizard prints the following to stdout:
 [done] Configuration saved.
   - Config file: /etc/outo-models/config.yaml
   - Caddyfile: /etc/outo-models/Caddyfile
+  - Image: ghcr.io/llaa33219/outo-models:stable
 
 Start the server with:
   outo-models start
 
 Passwords are never echoed again. To recover, use admin reset-password.
 ```
+
+The `Image:` line echoes the exact reference that was written to
+`config.yaml` — copy it when pinning a custom registry or when
+troubleshooting `update` failures.
 
 ## Non-interactive examples
 

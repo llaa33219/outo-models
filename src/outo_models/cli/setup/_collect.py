@@ -27,6 +27,9 @@ from outo_models.utils.slug import validate_slug
 
 _MIN_PASSWORD_LENGTH = 8
 
+_DEFAULT_IMAGE_REGISTRY = "ghcr.io/llaa33219/outo-models"
+_IMAGE_TRACK_CHOICES: tuple[str, ...] = ("stable", "dev", "custom")
+
 
 @dataclass(frozen=True, slots=True)
 class SetupAnswers:
@@ -37,6 +40,7 @@ class SetupAnswers:
     the value the DB write used.
     """
 
+    image: str
     domain: str
     acme_email: str
     public_ipv4: str
@@ -47,6 +51,32 @@ class SetupAnswers:
     admin_password: str
     ports: list[int]
     require_approval: bool
+
+
+def normalize_image_ref(value: str) -> str:
+    """Return a full image reference for `value` (e.g. `stable` -> `<registry>:stable`).
+
+    Accepts:
+        * a bare track or version tag (`stable`, `dev`, `0.2.0-stable`,
+          `0.2.0-stable-arm64`) — gets `_DEFAULT_IMAGE_REGISTRY` prepended
+        * a full reference that already contains a `/` (e.g.
+          `localhost/outo-models:stable`, `ghcr.io/<fork>/outo-models:tag`) —
+          passed through unchanged so local builds and forks work without
+          fighting the wizard
+
+    Rejects empty / whitespace-only values and values containing spaces
+    (a space in an image ref is never valid and almost always a paste
+    accident). Raises `ValidationFailedError` so the wizard can re-prompt
+    via the typed-error funnel.
+    """
+    stripped = value.strip()
+    if not stripped:
+        raise ValidationFailedError("Image reference must not be empty.")
+    if " " in stripped:
+        raise ValidationFailedError("Image reference must not contain spaces.")
+    if "/" in stripped:
+        return stripped
+    return f"{_DEFAULT_IMAGE_REGISTRY}:{stripped}"
 
 
 def collect_answers(
@@ -63,12 +93,18 @@ def collect_answers(
     yes: bool,
     ports: str | None,
     require_approval: bool | None,
+    image: str | None,
 ) -> SetupAnswers:
     """Collect the operator's answers, prompting interactively when needed.
 
     Each prompt is wrapped in a typed `ConfigError` so a missing flag in
     non-interactive mode surfaces as a clean error rather than a stack
     trace — same UX as the interactive path.
+
+    `image` is the FIRST field collected: the image track (stable / dev
+    / custom) frames every later step because the in-container process
+    is the same image, and downstream commands (`start`, `update`) read
+    `config.yaml`'s `image` key to know which tag to pull.
     """
     if non_interactive:
         required = {
@@ -85,6 +121,7 @@ def collect_answers(
                 f"--non-interactive mode requires the following values: {', '.join(missing)}"
             )
 
+    image_value = _collect_image(image, non_interactive, yes)
     domain_value = _collect_domain(domain, non_interactive, yes)
     acme_email_value = _collect_acme_email(acme_email, non_interactive, yes)
     dns_provider_value = _collect_dns_provider(dns_provider, non_interactive, yes)
@@ -101,6 +138,7 @@ def collect_answers(
     require_approval_value = _collect_require_approval(require_approval, non_interactive, yes)
 
     return SetupAnswers(
+        image=image_value,
         domain=domain_value,
         acme_email=acme_email_value,
         public_ipv4=public_ipv4_value,
@@ -112,6 +150,28 @@ def collect_answers(
         ports=ports_value,
         require_approval=require_approval_value,
     )
+
+
+def _collect_image(flag_value: str | None, non_interactive: bool, yes: bool) -> str:
+    if flag_value:
+        return normalize_image_ref(flag_value)
+    if non_interactive:
+        return normalize_image_ref("stable")
+    default = "stable" if yes else ""
+    while True:
+        track = prompts.choice(
+            "Which image track?",
+            choices=list(_IMAGE_TRACK_CHOICES),
+            default=default,
+        )
+        if track != "custom":
+            return normalize_image_ref(track)
+        while True:
+            raw = prompts.text("Image reference or tag:")
+            try:
+                return normalize_image_ref(raw)
+            except ValidationFailedError as exc:
+                Console(stderr=True).print(f"[red]{exc}[/red]")
 
 
 def _collect_domain(flag_value: str | None, non_interactive: bool, yes: bool) -> str:
@@ -296,4 +356,4 @@ def _collect_require_approval(flag_value: bool | None, non_interactive: bool, ye
     return prompts.confirm("Require admin approval for new signups?", default=yes or True)
 
 
-__all__ = ["SetupAnswers", "collect_answers"]
+__all__ = ["SetupAnswers", "collect_answers", "normalize_image_ref"]

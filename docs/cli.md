@@ -83,6 +83,7 @@ sudo outo-models setup run --non-interactive --yes ...     # non-interactive
 | `--yes` | Auto-accept defaults for safe steps |
 | `--ports <CSV>` | Comma-separated ports (default `80,443`) |
 | `--require-approval` / `--no-require-approval` | Signup approval policy |
+| `--image <ref>` | Image track / reference (default: `stable` track → `ghcr.io/llaa33219/outo-models:stable`) |
 
 ## server
 
@@ -176,7 +177,7 @@ English line:
 ## update
 
 ```bash
-sudo outo-models update [--image outo-models:stable]
+sudo outo-models update [--image <ref>]
 ```
 
 Invokes `container/scripts/update.sh`, which runs the following steps in
@@ -189,7 +190,16 @@ order:
 The script's exit code becomes the CLI's exit code. Anything non-zero is
 rendered as `OutoError(code="update_failed")` and the process exits 1.
 
-The `--image` flag overrides the image tag. Default: `outo-models:stable`.
+**Image precedence.** When `--image` is omitted, `update` reads the
+`image` key from the same `/etc/outo-models/config.yaml` the `start`
+command reads (the value the setup wizard wrote). The `--image` flag,
+when passed, is normalized through `normalize_image_ref`: a bare tag
+like `stable` or `0.2.0-stable` gets `ghcr.io/llaa33219/outo-models:`
+prepended; a full reference containing `/` (e.g.
+`localhost/outo-models:stable` for local builds, or a fork's
+`ghcr.io/<owner>/outo-models:tag`) passes through unchanged. When both
+the flag and the config are missing, `update` falls back to
+`ghcr.io/llaa33219/outo-models:stable`.
 
 ## reset
 

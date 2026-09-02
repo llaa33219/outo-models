@@ -34,12 +34,21 @@ def runner() -> CliRunner:
 def patched_prompts(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Replace the prompt backend with deterministic canned answers.
 
-    The text/password helpers are queue-based: callers can push values
-    before invoking the CLI. Defaults cover the common wizard walk
-    where flags fill in the easy fields and only password + ports +
-    require_approval actually need prompting.
+    The text/password/choice helpers are queue-based: callers can push
+    values before invoking the CLI. Defaults cover the common wizard
+    walk where flags fill in the easy fields and only the image track
+    choice + password + ports + require_approval actually need
+    prompting.
+
+    Prompt order with flags filling the easy fields: choice (image
+    track) → text (public_ipv4) → password (admin_password) x2 → text
+    (ports) → confirm (require_approval). The first prompt is now the
+    image track (`_collect_image`), which runs before any other field.
     """
     import queue as _q
+
+    choice_queue: _q.Queue[str] = _q.Queue()
+    choice_queue.put("stable")
 
     text_queue: _q.Queue[str] = _q.Queue()
     # Order matches the wizard's prompt sequence when flags fill the
@@ -57,11 +66,15 @@ def patched_prompts(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     def _pw(*_a: Any, **_k: Any) -> str:
         return password_queue.get_nowait()
 
+    def _choice(*_a: Any, **_k: Any) -> str:
+        return choice_queue.get_nowait()
+
     answers = {
         "text": _text,
         "password": _pw,
         "confirm": lambda *_a, **_k: True,
         "int_prompt": lambda *_a, **_k: 42,
+        "choice": _choice,
     }
     for name, func in answers.items():
         monkeypatch.setattr(cli_prompts, name, func)
@@ -217,6 +230,171 @@ class TestNonInteractive:
         result = runner.invoke(app, argv)
         assert result.exit_code == 1
 
+    def test_image_flag_stable_track_writes_full_reference(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--public-ipv4",
+                "203.0.113.42",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--image",
+                "stable",
+                "--skip-dns",
+                "--skip-firewall",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["image"] == "ghcr.io/llaa33219/outo-models:stable"
+
+    def test_image_flag_full_reference_passes_through(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--public-ipv4",
+                "203.0.113.42",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--image",
+                "localhost/outo-models:0.2.0-dev",
+                "--skip-dns",
+                "--skip-firewall",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["image"] == "localhost/outo-models:0.2.0-dev"
+
+    def test_image_flag_omitted_defaults_to_stable_track(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--public-ipv4",
+                "203.0.113.42",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--skip-dns",
+                "--skip-firewall",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["image"] == "ghcr.io/llaa33219/outo-models:stable"
+
+    def test_image_flag_invalid_value_fails_cleanly(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_path = tmp_path / "outo.yaml"
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--non-interactive",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--public-ipv4",
+                "203.0.113.42",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--admin-password",
+                "correct horse battery staple",
+                "--image",
+                "tag with space",
+                "--skip-dns",
+                "--skip-firewall",
+            ],
+        )
+        assert result.exit_code == 1
+        assert not config_path.exists()
+
 
 # ---------------------------------------------------------------------------
 # Interactive surface — monkeypatched prompts
@@ -358,6 +536,154 @@ class TestInteractive:
         # 4 prompt calls: pw1, pw2, pw3, pw4 (third and fourth match).
         assert len(calls) >= 4
 
+    def test_image_track_prompt_runs_first(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The image track is the FIRST prompt — it frames every later
+        # step. Verify the operator's choice (the dev track) is recorded
+        # in the YAML as a full reference and echoed in the next-steps
+        # banner.
+        call_order: list[str] = []
+
+        def _choice(_msg: str, **_k: object) -> str:
+            call_order.append("choice")
+            return "dev"
+
+        def _text(_msg: str, **_k: object) -> str:
+            call_order.append("text")
+            return "203.0.113.42" if len(call_order) == 2 else "80,443"
+
+        def _pw(_msg: str, **_k: object) -> str:
+            call_order.append("password")
+            return "correct horse battery staple"
+
+        def _confirm(_msg: str, **_k: object) -> bool:
+            call_order.append("confirm")
+            return True
+
+        monkeypatch.setattr(cli_prompts, "choice", _choice)
+        monkeypatch.setattr(cli_prompts, "text", _text)
+        monkeypatch.setattr(cli_prompts, "password", _pw)
+        monkeypatch.setattr(cli_prompts, "confirm", _confirm)
+
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        import httpx as _httpx
+
+        class _Resp:
+            status_code = 200
+            text = "203.0.113.99"
+
+        monkeypatch.setattr(_httpx, "get", lambda *_a, **_k: _Resp())
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--skip-dns",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        # `choice` was the first prompt; `dev` is normalized into a
+        # full reference under the default registry.
+        assert call_order[0] == "choice"
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["image"] == "ghcr.io/llaa33219/outo-models:dev"
+        # Next-steps banner echoes the chosen image.
+        assert "ghcr.io/llaa33219/outo-models:dev" in result.output
+
+    def test_image_track_custom_prompts_for_reference(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Picking `custom` triggers a free-form text prompt; the value
+        # is normalized through `normalize_image_ref`.
+        choice_responses = iter(["custom"])
+        text_responses = iter(
+            [
+                "localhost/outo-models:0.2.0-dev",
+                "203.0.113.42",
+                "80,443",
+            ]
+        )
+
+        def _choice(_msg: str, **_k: object) -> str:
+            return next(choice_responses)
+
+        def _text(_msg: str, **_k: object) -> str:
+            return next(text_responses)
+
+        monkeypatch.setattr(cli_prompts, "choice", _choice)
+        monkeypatch.setattr(cli_prompts, "text", _text)
+        monkeypatch.setattr(cli_prompts, "password", lambda *a, **k: "correct horse battery staple")
+        monkeypatch.setattr(cli_prompts, "confirm", lambda *a, **k: True)
+
+        config_path = tmp_path / "outo.yaml"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("OUTO_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(config_path))
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        import httpx as _httpx
+
+        class _Resp:
+            status_code = 200
+            text = "203.0.113.99"
+
+        monkeypatch.setattr(_httpx, "get", lambda *_a, **_k: _Resp())
+
+        result = runner.invoke(
+            app,
+            [
+                "setup",
+                "run",
+                "--domain",
+                "models.example.com",
+                "--acme-email",
+                "ops@example.com",
+                "--dns-provider",
+                "manual",
+                "--admin-username",
+                "admin",
+                "--admin-email",
+                "admin@example.com",
+                "--skip-dns",
+                "--skip-firewall",
+                "--skip-ip-detect",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["image"] == "localhost/outo-models:0.2.0-dev"
+
 
 class TestBareSetupRunsWizard:
     """Bare `outo-models setup` (no subcommand) must run the wizard.
@@ -395,4 +721,5 @@ class TestBareSetupRunsWizard:
             "yes": False,
             "ports": None,
             "require_approval": None,
+            "image": None,
         }

@@ -158,17 +158,25 @@ once** to create the config file.
 sudo outo-models setup
 ```
 
-This command runs the following steps in order:
+The first interactive prompt is the **image track** — `stable`
+(recommended for production), `dev` (debug tooling), or `custom` (free-form
+reference). The choice is written into `config.yaml` and reused by `start`
+and `update`, so picking `dev` here means every later `update` will pull
+the dev image unless `--image` overrides it. The full prompt order is
+documented in [setup-wizard.md](setup-wizard.md).
 
-1. Prompt for domain and ACME email
-2. Select the DNS provider (`cloudflare` / `manual`)
-3. Prompt for the public IPv4 (or auto-detect)
-4. Create the admin account
-5. Write `config.yaml` (mode `0o600`)
-6. Create the DNS A record (or print manual instructions)
-7. Open ports 80 / 443 on the host firewall
-8. Run DB migrations and store the hashed admin password
-9. Render the Caddyfile
+The command runs the following steps in order:
+
+1. Ask for the image track (`stable` / `dev` / `custom`)
+2. Prompt for domain and ACME email
+3. Select the DNS provider (`cloudflare` / `manual`)
+4. Prompt for the public IPv4 (or auto-detect)
+5. Create the admin account
+6. Write `config.yaml` (mode `0o600`) including the chosen image
+7. Create the DNS A record (or print manual instructions)
+8. Open ports 80 / 443 on the host firewall
+9. Run DB migrations and store the hashed admin password
+10. Render the Caddyfile
 
 The full flow lives in [setup-wizard.md](setup-wizard.md).
 
@@ -183,11 +191,26 @@ sudo outo-models setup --non-interactive \
   --admin-username admin \
   --admin-email admin@example.com \
   --admin-password '<a strong password you generated>' \
+  --image stable \
   --yes
 ```
 
+`--image` accepts the same values the interactive prompt does (`stable`,
+`dev`, a pinned version like `0.2.0-stable`, or a full reference like
+`localhost/outo-models:0.2.0-dev`). Omitting it defaults to the `stable`
+track.
+
 Cloudflare mode also needs a token. `OUTO_CLOUDFLARE_API_TOKEN` takes
 precedence over `--admin-password`-style flags.
+
+> **OUTO_IMAGE and the host shim.** The `OUTO_IMAGE` env var, which the
+> `scripts/install-cli.sh` shim honors, controls which image the shim
+> itself runs as — it is the *shim's* image, not the wizard-configured
+> image for the production container. The wizard's `--image` choice
+> lives in `config.yaml` and is consumed by `start` / `update`. If you
+> want both the shim and the managed container to use the same track,
+> set `OUTO_IMAGE` once and pass `--image <ref>` to `setup` (or pick
+> `custom` interactively).
 
 ## 5. Start the container
 
@@ -243,11 +266,16 @@ If anything looks off, head to [troubleshooting.md](troubleshooting.md).
 ## 7. Upgrading
 
 `outo-models update` pulls the new image, runs migrations, and restarts
-the container. See [cli.md](cli.md#update) and
-[architecture.md](architecture.md#image-flavors) for the full flow.
+the container. By default `update` follows the `image` key in
+`/etc/outo-models/config.yaml` (the same value `start` uses); pass
+`--image <ref>` to override for a single invocation. See
+[cli.md](cli.md#update) and [architecture.md](architecture.md#image-flavors)
+for the full flow.
 
 ```bash
-sudo outo-models update --image outo-models:stable
+sudo outo-models update                       # follows config.yaml's image key
+sudo outo-models update --image stable        # explicit override
+sudo outo-models update --image 0.2.0-stable  # pinned version
 ```
 
 ## Next steps

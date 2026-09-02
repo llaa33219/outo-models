@@ -47,10 +47,8 @@ from outo_models.utils.time import utcnow
 # as `start.py._DEFAULT_CONFIG`. Tests override via `OUTO_CONFIG`.
 _DEFAULT_CONFIG_PATH = Path("/etc/outo-models/config.yaml")
 
-# Default image / volume baked into a fresh wizard run. The image tag is
-# intentionally stable — operators explicitly pin `dev` if they want the
-# bleeding edge.
-_DEFAULT_IMAGE = "outo-models:stable"
+# Volume baked into a fresh wizard run. The image is taken from
+# `answers.image`; the wizard no longer hard-codes a default image.
 _DEFAULT_VOLUME = "outo-models-data"
 
 
@@ -89,7 +87,7 @@ def write_config(path: Path, answers: SetupAnswers) -> None:
         "acme_email": answers.acme_email,
         "public_ipv4": answers.public_ipv4,
         "dns_provider": answers.dns_provider,
-        "image": _DEFAULT_IMAGE,
+        "image": answers.image,
         "volume": _DEFAULT_VOLUME,
         "ports": answers.ports,
         "require_approval": answers.require_approval,
@@ -209,13 +207,14 @@ def render_caddyfile_setup(answers: SetupAnswers) -> str:
     return body
 
 
-def print_next_steps(config_path: Path, caddyfile: str) -> None:
+def print_next_steps(config_path: Path, caddyfile: str, image: str) -> None:
     """Render the final message: where the config lives + how to start."""
     console = Console()
     console.print()
     console.print("[bold green][done] Configuration saved.[/bold green]")
     console.print(f"  - Config file: {config_path}")
     console.print(f"  - Caddyfile: {config_path.with_name('Caddyfile')}")
+    console.print(f"  - Image: {image}")
     console.print()
     console.print("Start the server with:")
     console.print("  [bold]outo-models start[/bold]")

@@ -102,6 +102,37 @@ class Prompts:
         """Prompt for a yes/no answer; never raises on EOF."""
         return bool(Confirm.ask(message, default=default))
 
+    def choice(
+        self,
+        message: str,
+        *,
+        choices: list[str],
+        default: str = "",
+    ) -> str:
+        """Prompt the operator to pick one of `choices`.
+
+        Accepts the choice value verbatim (`stable`) or its 1-based
+        number in the rendered list. Re-prompts silently until valid —
+        the wizard re-asks for *any* unrecognised value rather than
+        surfacing a typed error (the same UX as `text` with a
+        `validate=` predicate).
+
+        `default` is returned when the operator just presses Enter.
+        """
+        valid = set(choices)
+        rendered = "\n".join(f"  [{i + 1}] {choice}" for i, choice in enumerate(choices))
+        prompt = f"{message}\n{rendered}"
+        while True:
+            value = Prompt.ask(prompt, default=default)
+            if value in valid:
+                return value
+            try:
+                idx = int(value) - 1
+            except ValueError:
+                continue
+            if 0 <= idx < len(choices):
+                return choices[idx]
+
     def int_prompt(
         self,
         message: str,
