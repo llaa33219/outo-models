@@ -28,11 +28,14 @@ image — a one-time shim install puts an `outo-models` command on the host.
 ```bash
 # 1. Install the host CLI shim (writes /usr/local/bin/outo-models)
 curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+#    Until the first stable release is tagged, install against the dev track:
+#    curl -sSL .../scripts/install-cli.sh | sudo bash -s dev
 
 # 2. Pull the server image (amd64 and arm64 are both served automatically)
 sudo podman pull ghcr.io/llaa33219/outo-models:stable
 
-# 3. Initial setup (interactive wizard: domain, DNS, admin account, ports)
+# 3. Initial setup — the wizard asks which image track to run (stable / dev /
+#    custom) first, then domain, DNS, admin account, ports
 outo-models setup
 
 # 4. Run the server
@@ -53,6 +56,13 @@ To run a dev-flavor image through the shim:
 ```bash
 OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models status
 ```
+
+The shim resolves which image to run in this order: `OUTO_IMAGE` env →
+the `image:` key in `/etc/outo-models/config.yaml` (chosen by `setup`) →
+the install-time default. So once `setup` picks a track, every later
+`outo-models` invocation follows it automatically. To update the shim
+itself, re-run `install-cli.sh` (idempotent); CLI code updates arrive with
+the image via `outo-models update`.
 
 > **Note:** pulling the image alone does not create a host command — step 1
 > is what puts `outo-models` on your PATH. You can also run any CLI command

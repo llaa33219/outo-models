@@ -126,6 +126,22 @@ sudo bash scripts/install-cli.sh            # default image tag: stable
 sudo bash scripts/install-cli.sh dev        # shim defaults to the dev image
 ```
 
+> Until the first stable release is tagged, `:stable` does not exist on
+> ghcr.io and the default shim cannot pull it. Install with the dev track
+> instead: `curl -sSL .../scripts/install-cli.sh | sudo bash -s dev`.
+
+The wrapper resolves the image to run in this order:
+
+1. `OUTO_IMAGE` environment variable (per-invocation override)
+2. the `image:` key in `/etc/outo-models/config.yaml` (written by `setup` —
+   the wizard asks for the track first)
+3. the default baked in at install time (the installer's tag argument)
+
+So after `setup` picks a track, every later `outo-models` command follows
+it automatically. **Updating the CLI**: the shim itself rarely changes —
+re-run `install-cli.sh` to refresh it; the CLI code it executes comes from
+the image and is updated by `outo-models update` (pull + migrate + restart).
+
 After this, `outo-models --help` works on the host. Override the image per
 invocation with `OUTO_IMAGE` (e.g. `OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models status`).
 

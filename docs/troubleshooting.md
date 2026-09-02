@@ -483,6 +483,23 @@ podman run --rm -it --network=host \
   ghcr.io/llaa33219/outo-models:stable --help
 ```
 
+### "manifest unknown" when the shim pulls
+
+The shim defaults to the `:stable` tag. Before the first stable release is
+tagged, that tag does not exist and every shim invocation fails with
+`manifest unknown`. Two fixes:
+
+```bash
+# Reinstall the shim against the dev track (idempotent):
+curl -sSL .../scripts/install-cli.sh | sudo bash -s dev
+
+# …or override per invocation:
+OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models setup
+```
+
+Once the setup wizard has written `image:` into
+`/etc/outo-models/config.yaml`, the shim follows that choice automatically.
+
 ## Next steps
 
 - [install.md](install.md) — first-time install steps
