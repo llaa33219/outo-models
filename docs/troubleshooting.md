@@ -500,6 +500,21 @@ OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models setup
 Once the setup wizard has written `image:` into
 `/etc/outo-models/config.yaml`, the shim follows that choice automatically.
 
+### `Error: statfs /etc/outo-models: no such file or directory`
+
+podman does not create missing host bind-mount sources. The installer
+creates `/etc/outo-models` (owned by uid 1000 so the rootless container can
+write `config.yaml`); if you installed the shim before this fix, create it
+once by hand:
+
+```bash
+sudo mkdir -p /etc/outo-models && sudo chown 1000:1000 /etc/outo-models
+```
+
+Run every `outo-models` command as the SAME user (all rootless as yourself,
+or all via sudo) — rootless and rootful podman have separate image stores
+and containers, so mixing them makes images/containers seem to "vanish".
+
 ## Next steps
 
 - [install.md](install.md) — first-time install steps

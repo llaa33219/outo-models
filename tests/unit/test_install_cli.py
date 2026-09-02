@@ -55,6 +55,13 @@ class TestInstallCliScript:
         # The setup wizard needs a TTY only when stdin is a terminal.
         assert "-t 0" in INSTALL_TEXT
 
+    def test_installer_precreates_config_dir_writable_by_container(self) -> None:
+        # podman refuses to bind-mount a missing host dir (statfs error seen
+        # in the field), and the in-container app (uid 1000) must be able to
+        # write config.yaml when the shim runs rootless.
+        assert "mkdir -p /etc/outo-models" in INSTALL_TEXT
+        assert "chown 1000:1000 /etc/outo-models" in INSTALL_TEXT
+
     def test_default_image_points_at_stable_release(self) -> None:
         assert "ghcr.io/llaa33219/outo-models:" in INSTALL_TEXT
         assert (
