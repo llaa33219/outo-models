@@ -243,7 +243,11 @@ if [[ -f "${CONFIG_PY}" ]]; then
         upper="$(printf '%s' "${field}" | tr '[:lower:]' '[:upper:]')"
         ENVVARS+=("OUTO_${upper}")
     done < <(
-        grep -E '^[[:space:]]+[a-z_][a-z0-9_]*[[:space:]]*:' "${CONFIG_PY}" \
+        # Scope to the `class Settings` body ONLY — a file-wide scan also
+        # matches local variables (`data:`) and keywords (`try:`) inside
+        # get_settings(), producing phantom OUTO_DATA / OUTO_TRY vars.
+        awk '/^class Settings/,/^@lru_cache/' "${CONFIG_PY}" \
+            | grep -E '^[[:space:]]+[a-z_][a-z0-9_]*[[:space:]]*:' \
             | sed -E 's/^[[:space:]]+([a-z_][a-z0-9_]*).*/\1/' \
             | grep -v '^model_config$' \
             | sorted_uniq

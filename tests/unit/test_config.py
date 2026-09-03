@@ -199,3 +199,67 @@ class TestConfigErrorIsOutoError:
             assert exc.code
         else:
             pytest.fail("expected ConfigError")
+
+
+class TestYamlConfigSource:
+    """get_settings() merges the wizard's config.yaml below env vars."""
+
+    def test_yaml_values_used_when_no_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "domain: hub.example.com\nrequire_approval: false\nimage: ghcr.io/x/y:dev\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        get_settings.cache_clear()
+        try:
+            settings = get_settings()
+            assert settings.domain == "hub.example.com"
+            assert settings.require_approval is False
+        finally:
+            get_settings.cache_clear()
+
+    def test_env_beats_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("domain: hub.example.com\n", encoding="utf-8")
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        monkeypatch.setenv("OUTO_DOMAIN", "other.example.com")
+        get_settings.cache_clear()
+        try:
+            assert get_settings().domain == "other.example.com"
+        finally:
+            get_settings.cache_clear()
+
+    def test_missing_file_is_fine(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OUTO_CONFIG", str(tmp_path / "absent.yaml"))
+        get_settings.cache_clear()
+        try:
+            assert get_settings().domain == "localhost"
+        finally:
+            get_settings.cache_clear()
+
+    def test_malformed_yaml_raises_config_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("domain: [unclosed\n", encoding="utf-8")
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(ConfigError):
+                get_settings()
+        finally:
+            get_settings.cache_clear()
+
+    def test_non_mapping_yaml_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("- just\n- a\n- list\n", encoding="utf-8")
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(ConfigError):
+                get_settings()
+        finally:
+            get_settings.cache_clear()

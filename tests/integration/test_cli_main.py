@@ -11,6 +11,7 @@ Covers the small but security-critical surface of the CLI root:
 from __future__ import annotations
 
 from importlib.metadata import version as _pkg_version
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -104,3 +105,46 @@ class TestRootCallback:
         result = runner.invoke(app, [])
         assert "Usage" in result.output
         assert "outo-models" in result.output
+
+
+class TestStartCommand:
+    """`outo-models start` argv contract against the wizard's config.yaml."""
+
+    def _write_config(self, tmp_path: Path) -> Path:
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "image: ghcr.io/llaa33219/outo-models:dev\n"
+            "volume: outo-models-data\n"
+            "ports: [80, 443]\n",
+            encoding="utf-8",
+        )
+        return cfg
+
+    def test_argv_has_keep_id_and_config_values(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        captured: list[list[str]] = []
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: captured.append(argv) or 0)
+        cfg = self._write_config(tmp_path)
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 1
+        argv = captured[0]
+        # Rootless ownership consistency with the CLI shim (see AGENTS.md).
+        assert "--userns=keep-id" in argv
+        assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"
+        assert "outo-models-data:/var/lib/outo-models" in argv
+
+    def test_missing_config_refuses(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setenv("OUTO_CONFIG", str(tmp_path / "absent.yaml"))
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1

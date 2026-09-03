@@ -561,6 +561,21 @@ Run every `outo-models` command as the SAME user (all rootless as yourself,
 or all via sudo) — rootless and rootful podman have separate image stores
 and containers, so mixing them makes images/containers seem to "vanish".
 
+### `PermissionError` writing `config.yaml` or database files (rootless)
+
+Rootless podman maps the container's uid 1000 to a host subuid by default,
+so a bind-mounted host directory owned by you is unwritable from inside the
+container. Both the CLI shim and `start` run containers with
+`--userns=keep-id` so files stay owned by your host user. If you hit this
+before the keep-id fix, the named volume may hold subuid-owned files —
+recreate it (safe before the first successful `setup`; destroys all server
+data otherwise):
+
+```bash
+podman stop outo-models 2>/dev/null; podman rm outo-models 2>/dev/null
+podman volume rm outo-models-data
+```
+
 ## 14. Internal / IP-only mode
 
 The wizard supports an install path where the server is reachable only

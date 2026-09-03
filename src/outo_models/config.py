@@ -9,10 +9,12 @@ tests when they override `OUTO_*` variables.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from outo_models.exceptions import ConfigError
@@ -119,5 +121,29 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return the process-wide `Settings`, constructed on first access."""
-    return Settings()
+    """Return the process-wide `Settings`, constructed on first access.
+
+    Sources, highest priority first: `OUTO_*` environment variables, then
+    the YAML config file at `OUTO_CONFIG` (default
+    `/etc/outo-models/config.yaml`, written by the setup wizard), then field
+    defaults. YAML keys that are not `Settings` fields (e.g. `image`,
+    `volume`, `ports` — consumed by `start` directly) are ignored here.
+    """
+    data: dict[str, Any] = {}
+    config_path = Path(os.environ.get("OUTO_CONFIG", "/etc/outo-models/config.yaml"))
+    if config_path.is_file():
+        try:
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"failed to parse {config_path}: {exc}") from exc
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ConfigError(
+                f"{config_path} must contain a YAML mapping, got {type(raw).__name__}"
+            )
+        data = {k: v for k, v in raw.items() if k in Settings.model_fields}
+        for key in list(data):
+            if f"OUTO_{key.upper()}" in os.environ:
+                del data[key]
+    return Settings(**data)

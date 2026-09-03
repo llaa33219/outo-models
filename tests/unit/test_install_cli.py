@@ -81,6 +81,9 @@ class TestInstallCliScript:
         assert "OUTO_PODMAN_SOCK" in INSTALL_TEXT
         # The setup wizard needs a TTY only when stdin is a terminal.
         assert "-t 0" in INSTALL_TEXT
+        # keep-id keeps volume/config ownership on the invoking host user
+        # (rootless subuid mapping otherwise breaks writes — field failure).
+        assert "--userns=keep-id" in INSTALL_TEXT
 
     def test_installer_precreates_config_dir_writable_by_container(self) -> None:
         # podman refuses to bind-mount a missing host dir (statfs error seen

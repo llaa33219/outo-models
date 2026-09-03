@@ -78,6 +78,7 @@ if [[ ! -S "\${sock}" ]]; then
 fi
 
 args=(run --rm --network=host
+    --userns=keep-id
     -v /etc/outo-models:/etc/outo-models
     -v outo-models-data:/var/lib/outo-models)
 

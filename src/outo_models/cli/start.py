@@ -124,6 +124,10 @@ def start() -> None:
         "-d",
         "--name",
         "outo-models",
+        # Rootless userns mapping must match the CLI shim (keep-id) so files
+        # in the shared volume stay owned by the invoking host user instead
+        # of subuids — mixed ownership breaks the DB.
+        "--userns=keep-id",
         *env_args,
         "-v",
         f"{volume}:/var/lib/outo-models",
