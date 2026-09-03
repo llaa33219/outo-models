@@ -92,6 +92,14 @@ if [[ -t 0 ]]; then
     args+=(-it)
 fi
 
+# Moving tags (:stable/:dev/:latest) track the newest release — refresh them
+# so the shim never runs a stale local copy. Pinned tags (e.g. :0.2.0-dev)
+# are immutable by convention and skip this. Offline → keep the local copy.
+ref_tag="\${image##*:}"
+if [[ "\${ref_tag}" == "stable" || "\${ref_tag}" == "dev" || "\${ref_tag}" == "latest" ]]; then
+    podman pull --quiet "\${image}" >/dev/null 2>&1 || true
+fi
+
 # Pre-pull with a clear error instead of podman run's raw failure —
 # this is the first thing a brand-new operator sees.
 if ! podman image exists "\${image}" 2>/dev/null; then

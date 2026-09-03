@@ -259,3 +259,36 @@ class TestWrapperImageResolution:
         assert "failed to pull" in result.stderr
         assert "install-cli.sh" in result.stderr
         assert "OUTO_IMAGE" in result.stderr
+
+    def test_moving_tag_triggers_refresh_pull(self, tmp_path: Path) -> None:
+        # A stale local :dev image must be refreshed from the registry —
+        # the field failure where setup ran an old CLI.
+        wrapper = _render_wrapper(tmp_path, default_tag="dev")
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper, bin_dir, tmp_path, extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")}
+        )
+        assert result.returncode == 0, result.stderr
+        log = (tmp_path / "podman.log").read_text(encoding="utf-8")
+        assert any(line.startswith("pull --quiet") for line in log.splitlines())
+
+    def test_pinned_tag_skips_refresh_pull(self, tmp_path: Path) -> None:
+        # Pinned tags are immutable by convention — no per-invocation pull.
+        wrapper = _render_wrapper(tmp_path, default_tag="0.2.0-dev")
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper, bin_dir, tmp_path, extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")}
+        )
+        assert result.returncode == 0, result.stderr
+        log = (tmp_path / "podman.log").read_text(encoding="utf-8")
+        assert not any(line.startswith("pull") for line in log.splitlines())
+
+    def test_offline_refresh_falls_back_to_local_image(self, tmp_path: Path) -> None:
+        # Moving tag + registry unreachable + image present locally → run anyway.
+        wrapper = _render_wrapper(tmp_path, default_tag="dev")
+        bin_dir = _fake_podman(tmp_path, pull_ok=False)
+        result = _run_wrapper(
+            wrapper, bin_dir, tmp_path, extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")}
+        )
+        assert result.returncode == 0, result.stderr
+        assert ":dev status" in result.stdout

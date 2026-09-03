@@ -522,7 +522,6 @@ podman run --rm -it --network=host \
 ```
 
 ### "manifest unknown" when the shim pulls
-
 The shim defaults to the `:stable` tag. Before the first stable release is
 tagged, that tag does not exist and every shim invocation fails with
 `manifest unknown`. Two fixes:
@@ -537,6 +536,15 @@ OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models setup
 
 Once the setup wizard has written `image:` into
 `/etc/outo-models/config.yaml`, the shim follows that choice automatically.
+
+### The wizard/CLI behaves like an old version (stale `:dev` / `:stable` tag)
+
+Moving tags (`:stable`, `:dev`, `:latest`) are refreshed from the registry on
+every shim invocation, so the CLI you run is always the newest published one.
+This refresh landed after the first dev builds — if your shim predates it,
+re-run the installer. Pinned tags (e.g. `:0.2.0-dev`) are never refreshed;
+they are immutable by convention. To bypass the network entirely, set
+`OUTO_IMAGE` to a pinned tag or a local build.
 
 ### `Error: statfs /etc/outo-models: no such file or directory`
 
