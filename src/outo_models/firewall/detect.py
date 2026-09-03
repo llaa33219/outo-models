@@ -3,7 +3,7 @@
 The container runs unprivileged (see AGENTS.md §2.3), so it cannot talk to
 firewalld / ufw / nftables directly. Instead, the CLI invokes small host-side
 probes from inside the container and decides which backend is in charge before
-asking the bundled `container/scripts/firewall-open.sh` to mutate firewall state.
+asking the bundled `assets/scripts/firewall-open.sh` to mutate firewall state.
 
 Probing order is fixed: firewalld → ufw → nftables → NONE. A binary that is
 missing (FileNotFoundError, exit 127) or returns an unexpected result simply

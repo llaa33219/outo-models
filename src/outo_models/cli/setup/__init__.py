@@ -13,7 +13,7 @@ Two surfaces:
       vars; the wizard refuses to prompt.
 
 The interactive path is what a human operator gets on the server host.
-The non-interactive path is what `container/scripts/*.sh` and any
+The non-interactive path is what `assets/scripts/*.sh` and any
 provisioning tool uses; both surface the same final message.
 
 The admin password is never logged, never echoed, never written to the

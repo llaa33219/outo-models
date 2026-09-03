@@ -37,7 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 CONTAINERFILE = REPO_ROOT / "Containerfile"
 ROOTFS = REPO_ROOT / "container" / "rootfs"
-SCRIPTS_DIR = REPO_ROOT / "container" / "scripts"
+SCRIPTS_DIR = REPO_ROOT / "src" / "outo_models" / "assets" / "scripts"
 QUADLET_FILE = REPO_ROOT / "container" / "examples" / "quadlet" / "outo-models.container"
 ENTRYPOINT = ROOTFS / "usr" / "local" / "bin" / "outo-entrypoint.sh"
 CONFIG_EXAMPLE = ROOTFS / "etc" / "outo-models" / "config.example.yaml"
@@ -50,9 +50,9 @@ SHARED_VOLUME_NAME = "outo-models-data"
 # Every shell script whose syntax we must validate. Includes both the
 # entrypoint (inside the image) and the host-side helpers.
 ALL_SHELL_SCRIPTS: tuple[Path, ...] = (
-    REPO_ROOT / "container" / "scripts" / "firewall-open.sh",
-    REPO_ROOT / "container" / "scripts" / "update.sh",
-    REPO_ROOT / "container" / "scripts" / "reset.sh",
+    SCRIPTS_DIR / "firewall-open.sh",
+    SCRIPTS_DIR / "update.sh",
+    SCRIPTS_DIR / "reset.sh",
     ENTRYPOINT,
 )
 
@@ -231,14 +231,14 @@ class TestContainerfileCopySources:
             "pyproject.toml",
             "uv.lock",
             "src",
-            "container/caddy/Caddyfile.j2",
+            "src/outo_models/assets/caddy/Caddyfile.j2",
             "container/rootfs",
             "container/rootfs/etc/outo-models/config.example.yaml",
             "container/rootfs/usr/local/bin/outo-entrypoint.sh",
-            "container/scripts",
-            "container/scripts/update.sh",
-            "container/scripts/reset.sh",
-            "container/scripts/firewall-open.sh",
+            "src/outo_models/assets/scripts",
+            "src/outo_models/assets/scripts/update.sh",
+            "src/outo_models/assets/scripts/reset.sh",
+            "src/outo_models/assets/scripts/firewall-open.sh",
         ),
     )
     def test_required_source_exists(self, rel_path: str) -> None:
@@ -405,8 +405,8 @@ class TestSharedVolumeName:
 
     FILES = (
         QUADLET_FILE,
-        REPO_ROOT / "container" / "scripts" / "update.sh",
-        REPO_ROOT / "container" / "scripts" / "reset.sh",
+        SCRIPTS_DIR / "update.sh",
+        SCRIPTS_DIR / "reset.sh",
     )
 
     @pytest.mark.parametrize("file_path", FILES, ids=lambda p: p.name)

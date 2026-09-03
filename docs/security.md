@@ -169,7 +169,7 @@ directly.
 ## 8. Caddy and ACME
 
 Storage: [src/outo_models/tls/caddy_manager.py](../src/outo_models/tls/caddy_manager.py),
-[container/caddy/Caddyfile.j2](../container/caddy/Caddyfile.j2).
+[src/outo_models/assets/caddy/Caddyfile.j2](../src/outo_models/assets/caddy/Caddyfile.j2).
 
 - Caddy owns ports 80 / 443 inside the container and handles ACME
   issuance / renewal
@@ -220,7 +220,7 @@ The container runs as uid/gid 1000 (`app`) per the
 [Containerfile](../Containerfile).
 
 - Anything that requires host privileges — firewall, DNS, certificate
-  renewal — is done by **host-side scripts** (`container/scripts/*.sh`),
+  renewal — is done by **host-side scripts** (`src/outo_models/assets/scripts/*.sh`),
   not from inside the container
 - Caddy needs `--cap-add NET_BIND_SERVICE` to bind 80 / 443 when running
   non-root; the `start` command attaches it automatically
@@ -233,7 +233,7 @@ The `outo-models` container never touches the host firewall directly.
 Responsibility is split cleanly:
 
 - In-container CLI: `outo_models.firewall.open_ports` builds the argv and
-  runs `bash container/scripts/firewall-open.sh <kind> <port...>`
+  runs `bash .../assets/scripts/firewall-open.sh <kind> <port...>`
 - Host script: calls `firewall-cmd` / `ufw` / `nft` directly (with
   `set -euo pipefail`)
 - When invoked non-root, `sudo -n` is attached automatically

@@ -5,7 +5,7 @@ These two commands run INSIDE the podman container (see `Containerfile`):
     * `serve`  — boots `uvicorn` against the FastAPI app returned by
                  `outo_models.server.create_app`.
     * `migrate` — runs `alembic upgrade head` against the configured DB
-                 URL so `container/scripts/update.sh` can call it from a
+                 URL so `assets/scripts/update.sh` can call it from a
                  throwaway container without booting the whole app.
 
 Both commands share the same `Settings` singleton the rest of the

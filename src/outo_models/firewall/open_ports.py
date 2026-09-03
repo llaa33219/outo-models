@@ -3,7 +3,7 @@
 The container itself runs unprivileged (see AGENTS.md §2.3) and must NOT
 touch `firewall-cmd` / `ufw` / `nft` directly. Instead, the setup wizard calls
 `open_ports()` from inside the container, which builds a precise argv for the
-bundled `container/scripts/firewall-open.sh` and executes it on the host.
+bundled `assets/scripts/firewall-open.sh` and executes it on the host.
 
 Elevation is the host script's responsibility, not ours: when the script is
 invoked without root it `exec sudo bash "$0" "$@"`s itself so an interactive
@@ -48,9 +48,11 @@ REQUIRED_PORTS: tuple[int, ...] = (80, 443)
 # and by operators who vendor the script outside the wheel.
 _SCRIPT_ENV_VAR = "OUTO_FIREWALL_SCRIPT"
 
-# `src/outo_models/firewall/open_ports.py` is 3 parents deep from the repo root.
-# parents[3] lands on the directory that contains `container/`.
-_DEFAULT_SCRIPT_RELATIVE = Path("container") / "scripts" / "firewall-open.sh"
+# The script ships as package data under `outo_models/assets/` so it is
+# present in the installed wheel too (a repo-relative path would not be).
+_DEFAULT_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1] / "assets" / "scripts" / "firewall-open.sh"
+)
 
 # Standard container marker files. The first is created by Docker; the second
 # by Podman / generic OCI runtimes. We probe both because the orchestrator
@@ -98,10 +100,7 @@ def _resolve_script_path() -> str:
     override = os.environ.get(_SCRIPT_ENV_VAR)
     if override:
         return override
-    # `Path(__file__).parents[3]` walks up from
-    # `src/outo_models/firewall/open_ports.py` to the repo root.
-    repo_root = Path(__file__).resolve().parents[3]
-    return str(repo_root / _DEFAULT_SCRIPT_RELATIVE)
+    return str(_DEFAULT_SCRIPT_PATH)
 
 
 def _build_argv(script: str, kind: FirewallKind, ports: list[int]) -> list[str]:

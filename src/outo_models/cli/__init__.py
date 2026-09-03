@@ -21,7 +21,7 @@ Three concerns live here:
    the message in red and exits with code 1 — never a Python traceback,
    since `AGENTS.md §2.1` forbids leaking secrets and tracebacks routinely do.
 
-3. **`container_script()` — locate `container/scripts/*.sh`.**
+3. **`container_script()` — locate bundled `assets/scripts/*.sh`.**
    Mirrors `firewall.open_ports._resolve_script_path` and
    `tls.caddy_manager._resolve_template_path` (both honor an `OUTO_*_SCRIPT`
    env override). The CLI uses it for `update.sh` / `reset.sh`; bundling
@@ -216,22 +216,19 @@ _CONTAINER_SCRIPT_ENV: dict[str, str] = {
 
 
 def container_script(name: str) -> str:
-    """Return the absolute path to a `container/scripts/<name>` file.
+    """Return the absolute path to a bundled host-side script.
 
     Honors `OUTO_UPDATE_SCRIPT` / `OUTO_RESET_SCRIPT` env overrides for
-    operators who vendor the script outside the wheel, and falls back to
-    `Path(__file__).resolve().parents[2] / "container" / "scripts" / name`
-    (this file lives at `src/outo_models/cli/__init__.py`, two parents
-    up from the repo root).
+    operators who vendor the script outside the wheel. The scripts ship as
+    package data under `outo_models/assets/scripts/` so they exist in the
+    installed wheel (a repo-relative path would not).
     """
     env_var = _CONTAINER_SCRIPT_ENV.get(name)
     if env_var:
         override = os.environ.get(env_var)
         if override:
             return override
-    here = Path(__file__).resolve()
-    repo_root = here.parents[2]
-    return str(repo_root / "container" / "scripts" / name)
+    return str(Path(__file__).resolve().parents[1] / "assets" / "scripts" / name)
 
 
 def stream_subprocess(argv: list[str]) -> int:

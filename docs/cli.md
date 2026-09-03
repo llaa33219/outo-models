@@ -188,7 +188,7 @@ English line:
 sudo outo-models update [--image <ref>]
 ```
 
-Invokes `container/scripts/update.sh`, which runs the following steps in
+Invokes `src/outo_models/assets/scripts/update.sh`, which runs the following steps in
 order:
 
 1. `podman pull <image>`
@@ -249,7 +249,7 @@ The gate is exactly three `yes` prompts read through `input()`.
 
 Once all three prompts pass, the following runs:
 
-1. `container/scripts/reset.sh` (host-side container / volume cleanup)
+1. `src/outo_models/assets/scripts/reset.sh` (host-side container / volume cleanup)
 2. If a local copy of `data_dir` exists, `shutil.rmtree` on it
 
 On success, stdout shows:
@@ -456,8 +456,8 @@ Additional operator-facing variables:
 | `OUTO_CONFIG` | YAML config path | `setup`, `start` (default `/etc/outo-models/config.yaml`) |
 | `OUTO_DESTRUCTIVE` | Safety gate for `reset --destroy` | Only `1` passes the gate |
 | `OUTO_CLOUDFLARE_API_TOKEN` | Create DNS records in Cloudflare mode | setup wizard (equivalent to `--admin-password`) |
-| `OUTO_FIREWALL_SCRIPT` | Override the firewall host-script path | `firewall.open_ports` (default `container/scripts/firewall-open.sh`) |
-| `OUTO_CADDYFILE_TEMPLATE` | Override the Caddyfile template path | `tls.caddy_manager` (default `container/caddy/Caddyfile.j2`) |
+| `OUTO_FIREWALL_SCRIPT` | Override the firewall host-script path | `firewall.open_ports` (default `src/outo_models/assets/scripts/firewall-open.sh`) |
+| `OUTO_CADDYFILE_TEMPLATE` | Override the Caddyfile template path | `tls.caddy_manager` (default `src/outo_models/assets/caddy/Caddyfile.j2`) |
 | `OUTO_UPDATE_SCRIPT` | Override `update.sh` path | `cli.container_script` |
 | `OUTO_RESET_SCRIPT` | Override `reset.sh` path | `cli.container_script` |
 | `OUTO_CADDY_ADMIN_URL` | Caddy admin API base URL | lifespan cert health check (default `http://localhost:2019`) |

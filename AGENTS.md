@@ -38,7 +38,7 @@ working in this repository **must** follow.
    rejected.
 3. **The container runs non-root.** Anything requiring host privileges — such
    as opening firewall ports — must be done by **host-side scripts**
-   (`container/scripts/`) invoked through the CLI, not from inside the
+   (`src/outo_models/assets/scripts/`) invoked through the CLI, not from inside the
    container.
 4. **SQLite is the default DB**, but the codebase must stay compatible with
    Postgres through SQLAlchemy. Do not write DB-specific SQL.
@@ -187,7 +187,9 @@ src/outo_models/
   server/                                 # FastAPI app, routers, middleware, Jinja templates
   cli/                                    # `outo-models` Typer CLI
   cli_remote/                             # CLI → admin REST client
-container/                                # rootfs, Caddyfile template, host scripts, systemd examples
+container/                                # image rootfs, systemd/quadlet examples
+src/outo_models/assets/                   # packaged runtime assets: Caddyfile.j2 + host scripts
+                                          # (wheel-safe — never resolve container/ from Python)
 docs/                                     # English reference documentation
 tests/                                    # unit / integration / fixtures
 ```

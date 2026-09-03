@@ -124,7 +124,7 @@ EOF
 chmod 0755 "${dest}"
 
 # The setup wizard opens host firewall ports by invoking this script on the
-# host. We embed it byte-identical to container/scripts/firewall-open.sh
+# host. We embed it byte-identical to src/outo_models/assets/scripts/firewall-open.sh
 # inside this installer so a single `curl | sudo bash` finishes the job
 # without a second fetch — the embedded copy is verified by
 # tests/unit/test_install_cli.py to prevent drift between the two files.

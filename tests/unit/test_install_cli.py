@@ -119,9 +119,8 @@ class TestInstallCliScript:
         # Drift guard: a change to either file alone would silently desync
         # the install from the container copy.
         body = extract_embedded_firewall(INSTALL_TEXT)
-        repo_text = (REPO_ROOT / "container" / "scripts" / "firewall-open.sh").read_text(
-            encoding="utf-8"
-        )
+        repo_script = REPO_ROOT / "src" / "outo_models" / "assets" / "scripts" / "firewall-open.sh"
+        repo_text = repo_script.read_text(encoding="utf-8")
         assert body == repo_text, (
             "embedded firewall-open.sh heredoc drifted from "
             "container/scripts/firewall-open.sh — re-sync by copying the "

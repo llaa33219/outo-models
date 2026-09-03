@@ -54,7 +54,7 @@ client is constructed lazily by the manager when the caller does not
 supply one — production code lets `create_app` wire a fresh client per
 request, tests inject a `MockTransport`. The manager does not start its
 own daemon: that job belongs to the operator and the host scripts
-(`container/scripts/`).
+(`assets/scripts/`).
 """
 
 from __future__ import annotations

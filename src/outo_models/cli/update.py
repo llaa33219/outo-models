@@ -1,6 +1,6 @@
 """`outo-models update` — host-side script wrapper.
 
-Delegates to `container/scripts/update.sh` (resolved via
+Delegates to `assets/scripts/update.sh` (resolved via
 `container_script()`) which performs:
 
     1. `podman pull <image-tag>`

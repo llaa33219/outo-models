@@ -4,7 +4,7 @@ Public API (consumed by WP-11 scheduler jobs and WP-13 server startup):
 
     from outo_models.tls import (
         TlsConfig,         # typed TLS configuration
-        render_caddyfile,  # render container/caddy/Caddyfile.j2
+        render_caddyfile,  # render assets/caddy/Caddyfile.j2
         CaddyManager,      # async client over Caddy's admin API
         CertHealth,        # cert freshness snapshot
         check_cert_health, # async: TLS handshake, parse notAfter

@@ -399,7 +399,7 @@ Typer app (cli/main.py) — OutoError → English one-liner + exit 1
         │       │     │   (prints the host command, continues) so the install completes
         │       │     │   even when the wizard runs via the host shim
         │       │     └── all other steps are unchanged
-        │       └── update → container/scripts/update.sh
+        │       └── update → src/outo_models/assets/scripts/update.sh
         │       └── start  → podman run (config.yaml driven)
         │       └── stop/restart/status → podman calls
         │

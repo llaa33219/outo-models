@@ -5,14 +5,14 @@ optional DNS-01 plugin baked into the image). This module is the Python side
 of that contract:
 
 * `TlsConfig`           — typed configuration the setup wizard hands us.
-* `render_caddyfile()`  — Jinja renderer for `container/caddy/Caddyfile.j2`.
+* `render_caddyfile()`  — Jinja renderer for `assets/caddy/Caddyfile.j2`.
 * `CaddyManager`        — thin async client over Caddy's admin API (POST
                           `/load`, GET `/config/`).
 
 Internal / IP mode: `TlsConfig.tls_enabled=False` drops every ACME-related
 block from the rendered Caddyfile (no global `email`, no `acme_ca`, no
 per-site `tls { ... }`). The site block binds on plain `:80` — see
-`container/caddy/Caddyfile.j2` for the exact conditional layout.
+`assets/caddy/Caddyfile.j2` for the exact conditional layout.
 
 Secrets hygiene: the Cloudflare API token is read by Caddy from its
 environment at runtime (`{env.CLOUDFLARE_API_TOKEN}`) and is never embedded
@@ -38,9 +38,9 @@ from outo_models.exceptions import ConfigError, OutoError
 # and operators who vendor the template outside the wheel.
 _TEMPLATE_ENV_VAR = "OUTO_CADDYFILE_TEMPLATE"
 
-# `src/outo_models/tls/caddy_manager.py` is 3 parents deep from the repo root;
-# `parents[3]` lands on the directory that contains `container/`.
-_DEFAULT_TEMPLATE_PATH = Path("container") / "caddy" / "Caddyfile.j2"
+# The template ships as package data under `outo_models/assets/` so it is
+# present in the installed wheel too (a repo-relative path would not be).
+_DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "assets" / "caddy" / "Caddyfile.j2"
 
 # Caddy admin API error mapping.
 _RELOAD_BAD_REQUEST = "caddy_rejected"  # 4xx
@@ -110,8 +110,7 @@ def _resolve_template_path() -> Path:
     override = os.environ.get(_TEMPLATE_ENV_VAR)
     if override:
         return Path(override)
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / _DEFAULT_TEMPLATE_PATH
+    return _DEFAULT_TEMPLATE_PATH
 
 
 # Single shared Environment, configured with the two block-trim flags so the

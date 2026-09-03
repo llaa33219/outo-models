@@ -17,7 +17,7 @@ it implements the rule exactly as the spec demands:
     * On a non-interactive stdin (EOF before any prompt completes) the
       command must abort safely with exit 1 — never default to "yes".
     * Only after all three are entered exactly does the command:
-        1. Run `container/scripts/reset.sh` (host-side container wipe).
+        1. Run `assets/scripts/reset.sh` (host-side container wipe).
         2. Wipe the local `data_dir` (dev installs without podman).
 
 The dry-run summary is computed against the local DB (the operator runs
@@ -60,7 +60,7 @@ _YES_TOKEN = "yes"  # noqa: S105 — keyword, not a password
 # on this exact value so an accidental change fails CI immediately.
 _REQUIRED_YES_COUNT = 3
 
-# Container / volume names match `container/scripts/reset.sh`. They are
+# Container / volume names match `assets/scripts/reset.sh`. They are
 # duplicated here only so the dry-run summary can render the planned
 # destruction without spawning the script.
 _CONTAINER_NAME = "outo-models"

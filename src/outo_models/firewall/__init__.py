@@ -14,7 +14,7 @@ Public API (consumed by the setup wizard in WP-14):
     )
 
 The container runs unprivileged (AGENTS.md §2.3); `open_ports` builds an argv
-for `container/scripts/firewall-open.sh` and never shells out via `shell=True`.
+for `assets/scripts/firewall-open.sh` and never shells out via `shell=True`.
 The host script self-elevates via `sudo` when needed (interactive prompt
 allowed), so the Python side never inspects `geteuid`, never prefixes
 `sudo -n`, and never raises `firewall_permission`. When the orchestrator

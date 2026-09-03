@@ -74,14 +74,14 @@ RUN groupadd -r app -g 1000 \
 # runtime installs (the `dev` flavor) don't need root.
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 COPY --chown=app:app src /app/src
-COPY --chown=app:app container/caddy/Caddyfile.j2 /opt/outo-models/caddy/Caddyfile.j2
+COPY --chown=app:app src/outo_models/assets/caddy/Caddyfile.j2 /opt/outo-models/caddy/Caddyfile.j2
 # rootfs → / copies etc/ + usr/ trees verbatim. The entrypoint script lands
 # at /usr/local/bin/outo-entrypoint.sh; the example config at
 # /etc/outo-models/config.example.yaml.
 COPY --chown=app:app container/rootfs/ /
 # Host-side scripts (firewall-open / update / reset) live at a known path
 # inside the image so the CLI can extract or invoke them via `podman run`.
-COPY --chown=app:app container/scripts/ /opt/outo-models/scripts/
+COPY --chown=app:app src/outo_models/assets/scripts/ /opt/outo-models/scripts/
 
 # Caddy binary built with the cloudflare DNS plugin.
 COPY --from=caddy-builder /usr/bin/caddy /usr/local/bin/caddy

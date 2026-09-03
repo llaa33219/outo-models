@@ -198,7 +198,7 @@ No password is ever echoed again after the wizard. If it is lost, run
 ### 6) Caddyfile rendering (`render_caddyfile_setup`)
 
 `outo_models.tls.caddy_manager.render_caddyfile` renders
-[container/caddy/Caddyfile.j2](../container/caddy/Caddyfile.j2) to
+[src/outo_models/assets/caddy/Caddyfile.j2](../src/outo_models/assets/caddy/Caddyfile.j2) to
 `/etc/outo-models/Caddyfile`. The wizard passes `TlsConfig.tls_enabled =
 not answers.is_internal`, so:
 
