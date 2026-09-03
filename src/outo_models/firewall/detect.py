@@ -38,11 +38,17 @@ async def _run(*args: str) -> tuple[int, str]:
     caller as a `(non-zero, "")` tuple — callers decide whether a non-zero
     means "not this backend" or a hard failure.
     """
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        # Binary not installed — report as "not this backend" (127) instead
+        # of crashing the caller. Seen in the field: the container image has
+        # no firewall tools, so detection inside it must not explode.
+        return 127, ""
     stdout_bytes, _ = await proc.communicate()
     # `communicate()` returns the process's exit code; `None` would mean the
     # process is still running, which the asyncio contract forbids here.

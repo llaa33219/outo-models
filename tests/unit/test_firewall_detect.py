@@ -255,3 +255,28 @@ def test_module_exports_match_contract() -> None:
     # Sanity: asyncio.create_subprocess_exec stays importable on the module so
     # monkeypatching `asyncio.create_subprocess_exec` (per test) intercepts it.
     assert hasattr(detect_mod.asyncio, "create_subprocess_exec")
+
+
+class TestMissingBinaries:
+    """A missing firewall binary must mean 'not this backend', never a crash.
+
+    Field failure: the container image ships no firewall tools, so
+    `firewall-cmd` raised FileNotFoundError out of detect_firewall() and
+    killed the setup wizard mid-run.
+    """
+
+    async def test_all_binaries_missing_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def _missing(*_a: object, **_k: object) -> object:
+            raise FileNotFoundError("No such file or directory: 'firewall-cmd'")
+
+        monkeypatch.setattr(detect_mod.asyncio, "create_subprocess_exec", _missing)
+        assert await detect_mod.detect_firewall() is FirewallKind.NONE
+
+    async def test_firewalld_missing_but_ufw_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def _dispatch(*args: object, **_k: object) -> object:
+            if args[0] == "firewall-cmd":
+                raise FileNotFoundError("missing")
+            return _FakeProc(0, "Status: active\n", "")
+
+        monkeypatch.setattr(detect_mod.asyncio, "create_subprocess_exec", _dispatch)
+        assert await detect_mod.detect_firewall() is FirewallKind.UFW

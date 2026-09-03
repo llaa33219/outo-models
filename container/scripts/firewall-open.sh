@@ -91,7 +91,29 @@ add_nftables() {
     done
 }
 
+print_no_firewall_guidance() {
+    cat <<'EOF'
+No firewall was detected. You must open the externally reachable ports
+(80, 443) yourself in the OS firewall or your cloud security group.
+EOF
+}
+
 case "$kind" in
+    auto)
+        # Host-side detection — used when the caller (e.g. the container
+        # shim) cannot probe the host firewall itself.
+        if command -v firewall-cmd >/dev/null 2>&1 \
+            && [[ "$(firewall-cmd --state 2>/dev/null)" == "running" ]]; then
+            add_firewalld "$@"
+        elif command -v ufw >/dev/null 2>&1 \
+            && ufw status 2>/dev/null | grep -q "Status: active"; then
+            add_ufw "$@"
+        elif command -v nft >/dev/null 2>&1 && nft list ruleset >/dev/null 2>&1; then
+            add_nftables "$@"
+        else
+            print_no_firewall_guidance
+        fi
+        ;;
     firewalld)
         add_firewalld "$@"
         ;;
@@ -102,10 +124,7 @@ case "$kind" in
         add_nftables "$@"
         ;;
     none)
-        cat <<'EOF'
-No firewall was detected. You must open the externally reachable ports
-(80, 443) yourself in the OS firewall or your cloud security group.
-EOF
+        print_no_firewall_guidance
         ;;
     *)
         echo "unknown firewall kind: ${kind}" >&2

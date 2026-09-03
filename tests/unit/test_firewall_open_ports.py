@@ -32,7 +32,7 @@ open_ports_mod = sys.modules["outo_models.firewall.open_ports"]
 # Exact host command the wizard prints to operators when the firewall cannot
 # run inside the container. The contract is fixed: the message MUST contain
 # this placeholder command verbatim so agent A's setup wizard can surface it.
-EXPECTED_HOST_COMMAND = "/usr/local/share/outo-models/firewall-open.sh <kind> <ports...>"
+EXPECTED_HOST_COMMAND = "/usr/local/share/outo-models/firewall-open.sh auto <ports...>"
 
 
 @dataclass
@@ -388,3 +388,32 @@ class TestOpenPortsResultShape:
         # Hard regression guard: the orchestrator dropped sudo handling; the
         # dataclass must not expose `needs_sudo` even as a default-True field.
         assert "needs_sudo" not in OpenPortsResult.__dataclass_fields__
+
+
+class TestContainerCheckPrecedesDetection:
+    """In-container, the refusal must fire BEFORE any host probing.
+
+    Field failure: with kind=None, detect_firewall() ran first and crashed
+    on the missing firewall-cmd binary inside the image — the wizard died
+    with FileNotFoundError instead of printing the host command.
+    """
+
+    async def test_detection_never_runs_in_container(
+        self,
+        proc: _ProcRecorder,
+        fake_script: str,
+        in_container: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # open_ports_mod (module level, via sys.modules) — the package
+        # __init__ re-export shadows a plain `import ... as` here.
+        def _forbidden() -> None:
+            raise AssertionError("detect_firewall must not be called inside a container")
+
+        monkeypatch.setattr(open_ports_mod, "detect_firewall", _forbidden)
+        with pytest.raises(OutoError) as excinfo:
+            await open_ports(ports=(80, 443), kind=None)
+        assert excinfo.value.code == "firewall_container_host_required"
+        # The host command uses the script's host-side `auto` detection.
+        assert " auto " in str(excinfo.value)
+        assert proc.calls == []

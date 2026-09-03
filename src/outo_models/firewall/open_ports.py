@@ -63,7 +63,9 @@ _MARKER_PATHS: tuple[Path, ...] = (
 # Exact host command the wizard must tell operators to run on the host.
 # Lives at the module level so (a) tests can assert on it byte-for-byte and
 # (b) the wizard (cli/setup/_effect.py) can splice it into its guidance.
-HOST_FIREWALL_COMMAND = "/usr/local/share/outo-models/firewall-open.sh <kind> <ports...>"
+# `auto` = the script detects the host firewall kind itself (the container
+# cannot probe it for us).
+HOST_FIREWALL_COMMAND = "/usr/local/share/outo-models/firewall-open.sh auto <ports...>"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,12 +115,14 @@ def _build_argv(script: str, kind: FirewallKind, ports: list[int]) -> list[str]:
     return ["bash", script, kind.value, *(str(p) for p in ports)]
 
 
-def _container_error(kind: FirewallKind, ports: list[int]) -> OutoError:
+def _container_error(ports: list[int]) -> OutoError:
     """Build the typed error that tells the operator exactly what to run on the host.
 
     The message MUST contain `HOST_FIREWALL_COMMAND` verbatim — the setup
     wizard prints that placeholder command so the operator knows where the
-    host-side script lives and that it will prompt for sudo itself.
+    host-side script lives and that it will prompt for sudo itself. The
+    command uses the `auto` kind: the host script detects the firewall
+    backend itself, which the container cannot do on the host's behalf.
     """
     return OutoError(
         (
@@ -171,15 +175,17 @@ async def open_ports(
             the message carries the script's stderr tail.
     """
     port_list = [int(p) for p in ports]
+
+    if _in_container():
+        # Check BEFORE detection: the container image ships no firewall
+        # tooling, so detect_firewall() here is meaningless (and must never
+        # be allowed to crash the wizard). The host command names the `auto`
+        # kind — the script detects the backend on the host itself.
+        raise _container_error(port_list)
+
     resolved_kind = kind if kind is not None else await detect_firewall()
     script = _resolve_script_path()
     argv = _build_argv(script, resolved_kind, port_list)
-
-    if _in_container():
-        # Refuse to spawn: the script will never reach the host firewall from
-        # inside the container. Surface the exact command the wizard should
-        # print to the operator.
-        raise _container_error(resolved_kind, port_list)
 
     if dry_run:
         return OpenPortsResult(
