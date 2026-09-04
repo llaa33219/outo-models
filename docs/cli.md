@@ -252,6 +252,13 @@ directory itself are kept (the host shim bind-mounts it).
 
 > Through the host shim, `OUTO_DESTRUCTIVE=1` set in your shell is forwarded
 > into the CLI container automatically.
+>
+> For the destroy path the shim deliberately does NOT mount the data volume
+> into the CLI container — a container holding a volume cannot delete it
+> (and self-removal mid-sweep is a hard crash). The gate therefore cannot
+> count users/repos in that configuration and says "ALL server data"
+> instead of showing fabricated zeros. The dry-run (`outo-models reset`)
+> keeps the mount and always shows real counts.
 
 The gate is exactly three `yes` prompts read through `input()`.
 

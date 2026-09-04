@@ -77,15 +77,22 @@ fi
 # actually gone, so remove every holder, not just the named container.
 if "${podman_cmd[@]}" volume exists "${volume_name}"; then
     # Never sweep the container we are running in — removing ourselves
-    # mid-script is a self-kill (seen twice in the field). Identify ourselves
-    # robustly: with `--network=host` the hostname is the HOST's name, not
-    # our container id, so also harvest 64-hex ids from the cgroup path.
+    # mid-script is a self-kill (seen twice in the field). Self ids are
+    # harvested from three sources because each has a failure mode:
+    # hostname (wrong under --network=host), /proc/self/cgroup (no id under
+    # rootless cgroup v2), /run/.containerenv (podman >= 4.x only).
     self_patterns=("$(hostname)")
     cgroup_file="${OUTO_SELF_CGROUP_FILE:-/proc/self/cgroup}"
     if [[ -r "${cgroup_file}" ]]; then
         while IFS= read -r cid; do
             [[ -n "${cid}" ]] && self_patterns+=("${cid}")
         done < <(grep -oE '[0-9a-f]{64}' "${cgroup_file}" || true)
+    fi
+    containerenv_file="${OUTO_SELF_CONTAINERENV_FILE:-/run/.containerenv}"
+    if [[ -r "${containerenv_file}" ]]; then
+        while IFS= read -r cid; do
+            [[ -n "${cid}" ]] && self_patterns+=("${cid}")
+        done < <(grep -oE '[0-9a-f]{64}' "${containerenv_file}" || true)
     fi
 
     mapfile -t raw_holders < <("${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q)

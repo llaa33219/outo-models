@@ -332,3 +332,33 @@ class TestWrapperDestructiveEnvPassThrough:
         result = _run_wrapper(wrapper, bin_dir, tmp_path, extra_env=env)
         assert result.returncode == 0, result.stderr
         assert "OUTO_DESTRUCTIVE" not in result.stdout
+
+
+class TestWrapperResetDestroyUnmountsVolume:
+    """reset --destroy must not hold the volume it deletes (self-kill class)."""
+
+    def test_reset_destroy_skips_volume_mount(self, tmp_path: Path) -> None:
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+            args=["reset", "--destroy"],
+        )
+        assert result.returncode == 0, result.stderr
+        assert "outo-models-data:/var/lib/outo-models" not in result.stdout
+
+    def test_reset_dry_run_keeps_volume_mount(self, tmp_path: Path) -> None:
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+            args=["reset"],
+        )
+        assert result.returncode == 0, result.stderr
+        assert "outo-models-data:/var/lib/outo-models" in result.stdout

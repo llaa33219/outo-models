@@ -91,8 +91,18 @@ fi
 
 args=(run --rm --network=host
     --userns=keep-id
-    -v /etc/outo-models:/etc/outo-models
-    -v outo-models-data:/var/lib/outo-models)
+    -v /etc/outo-models:/etc/outo-models)
+
+# reset --destroy deletes the data volume — mounting it here would make this
+# very container a volume holder, and every self-identification trick has a
+# failure mode (hostname under --network=host, empty cgroup ids under
+# rootless cgroup v2). Simply not holding the volume removes the whole class.
+# Dry-run `reset` keeps the mount so the summary measures real usage.
+if [[ "\${1:-}" == "reset" && "\${2:-}" == "--destroy" ]]; then
+    :
+else
+    args+=(-v outo-models-data:/var/lib/outo-models)
+fi
 
 # Without the host socket, container lifecycle commands (start/stop/…)
 # cannot work; the CLI reports that cleanly on its own.

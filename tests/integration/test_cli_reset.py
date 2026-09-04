@@ -288,3 +288,18 @@ class TestInvariants:
 
     def test_yes_token_is_lowercase_yes(self) -> None:
         assert _YES_TOKEN == "yes"
+
+
+class TestGateWithUnknownCounts:
+    """When the volume cannot be measured (destroy path via the shim mounts
+    no volume), the gate must say ALL — never fabricated zeros."""
+
+    def test_gate_messages_without_counts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        answers = iter([_YES_TOKEN] * _REQUIRED_YES_COUNT)
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+        assert _gather_yes_confirmations(None, None, None) is True
+
+    def test_gate_messages_still_exact_with_counts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        answers = iter([_YES_TOKEN] * _REQUIRED_YES_COUNT)
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+        assert _gather_yes_confirmations(3, 2, 1024) is True

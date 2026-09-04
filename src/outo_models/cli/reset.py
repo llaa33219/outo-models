@@ -85,56 +85,71 @@ def reset(
     _reset_impl(destroy=destroy)
 
 
-async def _compute_summary() -> tuple[int, int, int, str]:
+async def _compute_summary() -> tuple[int | None, int | None, int | None, str]:
     """Return `(user_count, repo_count, total_bytes, volume_name)`.
 
-    `total_bytes` sums the on-disk size of every file under
-    `data_dir / "repos"`. If the engine / schema is missing the dry-run
-    prints zeros (a brand-new install reset should not crash).
+    Counts are `None` when the data cannot actually be measured — the DB
+    file missing (fresh install, or the destroy path through the host shim
+    where the volume is deliberately NOT mounted so the CLI container never
+    holds what it deletes). Showing fabricated zeros for a destructive gate
+    would understate the destruction, so None renders as "all" instead.
     """
     settings = get_settings()
     data_dir = Path(settings.data_dir)
     repos_dir = data_dir / "repos"
 
-    user_count = 0
-    repo_count = 0
-    total_bytes = 0
+    user_count: int | None = None
+    repo_count: int | None = None
+    total_bytes: int | None = None
 
-    try:
-        engine = get_engine(settings)
-        factory = get_session_factory(engine)
-        async with factory() as session:
-            user_count = (
-                await session.execute(select(func.count()).select_from(User))
-            ).scalar_one()
-            repo_count = (
-                await session.execute(select(func.count()).select_from(Repo))
-            ).scalar_one()
-    except Exception:  # noqa: S110 — dry-run must never crash on DB errors
-        # Schema not migrated yet, engine not reachable, etc. → print zeros.
-        pass
+    db_file = data_dir / "db.sqlite3"
+    if db_file.is_file():
+        try:
+            engine = get_engine(settings)
+            factory = get_session_factory(engine)
+            async with factory() as session:
+                user_count = (
+                    await session.execute(select(func.count()).select_from(User))
+                ).scalar_one()
+                repo_count = (
+                    await session.execute(select(func.count()).select_from(Repo))
+                ).scalar_one()
+        except Exception:
+            user_count = None
+            repo_count = None
 
     if repos_dir.exists():
+        total = 0
         for path in repos_dir.rglob("*"):
             if path.is_file() and not path.is_symlink():
                 try:
-                    total_bytes += path.stat().st_size
+                    total += path.stat().st_size
                 except OSError:
                     continue
+        total_bytes = total
 
-    return int(user_count), int(repo_count), int(total_bytes), _VOLUME_NAME
+    return user_count, repo_count, total_bytes, _VOLUME_NAME
 
 
-def _print_dry_run(user_count: int, repo_count: int, total_bytes: int, volume: str) -> None:
+def _print_dry_run(
+    user_count: int | None, repo_count: int | None, total_bytes: int | None, volume: str
+) -> None:
     """Print the would-be-destroyed summary."""
+
+    def _c(value: int | None) -> str:
+        return str(value) if value is not None else "unknown (not measurable here)"
+
+    def _b(value: int | None) -> str:
+        return format_bytes(value) if value is not None else "unknown"
+
     console = Console()
     console.print(
         "[bold yellow]\\[dry-run] The following data would be deleted "
         "(no actual deletion will happen):[/bold yellow]"
     )
-    console.print(f"  - users: {user_count}")
-    console.print(f"  - repositories: {repo_count}")
-    console.print(f"  - disk usage: {format_bytes(total_bytes)}")
+    console.print(f"  - users: {_c(user_count)}")
+    console.print(f"  - repositories: {_c(repo_count)}")
+    console.print(f"  - disk usage: {_b(total_bytes)}")
     console.print(f"  - container: {_CONTAINER_NAME}")
     console.print(f"  - volume: {volume}")
     config_path = Path(os.environ.get("OUTO_CONFIG", "/etc/outo-models/config.yaml"))
@@ -146,27 +161,48 @@ def _print_dry_run(user_count: int, repo_count: int, total_bytes: int, volume: s
     )
 
 
+_IRREVERSIBLE_WARNING = (
+    "[WARNING] This action is irreversible (no recovery). All data will be gone for good."
+)
+
+
 def _print_escalation_warning(
-    stage: int, user_count: int, repo_count: int, total_bytes: int
+    stage: int, user_count: int | None, repo_count: int | None, total_bytes: int | None
 ) -> None:
     """Print the escalating warning shown above each `yes` prompt."""
     console = Console(stderr=True)
-    summaries = {
-        1: (
-            f"[Are you sure?] This will permanently delete {user_count} users, "
-            f"{repo_count} repositories, {format_bytes(total_bytes)} of data."
-        ),
-        2: "[WARNING] This action is irreversible (no recovery). All data will be gone for good.",
-        3: (
-            f"[FINAL CONFIRMATION] The container '{_CONTAINER_NAME}' and the volume "
-            f"'{_VOLUME_NAME}', plus the local data directory, will all be deleted. "
-            f"{user_count} users and {repo_count} repositories will disappear."
-        ),
-    }
+    if user_count is None:
+        # Counts unknown (volume not mounted / fresh install): name WHAT is
+        # destroyed without inventing numbers — a wrong "0 users" would
+        # understate a destructive action.
+        summaries = {
+            1: "[Are you sure?] This will permanently delete ALL server data.",
+            2: _IRREVERSIBLE_WARNING,
+            3: (
+                f"[FINAL CONFIRMATION] The container '{_CONTAINER_NAME}', the volume "
+                f"'{_VOLUME_NAME}' with all its contents, the local data directory, "
+                "and the generated config files will all be deleted."
+            ),
+        }
+    else:
+        summaries = {
+            1: (
+                f"[Are you sure?] This will permanently delete {user_count} users, "
+                f"{repo_count} repositories, {format_bytes(total_bytes or 0)} of data."
+            ),
+            2: _IRREVERSIBLE_WARNING,
+            3: (
+                f"[FINAL CONFIRMATION] The container '{_CONTAINER_NAME}' and the volume "
+                f"'{_VOLUME_NAME}', plus the local data directory, will all be deleted. "
+                f"{user_count} users and {repo_count} repositories will disappear."
+            ),
+        }
     console.print(f"\n[bold red]{summaries[stage]}[/bold red]")
 
 
-def _gather_yes_confirmations(user_count: int, repo_count: int, total_bytes: int) -> bool:
+def _gather_yes_confirmations(
+    user_count: int | None, repo_count: int | None, total_bytes: int | None
+) -> bool:
     """Run the triple-yes gate; return True iff every prompt accepted `yes`.
 
     A non-interactive stdin (EOF) aborts safely — the builtin `input()`
