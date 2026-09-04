@@ -187,6 +187,31 @@ async def open_firewall_ports(ports: list[int]) -> None:
     )
 
 
+async def ensure_low_port_binding(ports: list[int]) -> None:
+    """Lower the host's unprivileged-port threshold when the chosen ports need it.
+
+    Same tolerance contract as `open_firewall_ports`:
+        * `low_ports_host_required` (container) → print the host command
+          from the exception message and continue.
+        * `low_ports_command_failed` → warn and continue (the server will
+          still run; the entrypoint prints its own bind warning).
+    """
+    from outo_models.hostsys import ensure_low_ports
+
+    try:
+        result = await ensure_low_ports(min(ports))
+    except OutoError as exc:
+        if exc.code in ("low_ports_host_required", "low_ports_command_failed"):
+            Console().print(f"[yellow][warning] low-port sysctl step skipped: {exc}[/yellow]")
+            return
+        raise
+    if result.was_blocked:
+        Console().print(
+            "[green][done] unprivileged low-port binding enabled "
+            f"(min port {result.min_port})[/green]"
+        )
+
+
 async def bootstrap_database(answers: SetupAnswers) -> None:
     """Run migrations, then create the admin user directly in the DB."""
     ensure_dirs()

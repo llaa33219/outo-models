@@ -208,6 +208,10 @@ def _run_setup(
     if not skip_firewall:
         asyncio.run(_effect.open_firewall_ports(answers.ports))
 
+    # (3b) Rootless containers cannot bind low ports unless the host kernel
+    # threshold is lowered — request it automatically when needed.
+    asyncio.run(_effect.ensure_low_port_binding(answers.ports))
+
     # (4) Data dirs + migrations + admin user.
     asyncio.run(_effect.bootstrap_database(answers))
 

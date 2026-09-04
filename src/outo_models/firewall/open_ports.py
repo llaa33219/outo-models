@@ -86,13 +86,16 @@ class OpenPortsResult:
     commands: list[list[str]]
 
 
-def _in_container() -> bool:
+def in_container() -> bool:
     """True iff the current process is running inside a container.
 
     Probes the standard Docker / Podman / OCI marker files. Cheap to call:
     two `stat`s on absolute paths the kernel resolves instantly.
     """
     return any(p.exists() for p in _MARKER_PATHS)
+
+
+_in_container = in_container  # keep the private alias for existing callers
 
 
 def _resolve_script_path() -> str:

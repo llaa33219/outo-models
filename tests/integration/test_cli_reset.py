@@ -236,6 +236,44 @@ class TestDestroyExecutes:
         assert not marker_in_data.exists()
         assert not data_dir.exists()
 
+    def test_destroy_wipes_config_dir_but_keeps_example(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Reset must return the machine to the first-install state: the
+        # wizard's config.yaml + Caddyfile are operator state and go away;
+        # the shipped config.example.yaml stays (it is not state).
+        fake_script = tmp_path / "reset.sh"
+        fake_script.write_text("#!/usr/bin/env bash\nexit 0\n")
+        fake_script.chmod(0o755)
+        monkeypatch.setenv("OUTO_RESET_SCRIPT", str(fake_script))
+        monkeypatch.setenv(_DESTRUCTIVE_ENV, "1")
+
+        config_dir = tmp_path / "etc"
+        config_dir.mkdir()
+        (config_dir / "config.yaml").write_text("domain: 192.168.0.10\n")
+        (config_dir / "Caddyfile").write_text(":80\n")
+        (config_dir / "config.example.yaml").write_text("# shipped\n")
+        monkeypatch.setenv("OUTO_CONFIG", str(config_dir / "config.yaml"))
+        monkeypatch.setenv("OUTO_DATA_DIR", str(tmp_path / "absent-data"))
+
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        result = runner.invoke(
+            app,
+            ["reset", "--destroy"],
+            input="\n".join([_YES_TOKEN] * _REQUIRED_YES_COUNT) + "\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert not (config_dir / "config.yaml").exists()
+        assert not (config_dir / "Caddyfile").exists()
+        assert (config_dir / "config.example.yaml").exists()
+        assert config_dir.is_dir()  # the shim bind-mounts this dir — keep it
+
 
 # ---------------------------------------------------------------------------
 # Sanity: required counts / tokens are constants the spec mandates

@@ -230,15 +230,26 @@ behavior is:
 Dry-run example output:
 
 ```
-[dry-run] The following data will be deleted (no destructive action taken):
-  - Users: 12
-  - Repositories: 47
-  - Disk usage: 18.42 GiB
-  - Container: outo-models
-  - Volume: outo-models-data
+[dry-run] The following data would be deleted (no actual deletion will happen):
+  - users: 12
+  - repositories: 47
+  - disk usage: 18.42 GiB
+  - container: outo-models
+  - volume: outo-models-data
+  - config files: /etc/outo-models (config.yaml, Caddyfile, …)
 
-To actually delete, pass --destroy together with OUTO_DESTRUCTIVE=1.
+To actually delete, pass the --destroy option together with the environment variable OUTO_DESTRUCTIVE=1.
 ```
+
+A real destroy removes: the `outo-models` container, the
+`outo-models-data` volume (all repositories, DB, certificates), the local
+data directory (dev installs), and every operator-generated file in the
+config directory (`config.yaml`, `Caddyfile`, …) — the machine returns to
+the first-install state. The shipped `config.example.yaml` and the config
+directory itself are kept (the host shim bind-mounts it).
+
+> Through the host shim, `OUTO_DESTRUCTIVE=1` set in your shell is forwarded
+> into the CLI container automatically.
 
 The gate is exactly three `yes` prompts read through `input()`.
 

@@ -105,16 +105,24 @@ the container by hand.
 
 ### Host sysctl tuning
 
-If `/proc/sys/net/ipv4/ip_unprivileged_port_start` is `0`, unprivileged
-processes can bind to ports below 80 — but this is **not recommended**
-from a security standpoint.
+Since v0.2.0 the setup wizard checks this automatically: when the chosen
+ports sit below the kernel threshold it runs
+`/usr/local/share/outo-models/enable-low-ports.sh <min-port>` on the host
+(the script self-elevates with sudo, writes a persistent
+`/etc/sysctl.d/90-outo-models-low-ports.conf` drop-in, and applies it).
+When the wizard runs through the container shim it cannot touch the host
+kernel and instead prints that command for you to run by hand.
+
+To do it fully manually instead (the value should be your lowest exposed
+port — `80` in a typical install; `0` allows binding every port and is not
+recommended):
 
 ```bash
 # Temporary
-sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
 
 # Persistent
-echo 'net.ipv4.ip_unprivileged_port_start=0' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf
+echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf
 ```
 
 ### Host port remapping

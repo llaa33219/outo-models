@@ -137,6 +137,8 @@ def _print_dry_run(user_count: int, repo_count: int, total_bytes: int, volume: s
     console.print(f"  - disk usage: {format_bytes(total_bytes)}")
     console.print(f"  - container: {_CONTAINER_NAME}")
     console.print(f"  - volume: {volume}")
+    config_path = Path(os.environ.get("OUTO_CONFIG", "/etc/outo-models/config.yaml"))
+    console.print(f"  - config files: {config_path.parent} (config.yaml, Caddyfile, …)")
     console.print()
     console.print(
         "To actually delete, pass the [bold]--destroy[/bold] option "
@@ -211,6 +213,30 @@ def _wipe_local_data_dir() -> None:
         ) from exc
 
 
+def _wipe_config_dir() -> None:
+    """Remove the wizard-generated config files (config.yaml, Caddyfile).
+
+    Reset must return the machine to the first-install state: without this,
+    the next `setup` would silently reuse the previous domain/secrets. The
+    directory itself is kept — the host shim bind-mounts it and podman
+    refuses missing bind sources.
+    """
+    config_path = Path(os.environ.get("OUTO_CONFIG", "/etc/outo-models/config.yaml"))
+    config_dir = config_path.parent
+    if not config_dir.is_dir():
+        return
+    for entry in config_dir.iterdir():
+        if entry.name == "config.example.yaml":
+            continue  # shipped example, not operator state
+        try:
+            entry.unlink() if entry.is_file() or entry.is_symlink() else shutil.rmtree(entry)
+        except OSError as exc:
+            raise OutoError(
+                f"failed to delete {entry}: {exc}",
+                code="reset_config_wipe_failed",
+            ) from exc
+
+
 def _reset_impl(destroy: bool) -> None:
     """Top-level handler — split out so tests can call it directly."""
     summary = asyncio.run(_compute_summary())
@@ -253,6 +279,7 @@ def _reset_impl(destroy: bool) -> None:
 
     try:
         _wipe_local_data_dir()
+        _wipe_config_dir()
     except OutoError as exc:
         asyncio.run(_dispose_engines_safe())
         render_error(exc)

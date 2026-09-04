@@ -22,21 +22,23 @@ INSTALL_TEXT = INSTALL_SCRIPT.read_text(encoding="utf-8")
 # Quoted on the bash side so no expansion happens while writing the file.
 _FIREWALL_HEREDOC_START = "cat > \"${firewall_dest}\" <<'OUTO_FIREWALL_HEREDOC_END'"
 _FIREWALL_HEREDOC_END = "OUTO_FIREWALL_HEREDOC_END"
+_LOW_PORTS_HEREDOC_START = "cat > \"${low_ports_dest}\" <<'OUTO_LOW_PORTS_HEREDOC_END'"
+_LOW_PORTS_HEREDOC_END = "OUTO_LOW_PORTS_HEREDOC_END"
 
 
-def extract_embedded_firewall(text: str) -> str:
-    """Pull the firewall script body out of the installer's heredoc.
+def extract_embedded(text: str, start_marker: str, end_marker: str) -> str:
+    """Pull an embedded script body out of the installer's heredoc.
 
-    Returns the bytes between `<<'OUTO_FIREWALL_HEREDOC_END'` and the closing
-    terminator, with a single trailing newline appended so it compares
-    byte-for-byte against the on-disk file (the bash heredoc preserves the
-    newline before its terminator, and the file has a trailing newline too).
+    Returns the bytes between the start marker and the closing terminator,
+    with a single trailing newline appended so it compares byte-for-byte
+    against the on-disk file (the bash heredoc preserves the newline before
+    its terminator, and the file has a trailing newline too).
     """
-    start_idx = text.find(_FIREWALL_HEREDOC_START)
-    assert start_idx != -1, "firewall heredoc marker not found in installer"
-    body_start = start_idx + len(_FIREWALL_HEREDOC_START) + 1  # skip the trailing newline
-    end_idx = text.find(_FIREWALL_HEREDOC_END, body_start)
-    assert end_idx != -1, "firewall heredoc terminator not found in installer"
+    start_idx = text.find(start_marker)
+    assert start_idx != -1, f"heredoc marker not found in installer: {start_marker}"
+    body_start = start_idx + len(start_marker) + 1  # skip the trailing newline
+    end_idx = text.find(end_marker, body_start)
+    assert end_idx != -1, f"heredoc terminator not found in installer: {end_marker}"
     body = text[body_start:end_idx]
     # Real bash heredocs leave the line BEFORE the terminator intact and the
     # terminator itself flushes the buffer without a trailing newline. We
@@ -118,7 +120,7 @@ class TestInstallCliScript:
     def test_embedded_firewall_script_matches_repo_byte_for_byte(self) -> None:
         # Drift guard: a change to either file alone would silently desync
         # the install from the container copy.
-        body = extract_embedded_firewall(INSTALL_TEXT)
+        body = extract_embedded(INSTALL_TEXT, _FIREWALL_HEREDOC_START, _FIREWALL_HEREDOC_END)
         repo_script = REPO_ROOT / "src" / "outo_models" / "assets" / "scripts" / "firewall-open.sh"
         repo_text = repo_script.read_text(encoding="utf-8")
         assert body == repo_text, (
@@ -128,9 +130,16 @@ class TestInstallCliScript:
             "wording of the drift message changed)."
         )
 
+    def test_embedded_low_ports_script_matches_repo_byte_for_byte(self) -> None:
+        body = extract_embedded(INSTALL_TEXT, _LOW_PORTS_HEREDOC_START, _LOW_PORTS_HEREDOC_END)
+        repo_script = (
+            REPO_ROOT / "src" / "outo_models" / "assets" / "scripts" / "enable-low-ports.sh"
+        )
+        assert body == repo_script.read_text(encoding="utf-8")
+
     def test_embedded_firewall_script_is_bash_clean(self) -> None:
         # A syntax error in either copy must fail tests, not installs.
-        body = extract_embedded_firewall(INSTALL_TEXT)
+        body = extract_embedded(INSTALL_TEXT, _FIREWALL_HEREDOC_START, _FIREWALL_HEREDOC_END)
         extracted = REPO_ROOT / "tmp_embedded_firewall_check.sh"
         try:
             extracted.write_text(body, encoding="utf-8")
@@ -146,7 +155,7 @@ class TestInstallCliScript:
 
     def test_embedded_firewall_self_elevates(self) -> None:
         # `sudo -n` would deadlock the wizard; pin the interactive form.
-        body = extract_embedded_firewall(INSTALL_TEXT)
+        body = extract_embedded(INSTALL_TEXT, _FIREWALL_HEREDOC_START, _FIREWALL_HEREDOC_END)
         assert 'exec sudo bash "$0" "$@"' in body
         assert "command -v sudo" in body
 
@@ -294,3 +303,32 @@ class TestWrapperImageResolution:
         )
         assert result.returncode == 0, result.stderr
         assert ":dev status" in result.stdout
+
+
+class TestWrapperDestructiveEnvPassThrough:
+    """The reset gate reads OUTO_DESTRUCTIVE INSIDE the container — the shim
+    must forward it from the host environment (field failure: the gate saw
+    the var as unset even when exported on the host)."""
+
+    def test_destructive_env_forwarded_when_set(self, tmp_path: Path) -> None:
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={
+                "OUTO_CONFIG": str(tmp_path / "absent.yaml"),
+                "OUTO_DESTRUCTIVE": "1",
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert "-e OUTO_DESTRUCTIVE" in result.stdout
+
+    def test_destructive_env_absent_when_unset(self, tmp_path: Path) -> None:
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        env = {"OUTO_CONFIG": str(tmp_path / "absent.yaml")}
+        result = _run_wrapper(wrapper, bin_dir, tmp_path, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert "OUTO_DESTRUCTIVE" not in result.stdout
