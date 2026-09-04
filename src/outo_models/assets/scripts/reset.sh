@@ -76,7 +76,16 @@ fi
 # with "volume is being used". A reset is only complete when the volume is
 # actually gone, so remove every holder, not just the named container.
 if "${podman_cmd[@]}" volume exists "${volume_name}"; then
-    mapfile -t holders < <("${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q)
+    # The reset itself runs inside a throwaway CLI container that ALSO holds
+    # the volume — removing ourselves mid-script is a self-kill (field
+    # failure: SIGKILL right after "removing volume holder"). Our short
+    # container id is the hostname; `ps -q` prints full ids, so a prefix
+    # match identifies us. On a native host run the hostname never matches.
+    self_id="$(hostname)"
+    mapfile -t holders < <(
+        "${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q \
+            | grep -v "^${self_id}" || true
+    )
     for holder in "${holders[@]}"; do
         [[ -n "${holder}" ]] || continue
         echo "      removing volume holder: ${holder}"

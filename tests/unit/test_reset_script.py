@@ -93,6 +93,63 @@ class TestResetScript:
         assert holder_rm < volume_rm, log
         assert "first-install state" in result.stdout
 
+    def test_never_removes_itself(self, tmp_path: Path) -> None:
+        """Field failure: the shim's own CLI container holds the volume, and
+        sweeping it kills the reset mid-script (self SIGKILL). The holder list
+        must exclude our own container id (the hostname)."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (tmp_path / STATE_FILE).write_text("holder_present=1\n", encoding="utf-8")
+        import socket
+
+        self_id = socket.gethostname()
+        script = bin_dir / "podman"
+        script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+state="{tmp_path / STATE_FILE}"
+printf '%s\\n' "$*" >> "${{FAKE_PODMAN_LOG}}"
+case "$1" in
+  container) [[ "$2" == "exists" ]] && exit 1 ;;  # no named container
+  volume)
+    [[ "$2" == "exists" ]] && exit 0
+    if [[ "$2" == "rm" ]]; then
+      if grep -q "holder_present=1" "$state"; then
+        echo "Error: volume is being used" >&2
+        exit 2
+      fi
+      exit 0
+    fi
+    ;;
+  ps)
+    printf '%s\\n' "{self_id}" "deadbeefholder"
+    exit 0
+    ;;
+  stop) exit 0 ;;
+  rm)
+    if [[ "$2" == "{self_id}"* ]]; then
+      echo "SELF-KILL ATTEMPT" >&2
+      exit 9
+    fi
+    if [[ "$2" == "deadbeefholder" ]]; then
+      sed -i '/holder_present/d' "$state"
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        result = _run_reset(tmp_path, bin_dir)
+        assert result.returncode == 0, result.stderr
+        log = (tmp_path / "podman.log").read_text(encoding="utf-8")
+        assert "SELF-KILL ATTEMPT" not in result.stderr
+        assert f"rm {self_id}" not in log
+        assert "rm deadbeefholder" in log
+        assert "first-install state" in result.stdout
+
     def test_plain_path_without_holders(self, tmp_path: Path) -> None:
         bin_dir = _write_fake_podman(tmp_path, volume_in_use=False)
         result = _run_reset(tmp_path, bin_dir)
