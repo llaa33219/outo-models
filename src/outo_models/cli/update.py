@@ -29,6 +29,7 @@ import yaml
 
 from outo_models.cli import (
     container_script,
+    podman_script_env,
     render_error,
     stream_subprocess,
     typer_exit,
@@ -91,7 +92,7 @@ def update(
 
     script = container_script("update.sh")
     argv = ["bash", script, image_ref]
-    rc = stream_subprocess(argv)
+    rc = stream_subprocess(argv, env=podman_script_env())
     if rc != 0:
         render_error(
             OutoError(

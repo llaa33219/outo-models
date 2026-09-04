@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from outo_models.cli import (
     podman_available,
+    podman_base,
     print_status,
     render_error,
     stream_subprocess,
@@ -30,7 +31,7 @@ def stop() -> None:
         )
         raise typer_exit(1)
 
-    rc = stream_subprocess(["podman", "stop", _CONTAINER_NAME])
+    rc = stream_subprocess([*podman_base(), "stop", _CONTAINER_NAME])
     if rc != 0:
         print_status(f"[error] container failed to stop (exit={rc})")
         raise typer_exit(1)

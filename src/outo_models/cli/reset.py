@@ -39,6 +39,7 @@ from sqlalchemy import func, select
 from outo_models.cli import (
     container_script,
     format_bytes,
+    podman_script_env,
     render_error,
     stream_subprocess,
     typer_exit,
@@ -244,7 +245,7 @@ def _reset_impl(destroy: bool) -> None:
         raise typer_exit(1)
 
     script = container_script("reset.sh")
-    rc = stream_subprocess(["bash", script])
+    rc = stream_subprocess(["bash", script], env=podman_script_env())
     if rc != 0:
         asyncio.run(_dispose_engines_safe())
         render_error(OutoError(f"reset.sh failed (exit={rc})", code="reset_script_failed"))

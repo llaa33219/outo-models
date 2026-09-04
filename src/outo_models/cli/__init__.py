@@ -231,21 +231,55 @@ def container_script(name: str) -> str:
     return str(Path(__file__).resolve().parents[1] / "assets" / "scripts" / name)
 
 
-def stream_subprocess(argv: list[str]) -> int:
+def stream_subprocess(argv: list[str], env: dict[str, str] | None = None) -> int:
     """Run `argv` with stdout/stderr inherited.
 
     Used for the host-side `update.sh` / `reset.sh` scripts: the operator
     watches the output stream, so redirecting it through a `Console` would
     only add buffering. `check=False` means we propagate the return code
-    without raising — the wizard decides how to surface failures.
+    without raising — the wizard decides how to surface failures. `env`, when
+    given, is merged over os.environ (used to hand PODMAN_BIN/PODMAN_URL to
+    the scripts when we run through podman-remote).
     """
-    result = subprocess.run(argv, check=False, shell=False)  # noqa: S603 — argv is fixed
+    merged = None if env is None else {**os.environ, **env}
+    result = subprocess.run(argv, check=False, shell=False, env=merged)  # noqa: S603 — argv is fixed
     return int(result.returncode)
 
 
+def podman_base() -> list[str]:
+    """Base argv for a podman invocation, or [] when podman is unreachable.
+
+    Two modes:
+      1. `podman` on PATH (host shell) → ["podman"].
+      2. Only the API socket is available — the CLI shim mounts the host's
+         socket into the container and sets OUTO_PODMAN_SOCKET — and the
+         image ships `podman-remote` → ["podman-remote", "--url", "unix://…"].
+    """
+    if shutil.which("podman"):
+        return ["podman"]
+    remote = shutil.which("podman-remote")
+    if not remote:
+        return []
+    sock = os.environ.get("OUTO_PODMAN_SOCKET", "/run/podman/podman.sock")
+    if Path(sock).exists():
+        return [remote, "--url", f"unix://{sock}"]
+    return []
+
+
 def podman_available() -> bool:
-    """Return True iff `podman` is on `PATH`."""
-    return shutil.which("podman") is not None
+    """Return True iff podman is reachable (binary or remote socket)."""
+    return bool(podman_base())
+
+
+def podman_script_env() -> dict[str, str]:
+    """Env for the bash glue scripts so they use the same podman channel."""
+    base = podman_base()
+    if not base:
+        return {}
+    env = {"PODMAN_BIN": base[0]}
+    if len(base) > 1:
+        env["PODMAN_URL"] = base[-1]
+    return env
 
 
 def print_status(message: str) -> None:

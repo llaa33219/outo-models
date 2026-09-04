@@ -10,23 +10,23 @@ inspecting the exit code.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 
-from outo_models.cli import print_status
+from outo_models.cli import podman_base, print_status
 
 _CONTAINER_NAME = "outo-models"
 
 
 def status() -> None:
     """`outo-models status` — print the container run state."""
-    if shutil.which("podman") is None:
+    base = podman_base()
+    if not base:
         print_status("[info] podman is not installed on this host (development environment).")
         return
 
     # `podman container exists` returns 0 when present, 1 when absent.
     exists = subprocess.run(  # noqa: S603
-        ["podman", "container", "exists", _CONTAINER_NAME],  # noqa: S607
+        [*base, "container", "exists", _CONTAINER_NAME],
         check=False,
         capture_output=True,
     )
@@ -35,7 +35,7 @@ def status() -> None:
         return
 
     inspect = subprocess.run(  # noqa: S603
-        ["podman", "inspect", "--format", "{{.State.Running}}", _CONTAINER_NAME],  # noqa: S607
+        [*base, "inspect", "--format", "{{.State.Running}}", _CONTAINER_NAME],
         check=False,
         capture_output=True,
         text=True,

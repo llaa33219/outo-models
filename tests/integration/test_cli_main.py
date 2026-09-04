@@ -148,3 +148,56 @@ class TestStartCommand:
         monkeypatch.setenv("OUTO_CONFIG", str(tmp_path / "absent.yaml"))
         result = runner.invoke(app, ["start"])
         assert result.exit_code == 1
+
+
+class TestPodmanBase:
+    """podman channel selection: binary on PATH, else remote over the socket."""
+
+    def test_podman_binary_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models import cli as cli_pkg
+
+        monkeypatch.setattr(
+            cli_pkg.shutil, "which", lambda name: "/usr/bin/podman" if name == "podman" else None
+        )
+        assert cli_pkg.podman_base() == ["podman"]
+        assert cli_pkg.podman_available() is True
+
+    def test_remote_over_socket(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models import cli as cli_pkg
+
+        sock = tmp_path / "podman.sock"
+        sock.touch()
+        monkeypatch.setattr(
+            cli_pkg.shutil,
+            "which",
+            lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
+        )
+        monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
+        assert cli_pkg.podman_base() == ["/usr/local/bin/podman-remote", "--url", f"unix://{sock}"]
+        assert cli_pkg.podman_available() is True
+
+    def test_remote_without_socket_is_unavailable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models import cli as cli_pkg
+
+        monkeypatch.setattr(
+            cli_pkg.shutil, "which", lambda name: None if name == "podman" else "/x/podman-remote"
+        )
+        monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(tmp_path / "absent.sock"))
+        assert cli_pkg.podman_base() == []
+        assert cli_pkg.podman_available() is False
+
+    def test_script_env_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models import cli as cli_pkg
+
+        sock = tmp_path / "podman.sock"
+        sock.touch()
+        monkeypatch.setattr(
+            cli_pkg.shutil,
+            "which",
+            lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
+        )
+        monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
+        env = cli_pkg.podman_script_env()
+        assert env == {"PODMAN_BIN": "/usr/local/bin/podman-remote", "PODMAN_URL": f"unix://{sock}"}

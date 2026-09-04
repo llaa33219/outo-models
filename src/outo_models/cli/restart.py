@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from outo_models.cli import (
     podman_available,
+    podman_base,
     print_status,
     render_error,
     stream_subprocess,
@@ -25,7 +26,7 @@ def restart() -> None:
         )
         raise typer_exit(1)
 
-    rc = stream_subprocess(["podman", "restart", _CONTAINER_NAME])
+    rc = stream_subprocess([*podman_base(), "restart", _CONTAINER_NAME])
     if rc != 0:
         print_status(f"[error] container failed to restart (exit={rc})")
         raise typer_exit(1)

@@ -259,6 +259,32 @@ class TestContainerfileCopySources:
 # ---------------------------------------------------------------------------
 
 
+class TestPodmanRemotePackaging:
+    """CLI containers drive host podman via podman-remote over the socket."""
+
+    def test_containerfile_installs_podman_remote(self) -> None:
+        text = CONTAINERFILE_TEXT
+        assert "ARG PODMAN_REMOTE_VERSION=" in text
+        assert "ARG TARGETARCH" in text
+        assert "podman-remote-static-linux_${TARGETARCH}" in text
+        assert "/usr/local/bin/podman-remote" in text
+
+    def test_host_scripts_honor_podman_bin_url(self) -> None:
+        for name in ("update.sh", "reset.sh"):
+            text = (SCRIPTS_DIR / name).read_text(encoding="utf-8")
+            assert "${PODMAN_BIN:-podman}" in text, name
+            assert "PODMAN_URL" in text, name
+            # No bare `podman` invocation left outside the array.
+            import re
+
+            leftovers = [
+                m
+                for m in re.findall(r"^\s*(podman\s+\w+.*)$", text, re.MULTILINE)
+                if "podman_cmd" not in m and "PODMAN" not in m
+            ]
+            assert leftovers == [], (name, leftovers)
+
+
 class TestShellScriptsSyntax:
     """Every shell script the image (or the host) runs must parse cleanly."""
 

@@ -22,6 +22,14 @@
 
 set -euo pipefail
 
+# The CLI hands us the podman channel when it runs through the shim
+# (podman-remote over the mounted host socket); on the host plain
+# `podman` is used. PODMAN_URL is only set for the remote case.
+podman_cmd=("${PODMAN_BIN:-podman}")
+if [[ -n "${PODMAN_URL:-}" ]]; then
+    podman_cmd+=(--url "${PODMAN_URL}")
+fi
+
 if [[ $# -ne 0 ]]; then
     echo "usage: $0  (no arguments)" >&2
     exit 64
@@ -33,7 +41,7 @@ volume_name="outo-models-data"
 # -----------------------------------------------------------------------------
 # podman presence check
 # -----------------------------------------------------------------------------
-if ! command -v podman >/dev/null 2>&1; then
+if ! command -v "${podman_cmd[0]}" >/dev/null 2>&1; then
     cat >&2 <<'EOF'
 [error] podman is not installed on this host.
 
@@ -49,12 +57,12 @@ fi
 # -----------------------------------------------------------------------------
 # 1) stop + remove the container (only if present)
 # -----------------------------------------------------------------------------
-if podman container exists "${container_name}"; then
+if "${podman_cmd[@]}" container exists "${container_name}"; then
     echo "[1/3] stopping container: ${container_name}"
     # A failed stop (e.g. already stopped) must not abort — idempotency is the goal.
-    podman stop "${container_name}" >/dev/null 2>&1 || true
+    "${podman_cmd[@]}" stop "${container_name}" >/dev/null 2>&1 || true
     echo "[2/3] removing container: ${container_name}"
-    podman rm "${container_name}"
+    "${podman_cmd[@]}" rm "${container_name}"
 else
     echo "[1/3] no ${container_name} container — skipping."
     echo "[2/3] (skipped) nothing to remove."
@@ -63,9 +71,9 @@ fi
 # -----------------------------------------------------------------------------
 # 2) remove the data volume (only if present)
 # -----------------------------------------------------------------------------
-if podman volume exists "${volume_name}"; then
+if "${podman_cmd[@]}" volume exists "${volume_name}"; then
     echo "[3/3] removing data volume: ${volume_name}"
-    podman volume rm "${volume_name}"
+    "${podman_cmd[@]}" volume rm "${volume_name}"
     echo "      all git repositories, the SQLite DB, and Caddy certificate state are gone."
 else
     echo "[3/3] no ${volume_name} volume — skipping."

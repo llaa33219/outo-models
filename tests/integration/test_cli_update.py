@@ -34,7 +34,7 @@ def captured_argv(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Replace `stream_subprocess` so the test sees the argv the CLI built."""
     captured: list[str] = []
 
-    def _fake(argv: list[str]) -> int:
+    def _fake(argv: list[str], env: dict[str, str] | None = None) -> int:
         captured.clear()
         captured.extend(argv)
         return 0
@@ -179,7 +179,7 @@ class TestUpdateScriptFailure:
         runner: CliRunner,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def _failing(argv: list[str]) -> int:
+        def _failing(argv: list[str], env: dict[str, str] | None = None) -> int:
             return 17
 
         monkeypatch.setattr("outo_models.cli.update.stream_subprocess", _failing)

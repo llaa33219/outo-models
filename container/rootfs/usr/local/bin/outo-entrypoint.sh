@@ -62,10 +62,10 @@ fi
 # -----------------------------------------------------------------------------
 # Pre-flight warning when non-root cannot bind 80/443 (does not fail)
 # -----------------------------------------------------------------------------
-# Pairs with `EXPOSE 80 443` in the Containerfile. When Caddy fails the
-# bind at runtime with EPERM, this message points the operator to the
-# right place to debug.
-if [[ "$(id -u)" != "0" ]]; then
+# Only relevant when this container will actually serve (bare run → CMD
+# `serve`, or an explicit `serve`). CLI invocations through the host shim
+# (`setup`, `start`, `admin`, …) never bind ports — warning there is noise.
+if [[ "${1:-serve}" == "serve" ]] && [[ "$(id -u)" != "0" ]]; then
     # If ip_unprivileged_port_start is at or below 80, non-root can bind
     # 80 (e.g. some hosts set it to 0 and allow every port unprivileged).
     port_start=$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null || echo "32768")

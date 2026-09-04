@@ -180,6 +180,14 @@ the image and is updated by `outo-models update` (pull + migrate + restart).
 After this, `outo-models --help` works on the host. Override the image per
 invocation with `OUTO_IMAGE` (e.g. `OUTO_IMAGE=ghcr.io/llaa33219/outo-models:dev outo-models status`).
 
+The installer also (best-effort) enables the rootless podman API socket for
+the invoking user (`systemctl --user enable --now podman.socket` +
+`loginctl enable-linger`). CLI containers talk to the host's podman through
+that socket using the `podman-remote` binary baked into the image — this is
+how `start`/`stop`/`update`/`reset` work even though the CLI itself runs in
+a throwaway container. Rootful (sudo) installs already have the system
+socket at `/run/podman/podman.sock` and need nothing extra.
+
 > Through the shim, the wizard cannot open host firewall ports by itself
 > (the firewall tools are not in the image). Run
 > `outo-models setup run --skip-firewall`, then open the ports on the host

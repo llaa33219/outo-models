@@ -213,6 +213,20 @@ In the development environment we only guarantee `uv sync` + `make lint`
 + `make typecheck` + `make test` (see [testing.md](testing.md)). Verify
 the image's runtime behavior on a separate test machine.
 
+### The same "podman not installed" error appears through the shim
+
+Through the shim the CLI runs inside a throwaway container that reaches the
+host's podman via the API socket (`podman-remote`). This error there means
+the socket is missing. Fix on the host:
+
+```bash
+systemctl --user enable --now podman.socket   # rootless installs
+sudo systemctl enable --now podman.socket     # rootful installs
+```
+
+The installer does this best-effort for you; reinstalling the shim
+(`install-cli.sh`) retries it.
+
 ## 7. Log locations
 
 - **Container logs**: `podman logs outo-models` (stdout/stderr unified)

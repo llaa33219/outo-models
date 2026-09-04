@@ -86,6 +86,18 @@ COPY --chown=app:app src/outo_models/assets/scripts/ /opt/outo-models/scripts/
 # Caddy binary built with the cloudflare DNS plugin.
 COPY --from=caddy-builder /usr/bin/caddy /usr/local/bin/caddy
 
+# podman-remote lets CLI containers launched by the host shim drive the
+# host's podman over the mounted API socket (start/stop/update/reset).
+# Pinned version, multi-arch via the automatic TARGETARCH build arg.
+ARG PODMAN_REMOTE_VERSION=6.1.1
+ARG TARGETARCH
+RUN set -e; \
+    url="https://github.com/containers/podman/releases/download/v${PODMAN_REMOTE_VERSION}/podman-remote-static-linux_${TARGETARCH}.tar.gz"; \
+    python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/tmp/p.tar.gz')" "$url"; \
+    tar -xzf /tmp/p.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/bin/podman-remote-static-linux_${TARGETARCH}" /usr/local/bin/podman-remote; \
+    rm -rf /tmp/p.tar.gz /tmp/bin
+
 # PATH first hits the venv, then /usr/local/bin (caddy, entrypoint).
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH"
 

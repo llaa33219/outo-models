@@ -23,6 +23,7 @@ import yaml
 
 from outo_models.cli import (
     podman_available,
+    podman_base,
     print_status,
     render_error,
     stream_subprocess,
@@ -119,7 +120,7 @@ def start() -> None:
         env_args.extend(["-e", f"OUTO_DB_URL={settings.db_url}"])
 
     argv: list[str] = [
-        "podman",
+        *podman_base(),
         "run",
         "-d",
         "--name",
