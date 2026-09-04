@@ -69,7 +69,24 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 2) remove the data volume (only if present)
+# 2) remove any OTHER containers still holding the volume
+# -----------------------------------------------------------------------------
+# Leaked throwaway CLI containers (killed before --rm could clean them up)
+# and stale migrate runs keep the volume busy and make `volume rm` fail
+# with "volume is being used". A reset is only complete when the volume is
+# actually gone, so remove every holder, not just the named container.
+if "${podman_cmd[@]}" volume exists "${volume_name}"; then
+    mapfile -t holders < <("${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q)
+    for holder in "${holders[@]}"; do
+        [[ -n "${holder}" ]] || continue
+        echo "      removing volume holder: ${holder}"
+        "${podman_cmd[@]}" stop "${holder}" >/dev/null 2>&1 || true
+        "${podman_cmd[@]}" rm "${holder}"
+    done
+fi
+
+# -----------------------------------------------------------------------------
+# 3) remove the data volume (only if present)
 # -----------------------------------------------------------------------------
 if "${podman_cmd[@]}" volume exists "${volume_name}"; then
     echo "[3/3] removing data volume: ${volume_name}"

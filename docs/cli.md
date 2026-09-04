@@ -241,7 +241,9 @@ Dry-run example output:
 To actually delete, pass the --destroy option together with the environment variable OUTO_DESTRUCTIVE=1.
 ```
 
-A real destroy removes: the `outo-models` container, the
+A real destroy removes: the `outo-models` container, any other containers
+still holding the data volume (leaked throwaway CLI runs — they would
+otherwise block volume deletion with "volume is being used"), the
 `outo-models-data` volume (all repositories, DB, certificates), the local
 data directory (dev installs), and every operator-generated file in the
 config directory (`config.yaml`, `Caddyfile`, …) — the machine returns to
