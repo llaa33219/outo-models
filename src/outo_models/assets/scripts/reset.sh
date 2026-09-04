@@ -76,18 +76,36 @@ fi
 # with "volume is being used". A reset is only complete when the volume is
 # actually gone, so remove every holder, not just the named container.
 if "${podman_cmd[@]}" volume exists "${volume_name}"; then
-    # The reset itself runs inside a throwaway CLI container that ALSO holds
-    # the volume — removing ourselves mid-script is a self-kill (field
-    # failure: SIGKILL right after "removing volume holder"). Our short
-    # container id is the hostname; `ps -q` prints full ids, so a prefix
-    # match identifies us. On a native host run the hostname never matches.
-    self_id="$(hostname)"
-    mapfile -t holders < <(
-        "${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q \
-            | grep -v "^${self_id}" || true
-    )
+    # Never sweep the container we are running in — removing ourselves
+    # mid-script is a self-kill (seen twice in the field). Identify ourselves
+    # robustly: with `--network=host` the hostname is the HOST's name, not
+    # our container id, so also harvest 64-hex ids from the cgroup path.
+    self_patterns=("$(hostname)")
+    cgroup_file="${OUTO_SELF_CGROUP_FILE:-/proc/self/cgroup}"
+    if [[ -r "${cgroup_file}" ]]; then
+        while IFS= read -r cid; do
+            [[ -n "${cid}" ]] && self_patterns+=("${cid}")
+        done < <(grep -oE '[0-9a-f]{64}' "${cgroup_file}" || true)
+    fi
+
+    mapfile -t raw_holders < <("${podman_cmd[@]}" ps -a --filter "volume=${volume_name}" -q)
+    holders=()
+    for candidate in "${raw_holders[@]}"; do
+        [[ -n "${candidate}" ]] || continue
+        skip=0
+        for pat in "${self_patterns[@]}"; do
+            [[ -n "${pat}" ]] || continue
+            # Self-match in either direction (short id vs full id prefix).
+            if [[ "${candidate}" == "${pat}" || "${candidate}" == "${pat}"* || "${pat}" == "${candidate}"* ]]; then
+                skip=1
+                break
+            fi
+        done
+        (( skip )) && continue
+        holders+=("${candidate}")
+    done
+
     for holder in "${holders[@]}"; do
-        [[ -n "${holder}" ]] || continue
         echo "      removing volume holder: ${holder}"
         "${podman_cmd[@]}" stop "${holder}" >/dev/null 2>&1 || true
         "${podman_cmd[@]}" rm "${holder}"

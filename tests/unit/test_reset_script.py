@@ -67,11 +67,14 @@ exit 0
     return bin_dir
 
 
-def _run_reset(tmp_path: Path, bin_dir: Path) -> subprocess.CompletedProcess[str]:
+def _run_reset(
+    tmp_path: Path, bin_dir: Path, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "FAKE_PODMAN_LOG": str(tmp_path / "podman.log"),
         "HOME": str(tmp_path),
+        **(extra_env or {}),
     }
     return subprocess.run(  # noqa: S603 — fixed repo script path
         ["bash", str(RESET_SCRIPT)],  # noqa: S607
@@ -100,9 +103,11 @@ class TestResetScript:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         (tmp_path / STATE_FILE).write_text("holder_present=1\n", encoding="utf-8")
-        import socket
-
-        self_id = socket.gethostname()
+        # The self id lives ONLY in our fake cgroup file (hostname does not
+        # match — the --network=host failure mode from the field).
+        self_id = "a" * 64
+        cgroup = tmp_path / "cgroup"
+        cgroup.write_text(f"0::/machine.slice/libpod-{self_id}.scope\n", encoding="utf-8")
         script = bin_dir / "podman"
         script.write_text(
             f"""#!/usr/bin/env bash
@@ -122,7 +127,7 @@ case "$1" in
     fi
     ;;
   ps)
-    printf '%s\\n' "{self_id}" "deadbeefholder"
+    printf '%s\\n' "{self_id}" "deadbeefcafe1234ffffffffffffffffffffffffffffffffffff"
     exit 0
     ;;
   stop) exit 0 ;;
@@ -131,7 +136,7 @@ case "$1" in
       echo "SELF-KILL ATTEMPT" >&2
       exit 9
     fi
-    if [[ "$2" == "deadbeefholder" ]]; then
+    if [[ "$2" == "deadbeef"* ]]; then
       sed -i '/holder_present/d' "$state"
     fi
     exit 0
@@ -142,12 +147,12 @@ exit 0
             encoding="utf-8",
         )
         script.chmod(0o755)
-        result = _run_reset(tmp_path, bin_dir)
+        result = _run_reset(tmp_path, bin_dir, extra_env={"OUTO_SELF_CGROUP_FILE": str(cgroup)})
         assert result.returncode == 0, result.stderr
         log = (tmp_path / "podman.log").read_text(encoding="utf-8")
         assert "SELF-KILL ATTEMPT" not in result.stderr
         assert f"rm {self_id}" not in log
-        assert "rm deadbeefholder" in log
+        assert "rm deadbeefcafe1234ffffffffffffffffffffffffffffffffffff" in log
         assert "first-install state" in result.stdout
 
     def test_plain_path_without_holders(self, tmp_path: Path) -> None:
