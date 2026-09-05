@@ -47,6 +47,7 @@ from outo_models.cli import (
 from outo_models.config import get_settings
 from outo_models.db import Repo, User, get_engine, get_session_factory
 from outo_models.exceptions import ConfigError, OutoError
+from outo_models.firewall.open_ports import in_container
 
 # Env var the triple-yes gate requires. Same convention as `OUTO_CONFIG`
 # etc. Documented in `docs/cli.md` (operator-facing) and `docs/security.md`
@@ -239,6 +240,15 @@ def _wipe_local_data_dir() -> None:
     settings = get_settings()
     data_dir = Path(settings.data_dir)
     if not data_dir.exists():
+        return
+    if (
+        in_container()
+        and not (data_dir / "db.sqlite3").exists()
+        and not (data_dir / "repos").exists()
+    ):
+        # Shim destroy path: the volume is deliberately unmounted, so this is
+        # the image's own empty directory — no state to wipe, and removing
+        # the dir itself fails on the root-owned parent (/var/lib).
         return
     try:
         shutil.rmtree(data_dir)

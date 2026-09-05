@@ -303,3 +303,41 @@ class TestGateWithUnknownCounts:
         answers = iter([_YES_TOKEN] * _REQUIRED_YES_COUNT)
         monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
         assert _gather_yes_confirmations(3, 2, 1024) is True
+
+
+class TestLocalWipeSkipsImageDir:
+    """Shim destroy path: the volume is unmounted, so data_dir is the
+    image's own empty dir — wiping it must be skipped (EACCES in the field)."""
+
+    def test_skips_when_container_and_no_state(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake_script = tmp_path / "reset.sh"
+        fake_script.write_text("#!/usr/bin/env bash\nexit 0\n")
+        fake_script.chmod(0o755)
+        monkeypatch.setenv("OUTO_RESET_SCRIPT", str(fake_script))
+        monkeypatch.setenv(_DESTRUCTIVE_ENV, "1")
+
+        image_like_dir = tmp_path / "image-data"
+        image_like_dir.mkdir()
+        (image_like_dir / "certs").mkdir()  # empty dirs only — no real state
+        monkeypatch.setenv("OUTO_DATA_DIR", str(image_like_dir))
+        monkeypatch.setenv("OUTO_CONFIG", str(tmp_path / "etc" / "config.yaml"))
+        monkeypatch.setattr("outo_models.cli.reset.in_container", lambda: True)
+
+        from outo_models.config import get_settings as _settings
+
+        _settings.cache_clear()
+
+        result = runner.invoke(
+            app,
+            ["reset", "--destroy"],
+            input="\n".join([_YES_TOKEN] * _REQUIRED_YES_COUNT) + "\n",
+        )
+        assert result.exit_code == 0, result.output
+        # Untouched: nothing of ours was there, and the parent may be root-owned.
+        assert image_like_dir.is_dir()
+        assert (image_like_dir / "certs").is_dir()
