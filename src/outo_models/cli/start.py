@@ -83,8 +83,11 @@ _CONTAINER_NAME = "outo-models"
 
 def _inspect_state() -> str:
     """Container state via podman inspect; "missing" when inspect fails."""
+    base = podman_base()
+    if not base:
+        return "missing"
     result = subprocess.run(  # noqa: S603 — fixed argv, no shell
-        [*podman_base(), "inspect", "--format", "{{.State.Status}}", _CONTAINER_NAME],
+        [*base, "inspect", "--format", "{{.State.Status}}", _CONTAINER_NAME],
         check=False,
         capture_output=True,
         text=True,
@@ -92,6 +95,34 @@ def _inspect_state() -> str:
     if result.returncode != 0:
         return "missing"
     return result.stdout.strip()
+
+
+def _container_image() -> str | None:
+    """The image reference the existing container was created from."""
+    base = podman_base()
+    if not base:
+        return None
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [*base, "inspect", "--format", "{{.Config.Image}}", _CONTAINER_NAME],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _remove_container() -> None:
+    """Force-remove the existing container (any state); idempotent."""
+    base = podman_base()
+    if not base:
+        return
+    subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [*base, "rm", "-f", _CONTAINER_NAME],
+        check=False,
+        capture_output=True,
+    )
 
 
 def _probe(url: str) -> bool:
@@ -180,9 +211,28 @@ def start(
         raise typer_exit(1)
     ports = [str(int(p)) for p in ports_raw]
 
+    # An existing container with this name blocks `podman run` (exit 125 in
+    # the field). Running with the same image → nothing to do but verify.
+    # Anything else (stopped, or a stale image after `update`) → replace it:
+    # `podman restart` would boot the OLD image, which is never what an
+    # operator means by `start` right after an update.
+    settings = get_settings()
+    existing_state = _inspect_state()
+    if existing_state == "running" and _container_image() == image:
+        print_status(f"[status] already running: {_CONTAINER_NAME} ({image})")
+        if not no_verify:
+            try:
+                _verify_started(settings, ports, verify_timeout)
+            except OutoError as exc:
+                render_error(exc)
+                raise typer_exit(1) from exc
+        return
+    if existing_state != "missing":
+        print_status(f"[info] replacing existing container (state={existing_state})")
+        _remove_container()
+
     # Mirror the settings env so the in-container process binds to the
     # same data_dir / secret_key the wizard wrote.
-    settings = get_settings()
     env_args: list[str] = []
     if settings.data_dir:
         env_args.extend(["-e", f"OUTO_DATA_DIR={settings.data_dir}"])

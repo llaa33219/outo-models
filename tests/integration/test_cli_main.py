@@ -275,3 +275,74 @@ class TestStartVerification:
         result = runner.invoke(app, ["start", "--no-verify"])
         assert result.exit_code == 0, result.output
         assert "unverified" in result.output
+
+
+class TestStartExistingContainer:
+    """An existing container named outo-models must not fail start (exit 125
+    in the field). Same image + running → verify only; otherwise replace."""
+
+    def _setup_common(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, list[str]]:
+        from outo_models.cli import start as start_mod
+
+        calls: dict[str, list[str]] = {"rm": [], "run": []}
+
+        def _stream(argv: list[str]) -> int:
+            calls["run"].append(" ".join(argv))
+            return 0
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "stream_subprocess", _stream)
+        monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
+        monkeypatch.setattr(start_mod, "_remove_container", lambda: calls["rm"].append("rm"))
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "image: ghcr.io/llaa33219/outo-models:dev\n"
+            "volume: outo-models-data\n"
+            "ports: [80, 443]\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        return calls
+
+    def test_running_same_image_skips_recreating(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        calls = self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
+        monkeypatch.setattr(
+            start_mod, "_container_image", lambda: "ghcr.io/llaa33219/outo-models:dev"
+        )
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert "already running" in result.output
+        assert calls["run"] == [] and calls["rm"] == []
+
+    def test_stopped_container_is_replaced(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        calls = self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "exited")
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert "replacing existing container" in result.output
+        assert calls["rm"] == ["rm"] and len(calls["run"]) == 1
+
+    def test_running_stale_image_is_replaced(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        calls = self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
+        monkeypatch.setattr(
+            start_mod, "_container_image", lambda: "ghcr.io/llaa33219/outo-models:old"
+        )
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert calls["rm"] == ["rm"] and len(calls["run"]) == 1

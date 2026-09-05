@@ -161,6 +161,16 @@ container that died on startup (bad config, port bind failure) therefore
 never looks "started". Use `--no-verify` to skip verification entirely
 (e.g. in CI wrappers that probe on their own).
 
+### Existing containers
+
+`start` is idempotent against an existing `outo-models` container: if it is
+already running **from the same image**, the command only runs the health
+verification and reports "already running". If it is stopped, or running
+from a different (stale) image — e.g. right after `update` pulled a newer
+one — the old container is force-removed and recreated from the configured
+image. (`podman restart` is deliberately not used there: it would boot the
+OLD image.)
+
 ## stop
 
 ```bash
