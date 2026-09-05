@@ -19,6 +19,7 @@ from dulwich.repo import Repo as _DulwichRepo
 
 from outo_models.exceptions import NotFoundError
 from outo_models.repos.storage import repo_fs_path
+from outo_models.repos.card import resolve_tip_sha
 
 _DIR_MODE = 0o040000
 _SYMLINK_MODE = 0o120000
@@ -64,10 +65,7 @@ def _validate_path(path: str) -> list[str]:
 
 def _default_branch_tree(repo: _DulwichRepo, branch: str) -> Tree | None:
     """Resolve `branch`'s tip tree (same helper semantics as `card.py`)."""
-    try:
-        head_sha = repo.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
-    except (KeyError, ValueError):
-        return None
+    head_sha = resolve_tip_sha(repo, branch)
     if head_sha is None:
         return None
     try:

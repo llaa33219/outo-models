@@ -40,6 +40,37 @@ def _decode_blob(blob: Blob) -> str:
     return blob.data.decode("utf-8", errors="replace")
 
 
+def resolve_tip_sha(repo: _DulwichRepo, branch: str) -> bytes | None:
+    """Best-effort tip resolution: default branch, then HEAD, then the
+    single branch if the repo has exactly one.
+
+    Users can legitimately push only `master` (or any other name) into a
+    repo whose recorded default branch is `main` — and test seeders hit
+    exactly this when the platform git config changes the init default
+    branch (field failure in CI). Content should still render instead of
+    the page collapsing to an empty state.
+    """
+    try:
+        head_sha = repo.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
+    except (KeyError, ValueError):
+        head_sha = None
+    if head_sha:
+        return head_sha
+    try:
+        _chain, head_sha = repo.refs.follow(b"HEAD")
+        if head_sha:
+            return head_sha
+    except (KeyError, ValueError, NotGitRepository):
+        pass
+    branches = [k for k in repo.refs.keys() if k.startswith(b"refs/heads/")]
+    if len(branches) == 1:
+        try:
+            return repo.refs.read_ref(branches[0])
+        except (KeyError, ValueError):
+            return None
+    return None
+
+
 def _default_branch_tree(repo: _DulwichRepo, branch: str) -> Tree | None:
     """Resolve `branch`'s tip commit and return its root tree, or `None`.
 
@@ -47,10 +78,7 @@ def _default_branch_tree(repo: _DulwichRepo, branch: str) -> Tree | None:
     — every "no card" condition collapses to `None` so callers can render
     the empty card UI without a try/except.
     """
-    try:
-        head_sha = repo.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
-    except (KeyError, ValueError):
-        return None
+    head_sha = resolve_tip_sha(repo, branch)
     if head_sha is None:
         return None
     try:
