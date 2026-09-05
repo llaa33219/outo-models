@@ -24,12 +24,15 @@ Why two separate commands and not one?
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import typer
 
-from outo_models.cli import render_error, typer_exit
-from outo_models.config import get_settings
+from outo_models.cli import print_status, render_error, typer_exit
+from outo_models.config import Settings, get_settings
 from outo_models.db.engine import dispose_engines, get_engine, run_migrations
 
 # Typer sub-app: `outo-models serve` / `outo-models migrate`. The `invoke
@@ -42,6 +45,63 @@ server_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+
+
+def _resolve_caddyfile(settings: Settings) -> Path | None:
+    """Where Caddy's config comes from, highest priority first.
+
+    1. `OUTO_CADDYFILE` — explicit operator override.
+    2. `/etc/outo-models/Caddyfile` — rendered by the setup wizard; `start`
+       mounts it into the container read-only.
+    3. Rendered fresh from settings into `<data_dir>/Caddyfile` (env-only
+       installs that never ran the wizard).
+    """
+    override = os.environ.get("OUTO_CADDYFILE")
+    if override:
+        return Path(override)
+    wizard_file = Path("/etc/outo-models/Caddyfile")
+    if wizard_file.is_file():
+        return wizard_file
+    from outo_models.tls.caddy_manager import TlsConfig, render_caddyfile
+
+    rendered = render_caddyfile(
+        TlsConfig.from_settings(
+            settings,
+            email=os.environ.get("OUTO_TLS_ACME_EMAIL", ""),
+            dns_provider=os.environ.get("OUTO_TLS_DNS_PROVIDER") or None,
+            staging=os.environ.get("OUTO_TLS_STAGING", "").lower() in ("1", "true"),
+        )
+    )
+    target = Path(settings.data_dir) / "Caddyfile"
+    target.write_text(rendered, encoding="utf-8")
+    return target
+
+
+def _spawn_caddy(settings: Settings) -> subprocess.Popen[bytes] | None:
+    """Start Caddy next to uvicorn; None when the binary is unavailable.
+
+    Field failure being fixed: nothing used to start Caddy at all, so the
+    app listened on 8000 while nothing bound 80/443 — the probe in `start`
+    never succeeded. Cert storage is pinned into the data dir so it
+    survives container replacement.
+    """
+    caddy = shutil.which("caddy")
+    if not caddy:
+        print_status("[warn] caddy binary not found — serving the app without a reverse proxy")
+        return None
+    caddyfile = _resolve_caddyfile(settings)
+    if caddyfile is None:
+        return None
+    data_dir = Path(settings.data_dir)
+    env = {
+        **os.environ,
+        "XDG_DATA_HOME": str(data_dir / "caddy-data"),
+        "XDG_CONFIG_HOME": str(data_dir / "caddy-config"),
+    }
+    return subprocess.Popen(  # noqa: S603 — fixed argv, no shell
+        [caddy, "run", "--config", str(caddyfile)],
+        env=env,
+    )
 
 
 @server_app.command("serve")
@@ -60,12 +120,14 @@ def serve(
     ),
 ) -> None:
     """Boot the FastAPI app under uvicorn (container-internal use only)."""
+    caddy_proc: subprocess.Popen[bytes] | None = None
     try:
         import uvicorn
 
         from outo_models.server import create_app
 
         settings = get_settings()
+        caddy_proc = _spawn_caddy(settings)
         app = create_app(settings)
         # `uvicorn.run` blocks until the server stops; we never need to
         # dispose engines afterwards because uvicorn owns the process
@@ -74,6 +136,13 @@ def serve(
     except Exception as exc:
         render_error(exc)
         raise typer_exit(1) from exc
+    finally:
+        if caddy_proc is not None:
+            caddy_proc.terminate()
+            try:
+                caddy_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                caddy_proc.kill()
 
 
 @server_app.command("migrate")

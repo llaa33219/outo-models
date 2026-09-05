@@ -142,7 +142,7 @@ Caddy (in-container) :80/:443
         │  - TLS termination
         │  - reverse_proxy 127.0.0.1:8000
         ▼
-uvicorn (127.0.0.1:8000) ← outo-models serve
+uvicorn (127.0.0.1:8000) ← outo-models server serve
         │  lifespan: run_migrations + TaskScheduler.start
         │
         ├── /api/*                       FastAPI routers (auth/users/repos/spaces/admin/webhooks)

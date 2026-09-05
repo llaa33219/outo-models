@@ -139,6 +139,8 @@ class TestStartCommand:
         assert "--userns=keep-id" in argv
         assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"
         assert "outo-models-data:/var/lib/outo-models" in argv
+        # The wizard's Caddyfile + config.yaml reach the server read-only.
+        assert "/etc/outo-models:/etc/outo-models:ro" in argv
 
     def test_missing_config_refuses(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

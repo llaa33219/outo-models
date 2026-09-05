@@ -100,7 +100,7 @@ Commands that run **inside** the container. Do not invoke them from the host.
 ### serve
 
 ```bash
-outo-models serve [--host 127.0.0.1] [--port 8000]
+outo-models server serve [--host 127.0.0.1] [--port 8000]
 ```
 
 | Flag | Meaning | Default |
@@ -108,14 +108,23 @@ outo-models serve [--host 127.0.0.1] [--port 8000]
 | `--host <addr>` | uvicorn bind host (Caddy reverse-proxies to it) | `127.0.0.1` |
 | `--port <port>` | uvicorn bind port (1–65535) | `8000` |
 
-This is the command invoked by `CMD ["serve"]` in the `Containerfile`. The
-`/usr/local/bin/outo-entrypoint.sh` script prints the banner, runs the
-dev/prod guard, then `exec`s `outo-models "$@"`.
+This is the command invoked by `CMD ["server", "serve"]` in the
+`Containerfile`. The `/usr/local/bin/outo-entrypoint.sh` script prints the
+banner, runs the dev/prod guard, then `exec`s `outo-models "$@"`.
+
+`serve` also **supervises Caddy** next to uvicorn (the single-container
+design runs both). The Caddyfile is resolved in this order:
+`OUTO_CADDYFILE` env → `/etc/outo-models/Caddyfile` (written by the wizard,
+mounted read-only by `start`) → rendered from settings into
+`<data_dir>/Caddyfile`. Caddy's state (certificates) is pinned into
+`<data_dir>/caddy-data` so it survives container replacement. When the
+wizard stored a Cloudflare token, `start` forwards it to the container as
+`CLOUDFLARE_API_TOKEN` for the DNS-01 plugin.
 
 ### migrate
 
 ```bash
-outo-models migrate
+outo-models server migrate
 ```
 
 Runs `alembic upgrade head` against the configured DB URL. `update.sh`

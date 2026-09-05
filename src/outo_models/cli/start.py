@@ -246,6 +246,11 @@ def start(
         )
     if settings.db_url:
         env_args.extend(["-e", f"OUTO_DB_URL={settings.db_url}"])
+    # Caddy's DNS-01 plugin reads the token from its own process env; the
+    # wizard stores it in the config file, and this is the only hop.
+    cf_token = cfg.get("cloudflare_api_token")
+    if cf_token:
+        env_args.extend(["-e", f"CLOUDFLARE_API_TOKEN={cf_token}"])
 
     argv: list[str] = [
         *podman_base(),
@@ -260,6 +265,9 @@ def start(
         *env_args,
         "-v",
         f"{volume}:/var/lib/outo-models",
+        # The wizard's Caddyfile + config.yaml live here; read-only.
+        "-v",
+        "/etc/outo-models:/etc/outo-models:ro",
         "--cap-add",
         "NET_BIND_SERVICE",
     ]
