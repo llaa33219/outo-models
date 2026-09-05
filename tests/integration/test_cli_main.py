@@ -315,9 +315,7 @@ class TestStartExistingContainer:
 
         calls = self._setup_common(tmp_path, monkeypatch)
         monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
-        monkeypatch.setattr(
-            start_mod, "_container_image", lambda: "ghcr.io/llaa33219/outo-models:dev"
-        )
+        monkeypatch.setattr(start_mod, "_container_image_matches", lambda _img: True)
         result = runner.invoke(app, ["start"])
         assert result.exit_code == 0, result.output
         assert "already running" in result.output
@@ -342,9 +340,34 @@ class TestStartExistingContainer:
 
         calls = self._setup_common(tmp_path, monkeypatch)
         monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
-        monkeypatch.setattr(
-            start_mod, "_container_image", lambda: "ghcr.io/llaa33219/outo-models:old"
-        )
+        monkeypatch.setattr(start_mod, "_container_image_matches", lambda _img: False)
         result = runner.invoke(app, ["start"])
         assert result.exit_code == 0, result.output
         assert calls["rm"] == ["rm"] and len(calls["run"]) == 1
+
+
+class TestContainerImageMatches:
+    """Digest, not name, decides 'same image' (moving tags move)."""
+
+    def test_same_digest_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "_container_image_id", lambda: "sha256:abc")
+        monkeypatch.setattr(start_mod, "_local_image_id", lambda _img: "sha256:abc")
+        assert start_mod._container_image_matches("x:dev") is True
+
+    def test_same_name_different_digest_does_not_match(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "_container_image_id", lambda: "sha256:old")
+        monkeypatch.setattr(start_mod, "_local_image_id", lambda _img: "sha256:new")
+        assert start_mod._container_image_matches("x:dev") is False
+
+    def test_unknowable_digest_means_replace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "_container_image_id", lambda: None)
+        monkeypatch.setattr(start_mod, "_local_image_id", lambda _img: "sha256:new")
+        assert start_mod._container_image_matches("x:dev") is False

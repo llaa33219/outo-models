@@ -173,12 +173,13 @@ never looks "started". Use `--no-verify` to skip verification entirely
 ### Existing containers
 
 `start` is idempotent against an existing `outo-models` container: if it is
-already running **from the same image**, the command only runs the health
-verification and reports "already running". If it is stopped, or running
-from a different (stale) image — e.g. right after `update` pulled a newer
-one — the old container is force-removed and recreated from the configured
-image. (`podman restart` is deliberately not used there: it would boot the
-OLD image.)
+already running **from the same image digest**, the command only runs the
+health verification and reports "already running". If it is stopped, or
+running from a different digest — e.g. right after `update` pulled a newer
+build of a moving tag — the old container is force-removed and recreated
+from the configured image. (Digests, not names: `:dev` / `:stable` move.
+`podman restart` is deliberately not used either: it would boot the OLD
+image.)
 
 ## stop
 

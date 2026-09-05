@@ -97,13 +97,13 @@ def _inspect_state() -> str:
     return result.stdout.strip()
 
 
-def _container_image() -> str | None:
-    """The image reference the existing container was created from."""
+def _container_image_id() -> str | None:
+    """Image ID (digest) the existing container was created from."""
     base = podman_base()
     if not base:
         return None
     result = subprocess.run(  # noqa: S603 — fixed argv, no shell
-        [*base, "inspect", "--format", "{{.Config.Image}}", _CONTAINER_NAME],
+        [*base, "inspect", "--format", "{{.Image}}", _CONTAINER_NAME],
         check=False,
         capture_output=True,
         text=True,
@@ -111,6 +111,35 @@ def _container_image() -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout.strip()
+
+
+def _local_image_id(image: str) -> str | None:
+    """Current local image ID for a reference (moving tags move!)."""
+    base = podman_base()
+    if not base:
+        return None
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [*base, "image", "inspect", "--format", "{{.Id}}", image],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _container_image_matches(image: str) -> bool:
+    """True iff the existing container runs exactly the configured image.
+
+    Compares DIGESTS, not names: `:dev` / `:stable` are moving tags, so a
+    name match means nothing after a pull (field failure: a pre-Caddy
+    container kept running because both said `:dev`). Unknowable → False
+    (replace is the safe direction).
+    """
+    container_id = _container_image_id()
+    local_id = _local_image_id(image)
+    return container_id is not None and local_id is not None and container_id == local_id
 
 
 def _remove_container() -> None:
@@ -218,7 +247,7 @@ def start(
     # operator means by `start` right after an update.
     settings = get_settings()
     existing_state = _inspect_state()
-    if existing_state == "running" and _container_image() == image:
+    if existing_state == "running" and _container_image_matches(image):
         print_status(f"[status] already running: {_CONTAINER_NAME} ({image})")
         if not no_verify:
             try:
