@@ -1014,3 +1014,20 @@ class TestFirewallContainerHostRequired:
         # written YAML is acceptable. The contract is that the wizard
         # surfaces the error and exits non-zero — only the
         # `firewall_container_host_required` branch is tolerant.
+
+
+class TestNextStepsOutput:
+    """The final wizard message must tell the operator the exact URL —
+    and in internal mode, that plain http:// is mandatory (browsers
+    default to https:// and fail with a connection reset)."""
+
+    def test_internal_mode_prints_http_url_and_warning(
+        self, capsys: pytest.CaptureFixture[str], tmp_data_dir: Path
+    ) -> None:
+        from outo_models.cli.setup import _effect
+
+        _effect.print_next_steps(tmp_data_dir / "config.yaml", "", "img:dev")
+        out = capsys.readouterr().out
+        assert "http://localhost" in out
+        assert "plain HTTP" in out
+        assert "http://" in out and "https://" not in out.split("plain HTTP")[0].split("Access")[1]

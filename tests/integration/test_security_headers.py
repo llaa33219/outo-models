@@ -43,16 +43,12 @@ class TestSecurityHeadersOnSuccess:
         assert response.status_code == 200
         self._assert_common_headers(response.headers)
 
-    def test_hsts_present_for_localhost_hostname(
-        self, app: tuple[TestClient, FastAPI, object]
-    ) -> None:
-        # The default test settings use `domain="localhost"`, which is a
-        # hostname — internal mode is False — so HSTS IS emitted.
+    def test_hsts_absent_for_localhost(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        # localhost is internal mode (plain HTTP) — HSTS must NOT be emitted;
+        # it would force browsers onto an HTTPS endpoint that does not exist.
         client, _, _ = app
         response = client.get("/")
-        assert response.headers.get("strict-transport-security") == (
-            "max-age=31536000; includeSubDomains"
-        )
+        assert response.headers.get("strict-transport-security") is None
 
 
 class TestSecurityHeadersOnErrors:

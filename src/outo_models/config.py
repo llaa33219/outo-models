@@ -83,8 +83,8 @@ class Settings(BaseSettings):
         `utils.__init__` → `utils.git_url` → `config` circular import a
         top-level import would create.
         """
-        domain = (self.domain or "").strip()
-        if not domain:
+        domain = (self.domain or "").strip().lower()
+        if not domain or domain == "localhost":
             return True
         from outo_models.utils.net import is_ip_address
 

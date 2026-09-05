@@ -607,6 +607,20 @@ from a trusted private network on plain HTTP — no DNS name, no ACME, no
 TLS termination. See [install.md](install.md) for the full flow; this
 section only covers the operational gotchas.
 
+### `PR_CONNECT_RESET_ERROR` / `ERR_CONNECTION_RESET` in the browser
+
+Internal mode has NO TLS — nothing listens for HTTPS. Browsers that
+auto-upgrade bare addresses to `https://` (Firefox HTTPS-First, Chrome
+HTTPS-Upgrades) connect to :443, get a reset, and show this error. Type
+the scheme explicitly:
+
+```
+http://192.168.0.239
+```
+
+The wizard's final message and the `start` success line both print the
+exact `http://…` URL to use.
+
 ### HTTP only — no TLS
 
 Caddy binds plain `:80` in internal mode. The Caddyfile has no global

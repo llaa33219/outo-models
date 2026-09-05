@@ -270,7 +270,8 @@ def _verify_started(settings: Settings, ports: list[str], timeout: float) -> Non
         if state in ("exited", "configured", "created", "dead"):
             break  # dead on arrival — no point polling the URL
         if state == "running" and _probe(url):
-            print_status(f"[done] server is up: {url}")
+            print_status(f"[done] server is up: {settings.base_url}")
+            print_status(f"(health probe: {url})")
             return
         time.sleep(1.0)
     print_status("[error] server did not become healthy in time — last 50 log lines:")

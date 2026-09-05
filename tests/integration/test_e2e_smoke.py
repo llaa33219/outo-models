@@ -280,10 +280,8 @@ class TestSecurityHeadersOnSmokePath:
         assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
         assert response.headers["permissions-policy"].startswith("camera=()")
         assert response.headers["content-security-policy"].startswith("default-src 'self'")
-        # `localhost` is a hostname under the new policy → HSTS is emitted.
-        assert response.headers.get("strict-transport-security") == (
-            "max-age=31536000; includeSubDomains"
-        )
+        # localhost is internal mode (plain HTTP) → no HSTS.
+        assert response.headers.get("strict-transport-security") is None
 
 
 # ---------------------------------------------------------------------------

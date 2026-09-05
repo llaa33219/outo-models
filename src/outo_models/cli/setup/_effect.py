@@ -274,6 +274,15 @@ def print_next_steps(config_path: Path, caddyfile: str, image: str) -> None:
     console.print(f"  - Caddyfile: {config_path.with_name('Caddyfile')}")
     console.print(f"  - Image: {image}")
     console.print()
+    settings = get_settings()
+    console.print(f"Access the hub at: [bold]{settings.base_url}[/bold]")
+    if settings.is_internal:
+        console.print(
+            "[yellow]Internal mode serves plain HTTP. Type the http:// prefix "
+            "explicitly in your browser — browsers default to https:// and fail "
+            "with a connection-reset error.[/yellow]"
+        )
+    console.print()
     console.print("Start the server with:")
     console.print("  [bold]outo-models start[/bold]")
     from outo_models.cli import print_status

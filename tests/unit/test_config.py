@@ -75,9 +75,10 @@ class TestBaseUrl:
         s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
         assert s.base_url == "https://models.example.com"
 
-    def test_https_for_localhost_hostname(self) -> None:
+    def test_http_for_localhost_hostname(self) -> None:
+        # localhost is internal mode: plain HTTP (browsers/CLI both use http).
         s = Settings(domain="localhost", _env_file=None)  # type: ignore[call-arg]
-        assert s.base_url == "https://localhost"
+        assert s.base_url == "http://localhost"
 
     def test_http_for_loopback_ipv4(self) -> None:
         s = Settings(domain="127.0.0.1", _env_file=None)  # type: ignore[call-arg]
@@ -123,9 +124,10 @@ class TestIsInternal:
         s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
         assert s.is_internal is False
 
-    def test_false_for_localhost_hostname(self) -> None:
+    def test_true_for_localhost_hostname(self) -> None:
+        # localhost is loopback — always internal / plain HTTP.
         s = Settings(domain="localhost", _env_file=None)  # type: ignore[call-arg]
-        assert s.is_internal is False
+        assert s.is_internal is True
 
     def test_true_for_ipv6_address(self) -> None:
         s = Settings(domain="2001:db8::1", _env_file=None)  # type: ignore[call-arg]
@@ -263,3 +265,13 @@ class TestYamlConfigSource:
                 get_settings()
         finally:
             get_settings.cache_clear()
+
+
+class TestLocalhostIsInternal:
+    def test_localhost_hostname_is_internal(self) -> None:
+        s = Settings(domain="localhost", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is True
+
+    def test_real_hostname_is_not_internal(self) -> None:
+        s = Settings(domain="models.example.com", _env_file=None)  # type: ignore[call-arg]
+        assert s.is_internal is False
