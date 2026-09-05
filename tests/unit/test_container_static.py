@@ -505,5 +505,18 @@ class TestContainerCommandPaths:
 
     def test_update_script_uses_server_migrate(self) -> None:
         text = (SCRIPTS_DIR / "update.sh").read_text(encoding="utf-8")
-        assert "outo-models server migrate" in text
-        assert "outo-models migrate" not in text.replace("server migrate", "")
+        # The image entrypoint prepends `outo-models`; the script passes only
+        # the subcommand path. "outo-models server migrate" would double the
+        # CLI name (field failure: "No such command 'outo-models'").
+        lines = [
+            line for line in text.splitlines() if "migrate" in line and not line.startswith("#")
+        ]
+        assert any(line.strip() == "server migrate" for line in lines), lines
+        assert not any("outo-models server migrate" in line for line in lines)
+
+    def test_migrate_container_matches_server_userns(self) -> None:
+        text = (SCRIPTS_DIR / "update.sh").read_text(encoding="utf-8")
+        # keep-id keeps migration-written files owned by the invoking user,
+        # consistent with the server container (mixed subuid ownership breaks
+        # the shared DB).
+        assert "--userns=keep-id" in text

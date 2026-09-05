@@ -62,14 +62,19 @@ echo "[1/3] pulling image: ${image_tag}"
 # -----------------------------------------------------------------------------
 # 2) migration (throwaway container, same data volume mounted)
 # -----------------------------------------------------------------------------
-# The `migrate` subcommand is provided by the CLI. If `"${podman_cmd[@]}" run` fails with
-# "unknown command", set -e surfaces a non-zero code — that is a legitimate
-# signal and the fix is to update the image, not to patch this script.
+# The image entrypoint already prepends `outo-models` — the argv here is the
+# subcommand path only (`server migrate`), NOT `outo-models server migrate`
+# (which produced "No such command 'outo-models'" in the field).
+# --userns=keep-id keeps migration-written DB files owned by the invoking
+# host user, consistent with the server container (mixed subuid ownership
+# breaks the DB); /etc/outo-models is mounted so migrate reads config.yaml.
 echo "[2/3] running DB migration"
 "${podman_cmd[@]}" run --rm \
+    --userns=keep-id \
+    -v /etc/outo-models:/etc/outo-models:ro \
     -v "${volume_name}:/var/lib/outo-models" \
     "${image_tag}" \
-    outo-models server migrate
+    server migrate
 
 # -----------------------------------------------------------------------------
 # 3) restart the existing container (only if present)
