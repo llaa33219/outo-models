@@ -495,3 +495,15 @@ class TestContainerignore:
 
     def test_exists(self) -> None:
         assert (REPO_ROOT / ".containerignore").is_file()
+
+
+class TestContainerCommandPaths:
+    """Field failure: CMD 'serve' — the real command path is 'server serve'."""
+
+    def test_cmd_is_a_real_command_path(self) -> None:
+        assert 'CMD ["server", "serve"]' in CONTAINERFILE_TEXT
+
+    def test_update_script_uses_server_migrate(self) -> None:
+        text = (SCRIPTS_DIR / "update.sh").read_text(encoding="utf-8")
+        assert "outo-models server migrate" in text
+        assert "outo-models migrate" not in text.replace("server migrate", "")

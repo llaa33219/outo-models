@@ -4,7 +4,7 @@
 # Invoked on the host by `outo-models update` (the CLI knows this script's
 # path). Behavior:
 #   1. pull the image tag from argument 1 (default outo-models:stable)
-#   2. run `outo-models migrate` in a throwaway container (DB migration)
+#   2. run `outo-models server migrate` in a throwaway container (DB migration)
 #   3. `"${podman_cmd[@]}" restart` if a container with the same name is running
 #
 # On hosts without podman this exits 0 — this script must only ever be
@@ -69,7 +69,7 @@ echo "[2/3] running DB migration"
 "${podman_cmd[@]}" run --rm \
     -v "${volume_name}:/var/lib/outo-models" \
     "${image_tag}" \
-    outo-models migrate
+    outo-models server migrate
 
 # -----------------------------------------------------------------------------
 # 3) restart the existing container (only if present)

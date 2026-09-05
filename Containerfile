@@ -121,7 +121,7 @@ WORKDIR /app
 # we can: validate the dev+production flavor/env mismatch (AGENTS.md §4),
 # print the Korean startup banner, and exec the CLI with proper signal handling.
 ENTRYPOINT ["/usr/local/bin/outo-entrypoint.sh"]
-CMD ["serve"]
+CMD ["server", "serve"]
 
 # ---------- (4) stable flavor ----------
 FROM runtime-base AS stable
