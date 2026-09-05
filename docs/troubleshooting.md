@@ -250,7 +250,9 @@ The installer does this best-effort for you; reinstalling the shim
 
 ## 8. Container exits immediately after start
 
-If the container exits right after `podman run`, check:
+`outo-models start` detects this case itself: it exits 1 with
+`start_verify_failed` and prints the last 50 log lines (skip verification
+with `--no-verify`). To check by hand:
 
 ```bash
 podman logs outo-models

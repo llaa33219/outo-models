@@ -128,6 +128,7 @@ class TestStartCommand:
         captured: list[list[str]] = []
         monkeypatch.setattr(start_mod, "podman_available", lambda: True)
         monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: captured.append(argv) or 0)
+        monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
         cfg = self._write_config(tmp_path)
         monkeypatch.setenv("OUTO_CONFIG", str(cfg))
         result = runner.invoke(app, ["start"])
@@ -201,3 +202,76 @@ class TestPodmanBase:
         monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
         env = cli_pkg.podman_script_env()
         assert env == {"PODMAN_BIN": "/usr/local/bin/podman-remote", "PODMAN_URL": f"unix://{sock}"}
+
+
+class TestStartVerification:
+    """start must fail loudly when the container never becomes healthy."""
+
+    def _setup_common(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: 0)
+        monkeypatch.setattr(start_mod, "_dump_logs", lambda: None)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "image: ghcr.io/llaa33219/outo-models:dev\n"
+            "volume: outo-models-data\n"
+            "ports: [80, 443]\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+
+    def test_healthy_container_exits_zero(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
+        monkeypatch.setattr(start_mod, "_probe", lambda _url: True)
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert "server is up" in result.output
+
+    def test_dead_on_arrival_fails(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "exited")
+        monkeypatch.setattr(start_mod, "_probe", lambda _url: False)
+        logs: list[bool] = []
+        monkeypatch.setattr(start_mod, "_dump_logs", lambda: logs.append(True))
+        result = runner.invoke(app, ["start", "--verify-timeout", "5"])
+        assert result.exit_code == 1
+        assert "start_verify_failed" in result.output
+        assert logs == [True]
+
+    def test_unhealthy_until_timeout_fails(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup_common(tmp_path, monkeypatch)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "running")
+        monkeypatch.setattr(start_mod, "_probe", lambda _url: False)
+        result = runner.invoke(app, ["start", "--verify-timeout", "2"])
+        assert result.exit_code == 1
+        assert "start_verify_failed" in result.output
+
+    def test_no_verify_skips_health_check(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup_common(tmp_path, monkeypatch)
+
+        def _forbidden(*_a: object, **_k: object) -> None:
+            raise AssertionError("verification must be skipped with --no-verify")
+
+        monkeypatch.setattr(start_mod, "_verify_started", _forbidden)
+        result = runner.invoke(app, ["start", "--no-verify"])
+        assert result.exit_code == 0, result.output
+        assert "unverified" in result.output

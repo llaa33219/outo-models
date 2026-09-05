@@ -135,3 +135,11 @@ class TestGitServiceMounted:
         assert response.status_code == 200, response.text
         # Git's smart-HTTP response includes the service announcement.
         assert b"git-upload-pack" in response.content
+
+
+def test_healthz_returns_ok(app: tuple[TestClient, FastAPI, object]) -> None:
+    """The start-verification endpoint: polled by the operator CLI."""
+    client, _, _ = app
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

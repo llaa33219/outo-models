@@ -17,8 +17,11 @@ the CLI notices.
 from __future__ import annotations
 
 import os
+import subprocess
+import time
 from pathlib import Path
 
+import typer
 import yaml
 
 from outo_models.cli import (
@@ -29,8 +32,8 @@ from outo_models.cli import (
     stream_subprocess,
     typer_exit,
 )
-from outo_models.config import get_settings
-from outo_models.exceptions import ConfigError
+from outo_models.config import Settings, get_settings
+from outo_models.exceptions import ConfigError, OutoError
 
 # The default location of the YAML the wizard writes. `OUTO_CONFIG`
 # overrides it for testing and for operators who vendor the file under
@@ -75,7 +78,82 @@ def _load_config() -> dict[str, object]:
     return payload
 
 
-def start() -> None:
+_CONTAINER_NAME = "outo-models"
+
+
+def _inspect_state() -> str:
+    """Container state via podman inspect; "missing" when inspect fails."""
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [*podman_base(), "inspect", "--format", "{{.State.Status}}", _CONTAINER_NAME],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return "missing"
+    return result.stdout.strip()
+
+
+def _probe(url: str) -> bool:
+    """One HTTP probe against the health endpoint; True only on a 200."""
+    import httpx
+
+    try:
+        response = httpx.get(url, timeout=3.0, verify=False)  # noqa: S501 — startup probe; cert validity is ACME's concern, not this check's
+        return response.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _health_url(settings: Settings, ports: list[str]) -> str:
+    """Where the verification polls: loopback HTTP internally, domain HTTPS otherwise."""
+    if settings.is_internal:
+        return f"http://127.0.0.1:{ports[0]}/healthz"
+    tls_port = "443" if "443" in ports else ports[-1]
+    return f"https://{settings.domain}:{tls_port}/healthz"
+
+
+def _dump_logs() -> None:
+    """Best-effort `podman logs` tail into the operator's terminal."""
+    subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [*podman_base(), "logs", "--tail", "50", _CONTAINER_NAME],
+        check=False,
+    )
+
+
+def _verify_started(settings: Settings, ports: list[str], timeout: float) -> None:
+    """Block until the stack answers /healthz, or fail with diagnostics.
+
+    Catches the field failure where `podman run -d` returned 0 but the
+    container died instantly (Caddy bind errors, bad config, …)."""
+    url = _health_url(settings, ports)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = _inspect_state()
+        if state in ("exited", "configured", "created", "dead"):
+            break  # dead on arrival — no point polling the URL
+        if state == "running" and _probe(url):
+            print_status(f"[done] server is up: {url}")
+            return
+        time.sleep(1.0)
+    print_status("[error] server did not become healthy in time — last 50 log lines:")
+    _dump_logs()
+    raise OutoError(
+        f"server failed to become healthy within {timeout:.0f}s (probe: {url}). "
+        "See the log tail above; common causes are the low-port sysctl "
+        "(docs/troubleshooting.md §2) and TLS/ACME issuance delays.",
+        code="start_verify_failed",
+    )
+
+
+def start(
+    no_verify: bool = typer.Option(
+        False, "--no-verify", help="Do not wait for the server to become healthy."
+    ),
+    verify_timeout: float = typer.Option(
+        60.0, "--verify-timeout", help="Seconds to wait for the health check."
+    ),
+) -> None:
     """`outo-models start` — start the container."""
     if not podman_available():
         render_error(
@@ -143,7 +221,16 @@ def start() -> None:
     if rc != 0:
         print_status(f"[error] container failed to start (exit={rc})")
         raise typer_exit(1)
-    print_status(f"container started: {image}")
+
+    if no_verify:
+        print_status(f"container started (unverified): {image}")
+        return
+
+    try:
+        _verify_started(settings, ports, verify_timeout)
+    except OutoError as exc:
+        render_error(exc)
+        raise typer_exit(1) from exc
 
 
 __all__ = ["start"]

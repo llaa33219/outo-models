@@ -167,6 +167,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=version.__version__,
         lifespan=_app_lifespan,
     )
+
+    @app.get("/healthz", include_in_schema=False)
+    async def _healthz() -> dict[str, str]:
+        # The operator CLI polls this through the published port to verify
+        # `start` actually brought the stack up (Caddy → app round trip).
+        return {"status": "ok"}
+
     register_exception_handlers(app)
     _register_routes_and_middleware(app, settings)
     return app

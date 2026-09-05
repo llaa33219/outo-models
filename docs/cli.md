@@ -145,6 +145,22 @@ If `podman` is missing from `PATH`, an English message is printed to
 stderr — "this command must run on the server host" — and the process
 exits with code 1.
 
+### Startup verification
+
+`start` does not trust `podman run -d` returning 0. After spawning it
+verifies the stack actually came up:
+
+1. polls `podman inspect` for the container state (a container that went
+   `exited`/`dead` is detected immediately — no waiting), then
+2. polls `http(s)://…/healthz` (loopback in internal mode, the domain
+   otherwise; `--verify-timeout` seconds, default 60).
+
+On success it prints `[done] server is up: <url>`. On failure it dumps the
+last 50 lines of `podman logs` and exits 1 with `start_verify_failed` — a
+container that died on startup (bad config, port bind failure) therefore
+never looks "started". Use `--no-verify` to skip verification entirely
+(e.g. in CI wrappers that probe on their own).
+
 ## stop
 
 ```bash
