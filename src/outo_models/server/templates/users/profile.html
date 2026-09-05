@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.username }} &mdash; outo-models{% endblock %}
+{% block content %}
+  <section class="profile-card">
+    <span class="avatar lg">{{ profile.username[0]|upper }}</span>
+    <div>
+      <h1>{{ profile.username }}</h1>
+      <div class="meta">
+        {{ profile.display_name or '' }}
+        {% if profile.display_name %}&middot;{% endif %}
+        Joined {{ profile.created_at.strftime('%B %Y') }}
+      </div>
+    </div>
+    {% if is_self or viewer_is_admin %}
+      <div style="margin-left:auto">
+        <a href="/new" class="new-btn">New</a>
+      </div>
+    {% endif %}
+  </section>
+
+  <nav class="tabs" aria-label="Repository sections">
+    <a href="#models" class="active" data-kind="model">Models <span class="muted">({{ grouped.model|length }})</span></a>
+    <a href="#datasets" data-kind="dataset">Datasets <span class="muted">({{ grouped.dataset|length }})</span></a>
+    <a href="#spaces" data-kind="space">Spaces <span class="muted">({{ grouped.space|length }})</span></a>
+  </nav>
+
+  {% macro section(kind, items, heading) %}
+    <section id="{{ kind }}s">
+      <h2>{{ heading }}</h2>
+      {% if items %}
+        <div class="repo-grid">
+          {% for repo in items %}
+            <article class="card">
+              <h2><a href="/{{ profile.username }}/{{ repo.name }}">{{ repo.name }}</a></h2>
+              <div>
+                <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+                <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+              </div>
+              <p class="desc">{{ repo.description or "" }}</p>
+              <p class="meta">Created {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else '' }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No {{ heading|lower }} yet.</p>
+      {% endif %}
+    </section>
+  {% endmacro %}
+
+  {{ section('model', grouped.model, 'Models') }}
+  {{ section('dataset', grouped.dataset, 'Datasets') }}
+  {{ section('space', grouped.space, 'Spaces') }}
+{% endblock %}

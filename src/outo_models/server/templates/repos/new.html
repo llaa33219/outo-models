@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Create a new repository &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs"><a href="/{{ current_user.username }}">{{ current_user.username }}</a> &rarr; New</p>
+  <h1>Create a new repository</h1>
+  <p class="muted">Pick a kind, name it, choose visibility, and add an optional description.</p>
+
+  {% if error %}<div class="errors">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/new" class="form-card">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="kind-select">Kind</label>
+    <select id="kind-select" name="kind" required>
+      <option value="model" {% if form_kind == 'model' %}selected{% endif %}>Model</option>
+      <option value="dataset" {% if form_kind == 'dataset' %}selected{% endif %}>Dataset</option>
+      <option value="space" {% if form_kind == 'space' %}selected{% endif %}>Space</option>
+    </select>
+    <p class="help">Models store weights + a model card. Datasets store data + README. Spaces host interactive apps.</p>
+
+    <label for="name-input">Name</label>
+    <input id="name-input" type="text" name="name" required minlength="1" maxlength="63"
+           pattern="[a-z0-9][a-z0-9._-]{0,62}"
+           value="{{ form_name or '' }}">
+    <p class="help">Lowercase letters, digits, dot, underscore, or hyphen. 1&ndash;63 characters.</p>
+
+    <label for="visibility-select">Visibility</label>
+    <select id="visibility-select" name="visibility" required>
+      <option value="private" {% if form_visibility == 'private' %}selected{% endif %}>Private (only you)</option>
+      <option value="public" {% if form_visibility == 'public' %}selected{% endif %}>Public (everyone)</option>
+    </select>
+
+    <label for="description-input">Description (optional)</label>
+    <textarea id="description-input" name="description" rows="3" maxlength="500">{{ form_description or '' }}</textarea>
+
+    <p style="margin-top:16px"><button type="submit">Create</button></p>
+  </form>
+{% endblock %}

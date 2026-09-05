@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} &mdash; outo-models{% endblock %}
+{% block content %}
+  <h1>{{ heading }}</h1>
+  <p class="muted">Public {{ kind_label }} shared by the community.</p>
+
+  {% if repos %}
+    <div class="repo-grid">
+      {% for repo in repos %}
+        <article class="card">
+          <h2>
+            <a href="/{{ repo.owner.username }}/{{ repo.name }}">{{ repo.owner.username }}/{{ repo.name }}</a>
+          </h2>
+          <div>
+            <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+            <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+          </div>
+          <p class="desc">{{ repo.description or "" }}</p>
+          <p class="meta">Updated {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else 'recently' }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>No public {{ kind_label }} yet.</p>
+      {% if not current_user %}
+        <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first one.</p>
+      {% else %}
+        <p>Be the first &mdash; <a href="/new?kind={{ repo_kind }}">create a {{ kind_label }}</a>.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

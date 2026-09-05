@@ -151,7 +151,7 @@ uvicorn (127.0.0.1:8000) ← outo-models server serve
         │       └── SlowAPIMiddleware (rate limit)
         │       └── get_current_user / require_admin deps
         │
-        ├── /, /login, /signup, /admin/*  UI routers (Jinja2 + CSRF double-submit)
+        ├── /, /models, /datasets, /spaces, /new, /login, /signup, /admin  UI routers (Jinja2 + CSRF double-submit)
         │
         └── /{owner}/{name}.git/...      GitSmartService (root mount)
                 │
@@ -490,3 +490,75 @@ It defaults to `disabled`. Leave it alone if you don't need it.
 - [security.md](security.md) — authentication, tokens, rate limits
 - [git-repos.md](git-repos.md) — git request handling in detail
 - [testing.md](testing.md) — which tests verify which flow
+
+## Web UI
+
+The web UI lives at
+[src/outo_models/server/routers/ui.py](../src/outo_models/server/routers/ui.py)
+plus the Jinja templates under
+[src/outo_models/server/templates](../src/outo_models/server/templates).
+It mirrors the Hugging Face conventions: a single navbar carries the
+brand, the `Models` / `Datasets` / `Spaces` catalogs, and either
+`Log in` / `Sign up` (anonymous) or a profile chip + `New` button
+(authenticated). All pages share one base layout and one shared
+context (`current_user`, `active_nav`), so the navbar state stays
+coherent across the home page, profile pages, repo pages, and forms.
+
+### Routes
+
+| Path | Method | Auth | Purpose |
+| --- | --- | --- | --- |
+| `/` | GET | open | Public repos catalog |
+| `/models`, `/datasets`, `/spaces` | GET | open | Public repos filtered by `Repo.kind` |
+| `/{username}` | GET | open; 404 on missing | Profile page (avatar + joined date + repos grouped by kind) |
+| `/{owner}/{name}` | GET | open for public; owner/admin for private | Repo overview, clone command, recent revisions |
+| `/new` | GET | login required | Repo-creation form |
+| `/new` | POST | login required + CSRF | Creates model/dataset/space, redirects to the repo page |
+| `/login`, `/signup` | GET / POST | open | Auth forms (POST CSRF-protected) |
+| `/admin` | GET | admin role | Pending-signups dashboard |
+
+Route registration order matters: the static-prefix routes
+(`/models`, `/datasets`, `/spaces`, `/new`, `/login`, `/signup`,
+`/admin`) and the one-segment parameterised `/{username}` route are
+registered BEFORE the two-segment `/{owner}/{name}` catch-all. A
+one-segment URL never matches a two-segment path by construction, so
+the ordering is mostly documentary, but it makes the intent
+explicit.
+
+### Navbar context
+
+Every template inherits a `current_user` and an `active_nav` value.
+The `_render` helper resolves the logged-in user through
+`get_current_user_optional` and attaches a fresh CSRF cookie on
+first visit; `_form_page` extends that with the `_csrf` form-field
+token, minting the hidden input and the `Set-Cookie` from the same
+request so the double-submit cookie contract holds.
+
+`active_nav` is the key used to highlight the active tab in the
+navbar (`"models"`, `"datasets"`, `"spaces"`, or `None` for
+non-catalog pages). Each `_render_kind_list` call passes the
+appropriate value; the repo detail page passes the kind derived from
+`Repo.kind`; profile and form pages pass `None`.
+
+### /new flow
+
+`GET /new` returns the creation form if authenticated, otherwise
+redirects to `/login?next=/new`. The form POSTs `kind`, `name`,
+`visibility`, optional `description`, and the `_csrf` field. The
+handler validates kind / visibility, normalizes the name slug, then
+delegates to `repos.create.create_repo` or
+`spaces.registry.create_space` (for `kind=space`, default SDK
+`static`). A duplicate name or bad slug re-renders the form with
+the error in-page and the typed values preserved; success redirects
+(303) to the new repo's overview page.
+
+### CSRF
+
+The double-submit cookie scheme is implemented in
+[server/routers/_ui_helpers.py](../src/outo_models/server/routers/_ui_helpers.py).
+Forms always render their hidden `_csrf` field; `verify_csrf`
+compares the cookie value to the form value and returns 403 on
+mismatch. The `form_csrf_token` helper mints a fresh token before
+rendering (Starlette ≥1.x renders `TemplateResponse` eagerly, so
+mint-then-attach-cookie is required) and the cookie is attached
+before the response is returned.

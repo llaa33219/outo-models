@@ -6,91 +6,298 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% block head_extra %}{% endblock %}
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --muted: #6b7280;
+    --link: #2563eb;
+    --link-hover: #1d4ed8;
+    --accent: #facc15;
+    --danger: #b91c1c;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+    --radius: 8px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10;
+      --surface: #15181d;
+      --border: #2a2f37;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --link: #60a5fa;
+      --link-hover: #93c5fd;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.5);
+    }
+  }
   body {
     margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: #fafafa;
-    color: #111;
+    background: var(--bg);
+    color: var(--text);
     line-height: 1.5;
   }
-  @media (prefers-color-scheme: dark) {
-    body { background: #111; color: #eee; }
-    a { color: #6cf; }
-    header, footer { background: #1a1a1a; border-color: #333; }
-    .card { background: #1a1a1a; border-color: #333; }
-    pre { background: #1a1a1a; color: #eee; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { color: var(--link-hover); text-decoration: underline; }
+
+  /* ---------- navbar ---------- */
+  .site-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
   }
-  header, footer {
-    background: #fff;
-    border-bottom: 1px solid #eee;
-    padding: 12px 24px;
+  .navbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+    height: 56px;
   }
-  footer { border-top: 1px solid #eee; border-bottom: none; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px; }
-  h1, h2 { line-height: 1.25; }
-  a { color: #06c; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  nav a { margin-right: 16px; }
-  .card {
-    background: #fff;
-    border: 1px solid #eee;
-    border-radius: 8px;
-    padding: 16px;
-    margin: 12px 0;
+  .navbar .brand {
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--text);
+    letter-spacing: -0.01em;
   }
-  pre {
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 12px;
+  .navbar .brand:hover { text-decoration: none; color: var(--link); }
+  .navbar .nav-section {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .navbar .nav-spacer { flex: 1; }
+  .nav-link {
+    padding: 6px 10px;
     border-radius: 6px;
-    overflow-x: auto;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--text);
+    font-weight: 500;
     font-size: 14px;
   }
-  input, button, textarea, select {
-    font: inherit;
-    padding: 8px 12px;
+  .nav-link:hover { background: var(--border); text-decoration: none; }
+  .nav-link.active { color: var(--link); }
+  .new-btn {
+    padding: 6px 14px;
     border-radius: 6px;
-    border: 1px solid #ccc;
-    background: #fff;
-    color: inherit;
+    background: var(--accent);
+    color: #111;
+    font-weight: 600;
+    font-size: 14px;
+    border: 1px solid #d4a017;
   }
-  button {
-    cursor: pointer;
-    background: #2563eb;
-    color: #fff;
-    border-color: #2563eb;
+  .new-btn:hover { filter: brightness(0.95); text-decoration: none; color: #111; }
+
+  /* profile chip */
+  .profile-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 4px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
   }
-  button.danger { background: #b91c1c; border-color: #b91c1c; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
-  .muted { color: #666; font-size: 14px; }
+  .profile-chip:hover { background: var(--border); text-decoration: none; }
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #fbbf24, #f97316);
+    color: #111;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .avatar.lg { width: 72px; height: 72px; font-size: 32px; }
+  .profile-chip .avatar { width: 24px; height: 24px; font-size: 12px; }
+
+  /* ---------- layout ---------- */
+  main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1, h2 { line-height: 1.25; }
+  h1 { font-size: 24px; margin: 0 0 16px; }
+  h2 { font-size: 18px; margin: 24px 0 8px; }
+  p { margin: 8px 0; }
+  header, footer {}
+  footer {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 16px 24px;
+    margin-top: 32px;
+  }
+
+  /* ---------- cards / grids ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin: 12px 0;
+    box-shadow: var(--shadow);
+  }
+  .repo-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+  .repo-grid .card { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+  .repo-grid .card h2 { margin: 0; font-size: 16px; }
+  .repo-grid .card .desc { color: var(--muted); font-size: 14px; min-height: 1.5em; }
+  .repo-grid .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .repo-grid .card a { color: var(--text); font-weight: 600; }
+
+  /* ---------- pills / badges ---------- */
   .pill {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 12px;
     background: #eef;
+    color: #1e3a8a;
+    border: 1px solid #dbeafe;
   }
-  @media (prefers-color-scheme: dark) { .pill { background: #223; } }
-  .errors { color: #b91c1c; margin: 8px 0; }
+  .pill.model { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+  .pill.dataset { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+  .pill.space { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+  .pill.public { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+  .pill.private { background: #f3f4f6; color: #374151; border-color: #e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    .pill { background: #223; color: #d1d5db; border-color: #2a2f37; }
+    .pill.model { background: #422006; color: #fde68a; border-color: #713f12; }
+    .pill.dataset { background: #2e1065; color: #ddd6fe; border-color: #4c1d95; }
+    .pill.space { background: #052e16; color: #bbf7d0; border-color: #14532d; }
+    .pill.public { background: #052e16; color: #bbf7d0; border-color: #14532d; }
+    .pill.private { background: #1f2937; color: #d1d5db; border-color: #374151; }
+  }
+
+  /* ---------- profile page ---------- */
+  .profile-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
+  }
+  .profile-card .meta { color: var(--muted); font-size: 14px; }
+  .profile-card h1 { margin: 0; font-size: 22px; }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin: 24px 0 16px;
+  }
+  .tabs a {
+    padding: 10px 14px;
+    border-bottom: 2px solid transparent;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .tabs a:hover { text-decoration: none; color: var(--link); }
+  .tabs a.active {
+    border-bottom-color: var(--link);
+    color: var(--link);
+  }
+
+  /* ---------- forms ---------- */
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 12px 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    border: 1px solid #1e293b;
+  }
+  @media (prefers-color-scheme: dark) {
+    pre { background: #0b1220; border-color: #1f2937; color: #d1d5db; }
+  }
+  input, button, textarea, select {
+    font: inherit;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: inherit;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: 2px solid var(--link);
+    outline-offset: 1px;
+  }
+  button {
+    cursor: pointer;
+    background: var(--link);
+    color: #fff;
+    border-color: var(--link);
+  }
+  button:hover { filter: brightness(0.92); }
+  button.danger { background: var(--danger); border-color: var(--danger); }
+  form.inline { display: inline; }
+  label { display: block; margin: 12px 0 4px; font-weight: 500; font-size: 14px; }
+  .help { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .form-card { max-width: 480px; }
+
+  /* ---------- misc ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+  .muted { color: var(--muted); font-size: 14px; }
+  .errors { color: var(--danger); margin: 8px 0; padding: 10px 14px;
+            background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; }
+  @media (prefers-color-scheme: dark) {
+    .errors { background: #450a0a; border-color: #7f1d1d; }
+  }
+  .empty-state {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .breadcrumbs { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .breadcrumbs a { color: var(--muted); }
+  .breadcrumbs a:hover { color: var(--link); }
 </style>
 </head>
 <body>
-<header>
-  <nav>
-    <a href="/"><strong>outo-models</strong></a>
-    <a href="/signup">Sign up</a>
-    <a href="/login">Log in</a>
-    <a href="/admin">Admin</a>
+<header class="site-header">
+  <nav class="navbar" aria-label="Primary">
+    <a href="/" class="brand">outo-models</a>
+    <div class="nav-section">
+      <a href="/models" class="nav-link{% if active_nav == 'models' %} active{% endif %}">Models</a>
+      <a href="/datasets" class="nav-link{% if active_nav == 'datasets' %} active{% endif %}">Datasets</a>
+      <a href="/spaces" class="nav-link{% if active_nav == 'spaces' %} active{% endif %}">Spaces</a>
+    </div>
+    {# Auth controls live on the LEFT per the product spec (not the HF default) #}
+    <div class="nav-section">
+      {% if current_user %}
+        <a href="/new" class="new-btn">New</a>
+        <a href="/{{ current_user.username }}" class="profile-chip" aria-label="My profile">
+          <span class="avatar">{{ current_user.username[0]|upper }}</span>
+          <span class="username">{{ current_user.username }}</span>
+        </a>
+      {% else %}
+        <a href="/login" class="nav-link">Log in</a>
+        <a href="/signup" class="nav-link">Sign up</a>
+      {% endif %}
+    </div>
+    <div class="nav-spacer"></div>
   </nav>
 </header>
 <main>
   {% block content %}{% endblock %}
 </main>
 <footer>
-  <p class="muted">© outo-models — self-hostable model hub</p>
+  <p class="muted">&copy; outo-models &mdash; self-hostable model hub</p>
 </footer>
 </body>
 </html>
