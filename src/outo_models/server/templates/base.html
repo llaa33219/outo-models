@@ -4,268 +4,565 @@
 <meta charset="utf-8">
 <title>{% block title %}outo-models{% endblock %}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 {% block head_extra %}{% endblock %}
 <style>
-  :root {
-    color-scheme: light dark;
-    --bg: #fafafa;
-    --surface: #ffffff;
-    --border: #e5e7eb;
-    --text: #111827;
-    --muted: #6b7280;
-    --link: #2563eb;
-    --link-hover: #1d4ed8;
-    --accent: #facc15;
-    --danger: #b91c1c;
-    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
-    --radius: 8px;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0b0d10;
-      --surface: #15181d;
-      --border: #2a2f37;
-      --text: #f3f4f6;
-      --muted: #9ca3af;
-      --link: #60a5fa;
-      --link-hover: #93c5fd;
-      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.5);
-    }
-  }
-  body {
-    margin: 0;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-  }
-  a { color: var(--link); text-decoration: none; }
-  a:hover { color: var(--link-hover); text-decoration: underline; }
+/* ============================================================
+ * BLP Minimal Tile — design tokens (디자인.md 부록 A)
+ * ============================================================ */
+:root {
+  /* Core palette */
+  --color-main:           #007BFF; /* main accent + selected + tile hover border */
+  --color-inactive:       #94989E; /* inactive / default border */
+  --tile-bg:              #FAFCFF; /* tile background */
+  --text:                 #000000;
+  --text-sub:             #3E4D5F;
+  --el-hover:             #005BDD; /* filled element hover (darker tone) */
+  --el-active:            #0026A3; /* active / focus (single, dark) */
 
-  /* ---------- navbar ---------- */
-  .site-header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 0 24px;
-  }
-  .navbar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    max-width: 1200px;
-    margin: 0 auto;
-    height: 56px;
-  }
-  .navbar .brand {
-    font-weight: 700;
-    font-size: 18px;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-  .navbar .brand:hover { text-decoration: none; color: var(--link); }
-  .navbar .nav-section {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .navbar .nav-spacer { flex: 1; }
-  .nav-link {
-    padding: 6px 10px;
-    border-radius: 6px;
-    color: var(--text);
-    font-weight: 500;
-    font-size: 14px;
-  }
-  .nav-link:hover { background: var(--border); text-decoration: none; }
-  .nav-link.active { color: var(--link); }
-  .new-btn {
-    padding: 6px 14px;
-    border-radius: 6px;
-    background: var(--accent);
-    color: #111;
-    font-weight: 600;
-    font-size: 14px;
-    border: 1px solid #d4a017;
-  }
-  .new-btn:hover { filter: brightness(0.95); text-decoration: none; color: #111; }
+  /* Auxiliary BLP palette — spec §3.2 */
+  --blp-light-dark-blue:  #DBE3FF; /* empty element focus bg shift (required) */
+  --blp-paper-blue:       #EEF5FC; /* filled chip bg */
+  --blp-light-blue:       #DBEDFF; /* filled chip border */
+  --blp-paper-blue-2:     #F4F8FC;
+  --blp-soft-blue:        #7FBCFF; /* placeholder */
 
-  /* profile chip */
-  .profile-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 10px 4px 4px;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-  .profile-chip:hover { background: var(--border); text-decoration: none; }
-  .avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #fbbf24, #f97316);
-    color: #111;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    flex-shrink: 0;
-  }
-  .avatar.lg { width: 72px; height: 72px; font-size: 32px; }
-  .profile-chip .avatar { width: 24px; height: 24px; font-size: 12px; }
+  /* System constants — spec §부록 A */
+  --gap-tile:             4px;
+  --border-tile:          2px;
+  --border-el:            1px;
+  --radius-pill:          999px;
 
-  /* ---------- layout ---------- */
-  main { max-width: 1200px; margin: 0 auto; padding: 24px; }
-  h1, h2 { line-height: 1.25; }
-  h1 { font-size: 24px; margin: 0 0 16px; }
-  h2 { font-size: 18px; margin: 24px 0 8px; }
-  p { margin: 8px 0; }
-  header, footer {}
-  footer {
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    padding: 16px 24px;
-    margin-top: 32px;
-  }
+  /* Transitions — spec §5.4: tiles instant, elements 200ms */
+  --t-tile:               0s;
+  --t-fast:               100ms ease-in-out;
+  --t-base:               200ms ease-in-out;
+  --t-slow:               300ms ease-in-out;
 
-  /* ---------- cards / grids ---------- */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin: 12px 0;
-    box-shadow: var(--shadow);
-  }
-  .repo-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  }
-  .repo-grid .card { margin: 0; display: flex; flex-direction: column; gap: 6px; }
-  .repo-grid .card h2 { margin: 0; font-size: 16px; }
-  .repo-grid .card .desc { color: var(--muted); font-size: 14px; min-height: 1.5em; }
-  .repo-grid .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .repo-grid .card a { color: var(--text); font-weight: 600; }
+  /* Page chrome */
+  --max-content:          1000px;
+}
 
-  /* ---------- pills / badges ---------- */
-  .pill {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 12px;
-    background: #eef;
-    color: #1e3a8a;
-    border: 1px solid #dbeafe;
-  }
-  .pill.model { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-  .pill.dataset { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
-  .pill.space { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
-  .pill.public { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
-  .pill.private { background: #f3f4f6; color: #374151; border-color: #e5e7eb; }
-  @media (prefers-color-scheme: dark) {
-    .pill { background: #223; color: #d1d5db; border-color: #2a2f37; }
-    .pill.model { background: #422006; color: #fde68a; border-color: #713f12; }
-    .pill.dataset { background: #2e1065; color: #ddd6fe; border-color: #4c1d95; }
-    .pill.space { background: #052e16; color: #bbf7d0; border-color: #14532d; }
-    .pill.public { background: #052e16; color: #bbf7d0; border-color: #14532d; }
-    .pill.private { background: #1f2937; color: #d1d5db; border-color: #374151; }
-  }
+/* ============================================================
+ * Pretendard (디자인.md §4.1) — all 9 weights.
+ * `font-display: swap` keeps text visible during CDN load; on
+ * internal / offline installs the browser falls back through the
+ * `system-ui, sans-serif` stack declared on `body`.
+ * ============================================================ */
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Thin.woff2') format('woff2');
+  font-weight: 100; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraLight.woff2') format('woff2');
+  font-weight: 200; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Light.woff2') format('woff2');
+  font-weight: 300; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Regular.woff2') format('woff2');
+  font-weight: 400; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Medium.woff2') format('woff2');
+  font-weight: 500; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-SemiBold.woff2') format('woff2');
+  font-weight: 600; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Bold.woff2') format('woff2');
+  font-weight: 700; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-ExtraBold.woff2') format('woff2');
+  font-weight: 800; font-display: swap;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/pretendard@1.0/Pretendard-Black.woff2') format('woff2');
+  font-weight: 900; font-display: swap;
+}
 
-  /* ---------- profile page ---------- */
-  .profile-card {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px;
-    box-shadow: var(--shadow);
-  }
-  .profile-card .meta { color: var(--muted); font-size: 14px; }
-  .profile-card h1 { margin: 0; font-size: 22px; }
-  .tabs {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--border);
-    margin: 24px 0 16px;
-  }
-  .tabs a {
-    padding: 10px 14px;
-    border-bottom: 2px solid transparent;
-    color: var(--text);
-    font-weight: 500;
-  }
-  .tabs a:hover { text-decoration: none; color: var(--link); }
-  .tabs a.active {
-    border-bottom-color: var(--link);
-    color: var(--link);
-  }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  background: var(--tile-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--color-main); text-decoration: none; }
+a:hover { color: var(--el-hover); text-decoration: underline; }
 
-  /* ---------- forms ---------- */
-  pre {
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 12px 14px;
-    border-radius: 6px;
-    overflow-x: auto;
-    font-family: var(--mono);
-    font-size: 13.5px;
-    border: 1px solid #1e293b;
-  }
-  @media (prefers-color-scheme: dark) {
-    pre { background: #0b1220; border-color: #1f2937; color: #d1d5db; }
-  }
-  input, button, textarea, select {
-    font: inherit;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: inherit;
-  }
-  input:focus, textarea:focus, select:focus {
-    outline: 2px solid var(--link);
-    outline-offset: 1px;
-  }
-  button {
-    cursor: pointer;
-    background: var(--link);
-    color: #fff;
-    border-color: var(--link);
-  }
-  button:hover { filter: brightness(0.92); }
-  button.danger { background: var(--danger); border-color: var(--danger); }
-  form.inline { display: inline; }
-  label { display: block; margin: 12px 0 4px; font-weight: 500; font-size: 14px; }
-  .help { color: var(--muted); font-size: 13px; margin-top: 4px; }
-  .form-card { max-width: 480px; }
+/* ============================================================
+ * Tile primitives — square, 0 radius, 2px border, instant hover
+ * (디자인.md §1.3, §5.1, §5.4)
+ * ============================================================ */
+.bg-tile,
+.el-tile {
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0; /* tiles are NEVER rounded (§1.3, §6.1) */
+  transition: border-color var(--t-tile);
+}
+.bg-tile:hover,
+.el-tile:hover { border-color: var(--color-main); }
 
-  /* ---------- misc ---------- */
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
-  .muted { color: var(--muted); font-size: 14px; }
-  .errors { color: var(--danger); margin: 8px 0; padding: 10px 14px;
-            background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; }
-  @media (prefers-color-scheme: dark) {
-    .errors { background: #450a0a; border-color: #7f1d1d; }
-  }
-  .empty-state {
-    background: var(--surface);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 32px;
-    text-align: center;
-    color: var(--muted);
-  }
-  .breadcrumbs { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
-  .breadcrumbs a { color: var(--muted); }
-  .breadcrumbs a:hover { color: var(--link); }
+.bg-tile__inner {
+  max-width: var(--max-content);
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+/* ============================================================
+ * Navbar — left-aligned brand / kind links / auth controls, then
+ * a spacer that pushes nothing to the right. The whole bar is a
+ * single background tile (spec §8.3).
+ * ============================================================ */
+.site-header {
+  background: var(--tile-bg);
+  padding: var(--gap-tile);
+}
+.navbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-tile);
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 0 16px;
+  height: 56px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.navbar .brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  padding: 0 8px;
+}
+.navbar .brand:hover { color: var(--color-main); text-decoration: none; }
+.navbar .nav-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.navbar .nav-spacer { flex: 1; }
+
+/* Nav links — empty elements: hover = main border, focus = main
+ * border + internal bg shift (§3.4, §5.2, §5.3). */
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  font: 500 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--tile-bg);
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+.nav-link:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+.nav-link:active,
+.nav-link:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue); /* spec: required internal shift */
+  outline: none;
+}
+/* Permanent selection exception (§3.4 last paragraph) */
+.nav-link.active {
+  border-color: var(--color-main);
+  background: var(--color-main);
+  color: var(--tile-bg);
+}
+.nav-link.active:hover { background: var(--el-hover); border-color: var(--el-hover); }
+
+/* New button — filled primary capsule (§7.1). */
+.new-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 16px;
+  font: 600 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--tile-bg);
+  background: var(--color-main);
+  border: var(--border-el) solid var(--color-main);
+  border-radius: var(--radius-pill);
+  transition: background var(--t-base), border-color var(--t-base);
+}
+.new-btn:hover { background: var(--el-hover); border-color: var(--el-hover); color: var(--tile-bg); text-decoration: none; }
+.new-btn:active,
+.new-btn:focus-visible { background: var(--el-active); border-color: var(--el-active); outline: none; }
+
+/* Logout link — secondary capsule (empty element) so it doesn't
+ * compete with the primary New button. */
+.logout-link {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  font: 500 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text-sub);
+  background: var(--tile-bg);
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+.logout-link:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+.logout-link:active,
+.logout-link:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue);
+  outline: none;
+}
+
+/* ============================================================
+ * Profile chip (avatar + username) — capsule allowed for small
+ * elements per spec §0.3 / §2.1. Keeps the existing class name so
+ * tests referencing `profile-chip` / `avatar` still match.
+ * ============================================================ */
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 4px;
+  background: var(--tile-bg);
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  transition: border-color var(--t-base), background var(--t-base);
+}
+.profile-chip:hover { border-color: var(--color-main); text-decoration: none; }
+.profile-chip:active,
+.profile-chip:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue);
+  outline: none;
+}
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%; /* small element: capsule allowed (§2.1) */
+  background: var(--blp-paper-blue); /* paper-blue, no gradient (§6.1) */
+  border: var(--border-el) solid var(--blp-light-blue);
+  color: var(--text);
+  font: 700 12px/1 'Pretendard', system-ui, sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.avatar.lg { width: 72px; height: 72px; font-size: 32px; }
+
+/* ============================================================
+ * Layout — square content tile, 1000px cap (§1.1)
+ * ============================================================ */
+main {
+  padding: var(--gap-tile);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.content-tile {
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 24px 16px;
+}
+.content-tile__inner { max-width: var(--max-content); margin: 0 auto; }
+h1, h2, h3 { line-height: 1.25; letter-spacing: -0.01em; }
+h1 { font-size: 24px; font-weight: 700; margin: 0 0 16px; }
+h2 { font-size: 18px; font-weight: 700; margin: 24px 0 8px; }
+h3 { font-size: 16px; font-weight: 600; margin: 16px 0 8px; }
+p { margin: 8px 0; }
+
+footer {
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 16px 24px;
+  margin: var(--gap-tile) auto 0;
+  max-width: 1200px;
+}
+
+/* ============================================================
+ * Cards / grids — element tiles, square (§7.3).
+ * Repo grids use a CSS grid with 4px gap (within a single
+ * background tile, so this is the element-tile gap, not the
+ * background-tile gap — §1.3 / §8 note).
+ * ============================================================ */
+.card {
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 16px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color var(--t-tile);
+}
+.card:hover { border-color: var(--color-main); }
+.card h2 { margin: 0; font-size: 16px; }
+.card .desc { color: var(--text-sub); font-size: 14px; min-height: 1.5em; }
+.card .meta { color: var(--text-sub); font-size: 12px; margin-top: 4px; }
+.card a { color: var(--text); font-weight: 600; }
+.card a:hover { color: var(--color-main); text-decoration: none; }
+
+.repo-grid {
+  display: grid;
+  gap: var(--gap-tile);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+/* ============================================================
+ * Chips / pills — filled elements (paper-blue bg, light-blue
+ * border), capsule, hover darker tone (§7.4).
+ * ============================================================ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  font: 500 12px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text-sub);
+  background: var(--blp-paper-blue);
+  border: var(--border-el) solid var(--blp-light-blue);
+  border-radius: var(--radius-pill);
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+.pill:hover { border-color: var(--color-main); color: var(--el-active); }
+.pill.model     { color: var(--text); }
+.pill.dataset   { color: var(--text); }
+.pill.space     { color: var(--text); }
+.pill.public    { color: var(--text-sub); }
+.pill.private   { color: var(--text-sub); }
+
+/* ============================================================
+ * Profile / repo tabs — empty elements by default, filled when
+ * selected (the permanent-selection exception, §3.4).
+ * ============================================================ */
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 20px;
+  transition: border-color var(--t-tile);
+}
+.profile-card:hover { border-color: var(--color-main); }
+.profile-card .meta { color: var(--text-sub); font-size: 14px; }
+.profile-card h1 { margin: 0; font-size: 22px; }
+
+.tabs {
+  display: flex;
+  gap: var(--gap-tile);
+  margin: 24px 0 16px;
+  flex-wrap: wrap;
+}
+.tabs a {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  font: 500 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--tile-bg);
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+.tabs a:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+.tabs a.active {
+  border-color: var(--color-main);
+  background: var(--color-main);
+  color: var(--tile-bg);
+}
+.tabs a.active:hover { background: var(--el-hover); border-color: var(--el-hover); }
+.tabs a .muted { color: inherit; opacity: 0.7; margin-left: 6px; font-weight: 400; }
+
+/* ============================================================
+ * Forms — capsules for inputs/selects/textareas, primary button
+ * for submit (§7.1, §7.2). No gradients, no soft shadows.
+ * ============================================================ */
+pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 12px 14px;
+  border-radius: 0; /* tiles / chrome: square only (§6.1) */
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  border: var(--border-el) solid #1e293b;
+}
+input, select, textarea, button {
+  font: inherit;
+  color: inherit;
+}
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="search"],
+select,
+textarea {
+  height: 40px;
+  padding: 0 14px;
+  font: 400 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--tile-bg); /* empty element (§7.2) */
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  outline: none;
+  transition: background var(--t-base), border-color var(--t-base);
+}
+textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 12px 14px;
+  line-height: 1.5;
+  border-radius: var(--radius-pill); /* capsule, consistent with other form controls (§2.1) */
+}
+input:hover, select:hover, textarea:hover { border-color: var(--color-main); }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue); /* required internal shift */
+}
+input::placeholder, textarea::placeholder { color: var(--blp-soft-blue); }
+select { appearance: none; padding-right: 32px; cursor: pointer; }
+
+button, .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 20px;
+  font: 500 14px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--tile-bg); /* empty by default (§7.1) */
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+button:hover, .btn:hover { border-color: var(--color-main); color: var(--color-main); }
+button:active, .btn:active,
+button:focus-visible, .btn:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue);
+  outline: none;
+}
+/* primary: filled, hover darker tone (no color swap, §3.4) */
+button.primary, .btn-primary {
+  background: var(--color-main);
+  border-color: var(--color-main);
+  color: var(--tile-bg);
+}
+button.primary:hover, .btn-primary:hover {
+  background: var(--el-hover);
+  border-color: var(--el-hover);
+  color: var(--tile-bg);
+}
+button.primary:active, .btn-primary:active,
+button.primary:focus-visible, .btn-primary:focus-visible {
+  background: var(--el-active);
+  border-color: var(--el-active);
+  color: var(--tile-bg);
+}
+button.danger, .btn-danger {
+  background: var(--blp-red);
+  border-color: var(--blp-red);
+  color: var(--tile-bg);
+}
+button.danger:hover, .btn-danger:hover {
+  background: var(--blp-deep-red);
+  border-color: var(--blp-deep-red);
+}
+button.danger:active, .btn-danger:active,
+button.danger:focus-visible, .btn-danger:focus-visible {
+  background: var(--blp-deep-red);
+  border-color: var(--blp-deep-red);
+}
+
+label { display: block; margin: 16px 0 4px; font-weight: 500; font-size: 14px; }
+form.inline { display: inline; }
+.form-card { max-width: 480px; }
+.help { color: var(--text-sub); font-size: 13px; margin-top: 4px; }
+.form-actions { display: flex; gap: 12px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+.logout-tile {
+  max-width: 480px;
+  margin: 24px auto 0;
+  padding: 24px;
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  transition: border-color var(--t-tile);
+}
+.logout-tile:hover { border-color: var(--color-main); }
+.logout-tile h1 { margin: 0 0 8px; }
+.logout-tile .form-actions { margin-top: 20px; }
+.logout-form { margin-top: 16px; }
+
+/* ============================================================
+ * Misc — table / errors / empty-state tiles
+ * ============================================================ */
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: var(--border-el) solid var(--color-inactive);
+}
+th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
+.muted { color: var(--text-sub); font-size: 14px; }
+.errors {
+  color: var(--blp-red);
+  margin: 8px 0 16px;
+  padding: 12px 16px;
+  background: var(--blp-paper-blue-2);
+  border: var(--border-el) solid var(--blp-soft-red);
+  border-radius: 0;
+}
+.empty-state {
+  background: var(--tile-bg);
+  border: var(--border-tile) dashed var(--color-inactive);
+  border-radius: 0;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-sub);
+}
+.breadcrumbs { color: var(--text-sub); font-size: 14px; margin-bottom: 8px; }
+.breadcrumbs a { color: var(--text-sub); }
+.breadcrumbs a:hover { color: var(--color-main); }
+
+/* Page-level grid: navbar tile + content tile separated by 4px */
+.page-grid {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--gap-tile);
+  min-height: 100vh;
+  padding: var(--gap-tile);
+  max-width: 1200px;
+  margin: 0 auto;
+}
 </style>
 </head>
 <body>
@@ -285,6 +582,7 @@
           <span class="avatar">{{ current_user.username[0]|upper }}</span>
           <span class="username">{{ current_user.username }}</span>
         </a>
+        <a href="/logout" class="logout-link">Log out</a>
       {% else %}
         <a href="/login" class="nav-link">Log in</a>
         <a href="/signup" class="nav-link">Sign up</a>
@@ -294,7 +592,11 @@
   </nav>
 </header>
 <main>
-  {% block content %}{% endblock %}
+  <div class="content-tile">
+    <div class="content-tile__inner">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
 </main>
 <footer>
   <p class="muted">&copy; outo-models &mdash; self-hostable model hub</p>

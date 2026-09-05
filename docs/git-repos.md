@@ -43,11 +43,17 @@ git clone https://models.example.com/alice/ll-7b.git
 
 PAT issuance:
 
-1. Log into the web UI → user menu → **Tokens**
-2. Click **Create token** → enter the name, scopes (`read`, `write`),
+1. Log into the web UI (navbar `Log in` → submit credentials)
+2. From your profile page (`/<username>`), open the **Tokens** section
+3. Click **Create token** → enter the name, scopes (`read`, `write`),
    and expiration
-3. The response shows the plaintext once — save it immediately
-4. Or via API: `POST /api/auth/tokens` (`name`, `scopes`, `ttl_days`)
+4. The response shows the plaintext once — save it immediately
+5. Or via API: `POST /api/auth/tokens` (`name`, `scopes`, `ttl_days`)
+
+Sign out via the `Log out` link in the navbar (left side); the
+confirmation tile (`GET /logout`) and CSRF-protected
+`POST /logout` flow are documented in
+[architecture.md](architecture.md#web-ui).
 
 ## Creating a repository from the UI
 

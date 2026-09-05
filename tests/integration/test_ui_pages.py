@@ -692,6 +692,184 @@ class TestNewRepoPage:
         assert "Unknown repository kind" in response.text
 
 
+class TestLogout:
+    """`GET /logout` renders the confirmation tile; `POST /logout`
+    clears the session cookie (303 → /) and is CSRF-protected.
+
+    Anonymous visitors never see the navbar link and never reach the
+    confirm page — they're bounced to /login so the cookie-clear
+    endpoint can't be probed by a logged-out client.
+    """
+
+    async def test_navbar_hides_logout_for_anonymous(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "Log out" not in response.text
+
+    async def test_navbar_shows_logout_when_authed(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/")
+        assert response.status_code == 200
+        # The link itself, plus its left-of-spacer position so it sits
+        # alongside the profile chip per the product spec.
+        nav = response.text.split('<nav class="navbar"', 1)[1].split("</nav>", 1)[0]
+        assert 'href="/logout"' in nav
+        assert ">Log out<" in nav
+        spacer = nav.find("nav-spacer")
+        logout = nav.find('href="/logout"')
+        assert logout != -1 and spacer != -1
+        assert logout < spacer
+
+    async def test_logout_anonymous_redirects_to_login(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/logout", follow_redirects=False)
+        # Logged-out clients have no session to clear — bounce to login
+        # instead of serving a confirmation form.
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/login")
+        assert "next=/logout" in response.headers["location"]
+
+    async def test_logout_get_renders_confirm_tile(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/logout")
+        assert response.status_code == 200
+        body = response.text
+        assert "Sign out of alice?" in body
+        assert "logout-tile" in body
+        # CSRF hidden field present and matching the cookie.
+        cookie_token = response.cookies.get("_csrf") or client.cookies.get("_csrf")
+        assert cookie_token
+        match = re.search(r'name="_csrf" value="([^"]+)"', body)
+        assert match is not None
+        assert match.group(1) == cookie_token
+        # Form points at the same URL and is a POST.
+        assert 'action="/logout"' in body
+        assert 'method="post"' in body
+
+    async def test_logout_post_without_csrf_is_403(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.post("/logout", data={"_csrf": "obviously-wrong"})
+        assert response.status_code == 403
+
+    async def test_logout_post_with_csrf_clears_cookie_and_redirects(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        # GET the confirm tile so the test client has the CSRF cookie.
+        csrf = _form_csrf(client, "/logout")
+        assert (
+            "outo_session" in client.cookies.get("outo_session", "")
+            or "outo_session" in client.cookies
+        )  # session cookie present pre-logout
+        response = client.post(
+            "/logout",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/"
+        # Session cookie cleared: either gone or empty value.
+        post_cookie = client.cookies.get("outo_session", "")
+        assert post_cookie == "" or post_cookie is None, post_cookie
+
+    async def test_after_logout_navbar_shows_login_signup(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, "/logout")
+        client.post("/logout", data={"_csrf": csrf}, follow_redirects=False)
+        response = client.get("/", follow_redirects=False)
+        assert response.status_code == 200
+        body = response.text
+        # Anonymous navbar comes back.
+        assert 'href="/login"' in body
+        assert 'href="/signup"' in body
+        assert 'class="profile-chip"' not in body
+        assert "Log out" not in body
+
+
+class TestBlpDesignChrome:
+    """The base layout applies the BLP Minimal Tile design language:
+    Pretendard font family, square tiles, capsule form controls.
+    """
+
+    async def test_body_uses_pretendard_font_stack(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        assert response.status_code == 200
+        body = response.text
+        # Pretendard is the primary family; system-ui is the offline fallback.
+        assert "'Pretendard', system-ui" in body
+        # CDN origin referenced in @font-face.
+        assert "cdn.jsdelivr.net" in body
+
+    async def test_card_styles_use_square_corners(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        body = response.text
+        # Tile primitive explicitly sets border-radius: 0 on tiles.
+        assert ".card" in body
+        assert "border-radius: 0" in body
+
+    async def test_buttons_are_capsule_radius(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        body = response.text
+        # Buttons use the pill radius token (or the literal 999px).
+        assert "var(--radius-pill)" in body or "999px" in body
+
+    async def test_no_ui_chrome_gradients(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        body = response.text
+        # Spec §6.1 forbids gradients in UI chrome. The PNG avatar
+        # pseudo-gradient in the previous design is gone.
+        assert "linear-gradient" not in body
+        assert "radial-gradient" not in body
+
+
 class TestNavbarLeftAlignedAuth:
     """Product spec: auth controls (login/signup, or the profile chip when
     authed) sit on the LEFT side of the navbar — not the HF-default right."""

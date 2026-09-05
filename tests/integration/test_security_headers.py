@@ -95,6 +95,16 @@ class TestCspContents:
         csp = response.headers["content-security-policy"]
         assert "style-src 'self' 'unsafe-inline'" in csp
 
+    def test_font_src_allows_pretendard_cdn(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        # 디자인.md §4.1 ships the Pretendard @font-face from jsdelivr; the
+        # browser needs an explicit `font-src` allowlist for the woff2 files
+        # to load. Internal installs fall back to system-ui when the CDN is
+        # unreachable, but the allowlist itself must be present.
+        client, _, _ = app
+        response = client.get("/")
+        csp = response.headers["content-security-policy"]
+        assert "font-src 'self' https://cdn.jsdelivr.net" in csp
+
 
 class TestHstsByInternalMode:
     """`_should_emit_hsts` follows `Settings.is_internal` directly."""

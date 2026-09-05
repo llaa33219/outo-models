@@ -341,6 +341,48 @@ async def admin_dashboard_page(
     )
 
 
+@router.get("/logout", response_class=HTMLResponse)
+async def logout_page(
+    request: Request,
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the logout confirmation tile (login required).
+
+    Anonymous callers are redirected to `/login` — there is no point in
+    confirming a sign-out for a client that isn't signed in. The form
+    below the heading POSTs to the same path with the CSRF token.
+    """
+    if user is None:
+        return RedirectResponse(url="/login?next=/logout", status_code=status.HTTP_303_SEE_OTHER)
+    return _form_page(request, "auth/logout.html", user=user, active_nav=None)
+
+
+@router.post("/logout")
+async def logout_form(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Clear the session cookie and redirect home.
+
+    The double-submit CSRF cookie is verified before any cookie is
+    mutated so a third-party site cannot force a sign-out. The session
+    cookie is cleared by overwriting it with an empty value and
+    `max_age=0` — that is the Starlette `Response.delete_cookie` shape.
+    Idempotent: posting with no session is a no-op.
+    """
+    verify_csrf(request, form_token=csrf)
+    response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=settings.env == "production",
+    )
+    return response
+
+
 @router.get("/{username}", response_class=HTMLResponse)
 async def user_profile_page(
     request: Request,

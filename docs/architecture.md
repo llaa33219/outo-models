@@ -497,12 +497,39 @@ The web UI lives at
 [src/outo_models/server/routers/ui.py](../src/outo_models/server/routers/ui.py)
 plus the Jinja templates under
 [src/outo_models/server/templates](../src/outo_models/server/templates).
-It mirrors the Hugging Face conventions: a single navbar carries the
-brand, the `Models` / `Datasets` / `Spaces` catalogs, and either
-`Log in` / `Sign up` (anonymous) or a profile chip + `New` button
-(authenticated). All pages share one base layout and one shared
-context (`current_user`, `active_nav`), so the navbar state stays
-coherent across the home page, profile pages, repo pages, and forms.
+It follows the **BLP Minimal Tile** design language documented in
+[`../디자인.md`](../디자인.md) (English summary below; the spec is the
+source of truth for tokens, transitions, and hover behaviour). A single
+navbar carries the brand, the `Models` / `Datasets` / `Spaces` catalogs,
+and either `Log in` / `Sign up` (anonymous) or a profile chip + `New`
+button + `Log out` link (authenticated). All pages share one base layout
+and one shared context (`current_user`, `active_nav`), so the navbar
+state stays coherent across the home page, profile pages, repo pages,
+and forms.
+
+### Design language (BLP Minimal Tile)
+
+The chrome follows the spec verbatim:
+
+- **Tiles are always square** (`border-radius: 0`, `2px` borders).
+  Cards, the content area, the navbar wrapper, the profile card, the
+  logout confirmation tile, and the footer are all square tiles.
+- **Form controls are capsules** (buttons, inputs, selects, textareas)
+  with `1px` borders and the spec's `--t-base` (200 ms) transition.
+- **No gradients** in UI chrome. **No soft / blurred shadows.** Hard
+  offset shadows are reserved for the optional §5.5 lift pattern (not
+  used in the current pages).
+- **Filled elements (primary, danger, selected tabs)** hover darker,
+  never invert colour. **Empty elements** (nav links, chips, default
+  buttons) hover with `--color-main` border only; their focus state
+  *also* shifts the background to `--blp-light-dark-blue` (§3.4
+  requirement).
+- **Pretendard** is the primary font (loaded from `cdn.jsdelivr.net`
+  per spec §4.1). The CSP allows `font-src https://cdn.jsdelivr.net`
+  and the `font-display: swap` + `system-ui` fallback keeps text
+  readable on offline / LAN installs.
+- All chrome colours come from the BLP palette (see spec §3.1 and
+  부록 A for the canonical token names).
 
 ### Routes
 
@@ -515,15 +542,17 @@ coherent across the home page, profile pages, repo pages, and forms.
 | `/new` | GET | login required | Repo-creation form |
 | `/new` | POST | login required + CSRF | Creates model/dataset/space, redirects to the repo page |
 | `/login`, `/signup` | GET / POST | open | Auth forms (POST CSRF-protected) |
+| `/logout` | GET | login required | Sign-out confirmation tile (Cancel / Sign out buttons) |
+| `/logout` | POST | login required + CSRF | Clears the session cookie, 303 redirect to `/` |
 | `/admin` | GET | admin role | Pending-signups dashboard |
 
 Route registration order matters: the static-prefix routes
 (`/models`, `/datasets`, `/spaces`, `/new`, `/login`, `/signup`,
-`/admin`) and the one-segment parameterised `/{username}` route are
-registered BEFORE the two-segment `/{owner}/{name}` catch-all. A
-one-segment URL never matches a two-segment path by construction, so
-the ordering is mostly documentary, but it makes the intent
-explicit.
+`/logout`, `/admin`) and the one-segment parameterised `/{username}`
+route are registered BEFORE the two-segment `/{owner}/{name}`
+catch-all. A one-segment URL never matches a two-segment path by
+construction, so the ordering is mostly documentary, but it makes
+the intent explicit.
 
 ### Navbar context
 
@@ -539,6 +568,13 @@ navbar (`"models"`, `"datasets"`, `"spaces"`, or `None` for
 non-catalog pages). Each `_render_kind_list` call passes the
 appropriate value; the repo detail page passes the kind derived from
 `Repo.kind`; profile and form pages pass `None`.
+
+Auth controls live on the LEFT of the navbar (not the HF-default
+right): anonymous → `Log in` / `Sign up` capsules; authenticated →
+`New` (primary), profile chip, `Log out` capsule. Anonymous
+visitors never see `Log out` and `GET /logout` redirects them to
+`/login?next=/logout` so the cookie-clear endpoint cannot be probed
+by a logged-out client.
 
 ### /new flow
 

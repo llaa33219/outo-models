@@ -33,6 +33,11 @@ _CSP_HEADER = (
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data:; "
     "script-src 'self'; "
+    # The Pretendard webfont is served from jsdelivr (cf. 디자인.md §4.1).
+    # Internal / LAN installs may have no outbound connectivity at all —
+    # the @font-face stack falls back to `system-ui`, but the browser
+    # still needs to be allowed to *try* the CDN origin.
+    "font-src 'self' https://cdn.jsdelivr.net; "
     "base-uri 'self'; "
     "form-action 'self'; "
     "frame-ancestors 'none'"

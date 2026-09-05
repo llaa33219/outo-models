@@ -17,7 +17,7 @@
           <td>
             <form method="post" action="/api/admin/users/{{ user.username }}/approve" style="display:inline">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit">Approve</button>
+              <button type="submit" class="primary">Approve</button>
             </form>
           </td>
           <td>
