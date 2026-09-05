@@ -214,7 +214,7 @@ class TestStartVerification:
 
         monkeypatch.setattr(start_mod, "podman_available", lambda: True)
         monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: 0)
-        monkeypatch.setattr(start_mod, "_dump_logs", lambda: None)
+        monkeypatch.setattr(start_mod, "_collect_logs", lambda: "")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "image: ghcr.io/llaa33219/outo-models:dev\n"
@@ -245,7 +245,7 @@ class TestStartVerification:
         monkeypatch.setattr(start_mod, "_inspect_state", lambda: "exited")
         monkeypatch.setattr(start_mod, "_probe", lambda _url: False)
         logs: list[bool] = []
-        monkeypatch.setattr(start_mod, "_dump_logs", lambda: logs.append(True))
+        monkeypatch.setattr(start_mod, "_collect_logs", lambda: logs.append(True) or "")
         result = runner.invoke(app, ["start", "--verify-timeout", "5"])
         assert result.exit_code == 1
         assert "start_verify_failed" in result.output
@@ -371,3 +371,42 @@ class TestContainerImageMatches:
         monkeypatch.setattr(start_mod, "_container_image_id", lambda: None)
         monkeypatch.setattr(start_mod, "_local_image_id", lambda _img: "sha256:new")
         assert start_mod._container_image_matches("x:dev") is False
+
+
+class TestStartDiagnosis:
+    """Failure advice maps log signatures to concrete next commands."""
+
+    def _advice(self, logs: str, monkeypatch: pytest.MonkeyPatch) -> str:
+        from outo_models.cli import start as start_mod
+
+        printed: list[str] = []
+        monkeypatch.setattr(start_mod, "print_status", lambda msg: printed.append(str(msg)))
+        start_mod._print_diagnosis(logs, "http://127.0.0.1:80/healthz")
+        return "\n".join(printed)
+
+    def test_low_port_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice("Error: listen tcp :80: bind: permission denied", monkeypatch)
+        assert "enable-low-ports.sh 80" in advice
+
+    def test_address_in_use_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice("bind: address already in use", monkeypatch)
+        assert "ss -lntp" in advice
+
+    def test_stale_image_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice("No such command 'serve'", monkeypatch)
+        assert "outo-models update" in advice
+
+    def test_db_permission_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice("unable to open database file", monkeypatch)
+        assert "reset --destroy" in advice
+
+    def test_acme_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice("acme: registering account", monkeypatch)
+        assert "--verify-timeout" in advice
+
+    def test_unknown_signature_gives_generic_guidance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        advice = self._advice("something entirely novel exploded", monkeypatch)
+        assert "no known failure pattern" in advice
+        assert "troubleshooting.md" in advice

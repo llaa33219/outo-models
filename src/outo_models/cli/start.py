@@ -173,11 +173,88 @@ def _health_url(settings: Settings, ports: list[str]) -> str:
     return f"https://{settings.domain}:{tls_port}/healthz"
 
 
-def _dump_logs() -> None:
-    """Best-effort `podman logs` tail into the operator's terminal."""
-    subprocess.run(  # noqa: S603 — fixed argv, no shell
+def _collect_logs() -> str:
+    """Best-effort `podman logs` tail, captured for display + diagnosis."""
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
         [*podman_base(), "logs", "--tail", "50", _CONTAINER_NAME],
         check=False,
+        capture_output=True,
+        text=True,
+    )
+    return (result.stdout or "") + (result.stderr or "")
+
+
+# Ordered (pattern, advice) rules. The first match wins, so keep the most
+# specific signatures at the top. Every advice names the exact command an
+# operator can paste — no "see the docs" without a concrete first step.
+_DIAGNOSIS_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "listen tcp :",
+        """\
+The kernel refused to let Caddy bind a low port (rootless containers may
+only bind ports >= 1024 by default). Fix it once on the host:
+
+    /usr/local/share/outo-models/enable-low-ports.sh 80
+
+(it asks for sudo and applies a persistent sysctl). Then: outo-models start""",
+    ),
+    (
+        "address already in use",
+        """\
+Another program already occupies the port. Find it with:
+
+    sudo ss -lntp | grep -E ':(80|443)\\\\s'
+
+Stop that program (or change the ports via `outo-models setup`), then:
+outo-models start""",
+    ),
+    (
+        "No such command",
+        """\
+The CLI and the image disagree about command names — the image is stale.
+Update everything and retry:
+
+    outo-models update
+    outo-models start""",
+    ),
+    (
+        "unable to open database file",
+        """\
+The server cannot write its database — usually leftover files owned by a
+different uid after a sudo/rootless mix-up. If there is no data to keep,
+the clean path is a full reset:
+
+    OUTO_DESTRUCTIVE=1 outo-models reset --destroy
+    outo-models setup
+    outo-models start""",
+    ),
+    (
+        "acme",
+        """\
+Certificate issuance (ACME) did not finish in time. This is normal for a
+few seconds on the very first start with a public domain — just retry:
+
+    outo-models start --verify-timeout 120
+
+If it keeps failing, check that the DNS record for your domain points at
+this machine and ports 80/443 are reachable from the internet
+(docs/troubleshooting.md, ACME section).""",
+    ),
+)
+
+
+def _print_diagnosis(logs: str, url: str) -> None:
+    """Turn the log tail into an actionable, plain-language next step."""
+    lowered = logs.lower()
+    for signature, advice in _DIAGNOSIS_RULES:
+        if signature.lower() in lowered:
+            print_status("\n[what to do] " + advice)
+            return
+    print_status(
+        "\n[what to do] no known failure pattern matched. The log above is the "
+        "source of truth; docs/troubleshooting.md lists the common cases. "
+        f"If nothing applies, re-run with a longer window: outo-models start "
+        f"--verify-timeout 180 (probe was {url})"
     )
 
 
@@ -197,7 +274,10 @@ def _verify_started(settings: Settings, ports: list[str], timeout: float) -> Non
             return
         time.sleep(1.0)
     print_status("[error] server did not become healthy in time — last 50 log lines:")
-    _dump_logs()
+    logs = _collect_logs()
+    if logs.strip():
+        print_status(logs)
+    _print_diagnosis(logs, url)
     raise OutoError(
         f"server failed to become healthy within {timeout:.0f}s (probe: {url}). "
         "See the log tail above; common causes are the low-port sysctl "

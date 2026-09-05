@@ -165,9 +165,13 @@ verifies the stack actually came up:
    otherwise; `--verify-timeout` seconds, default 60).
 
 On success it prints `[done] server is up: <url>`. On failure it dumps the
-last 50 lines of `podman logs` and exits 1 with `start_verify_failed` — a
-container that died on startup (bad config, port bind failure) therefore
-never looks "started". Use `--no-verify` to skip verification entirely
+last 50 lines of `podman logs` **and prints a plain-language diagnosis**:
+the log tail is matched against known failure signatures (low-port sysctl,
+port already in use, stale image, DB permission, ACME delay) and each match
+prints the exact command to run next (e.g. `enable-low-ports.sh 80` for a
+low-port bind refusal). Unknown failures fall back to generic guidance with
+the troubleshooting docs and a longer-timeout retry command. Exits 1 with
+`start_verify_failed`. Use `--no-verify` to skip verification entirely
 (e.g. in CI wrappers that probe on their own).
 
 ### Existing containers
