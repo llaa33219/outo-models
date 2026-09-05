@@ -81,6 +81,26 @@ class TestMigrationsApply:
             await eng.dispose()
             await dispose_engines()
 
+    async def test_upgrade_adds_0002_social_columns(self, tmp_data_dir: Path) -> None:
+        await dispose_engines()
+        settings = get_settings()
+        eng = get_engine(settings)
+        try:
+            await run_migrations(eng)
+            async with eng.connect() as conn:
+                tables = await conn.run_sync(_table_names)
+            assert {"repo_likes", "user_follows", "repo_comments"} <= tables
+
+            def _repo_col_names(sync_conn: object) -> set[str]:
+                return {c["name"] for c in inspect(sync_conn).get_columns("repos")}
+
+            async with eng.connect() as conn:
+                repo_cols = await conn.run_sync(_repo_col_names)
+            assert "downloads_count" in repo_cols
+        finally:
+            await eng.dispose()
+            await dispose_engines()
+
 
 class TestMigrationRoundTrip:
     """`upgrade head -> downgrade base -> upgrade head` is a no-op on the schema."""

@@ -41,14 +41,47 @@ git clone https://models.example.com/alice/ll-7b.git
 # Password: <PAT>
 ```
 
-PAT issuance:
+The exact credential flow the web UI guides a user through:
 
-1. Log into the web UI (navbar `Log in` → submit credentials)
-2. From your profile page (`/<username>`), open the **Tokens** section
-3. Click **Create token** → enter the name, scopes (`read`, `write`),
-   and expiration
-4. The response shows the plaintext once — save it immediately
-5. Or via API: `POST /api/auth/tokens` (`name`, `scopes`, `ttl_days`)
+1. Open `https://<domain>/<your-username>` (your profile).
+2. Click the **Access tokens** capsule next to the **New** button to open
+   `https://<domain>/settings/tokens`.
+3. Fill in **Name** (e.g. `laptop`, `ci-pipeline`), pick the **Scopes**
+   checkboxes (`Read` for `git clone` only, `Read` + `Write (push repos)`
+   for `git push`), and an **Expires in** TTL (30 / 90 / 365 days).
+4. Click **Create**. The page re-renders with a single **Your new access
+   token** panel that shows the raw token inside a copyable box. The
+   token is shown **once** — copy it now; reloads and revisits never
+   expose it again.
+5. The panel also renders the git usage snippet:
+   `git clone http(s)://<domain>/<your-username>/<repo>.git` followed by
+   the guidance **Username: your username** / **Password: the token
+   above** (the token itself is NOT embedded in the snippet — only in the
+   copyable box).
+6. From the same page you can revoke a token by clicking **Revoke** on
+   its tile; the action is `POST /settings/tokens/{id}/delete` and is
+   CSRF-protected.
+
+To avoid typing the token every push, run **once**:
+
+```bash
+git config --global credential.helper store
+```
+
+Then `git clone …` and `git push` will prompt for the username + token
+the first time and remember the pair in `~/.git-credentials` (mode 0600)
+for subsequent commands. Use `cache` instead of `store` if you'd rather
+have git forget the credential after a timeout.
+
+PAT issuance via the JSON API (alternative path for automation):
+
+```bash
+curl -b cookies.txt -H 'Content-Type: application/json' \
+  -X POST https://<domain>/api/auth/tokens \
+  -d '{"name":"ci-pipeline","scopes":["read","write"],"ttl_days":90}'
+# {"id": 1, "name": "ci-pipeline", "prefix": "v4.local.", "scopes": [...],
+#  "expires_at": "...", "token": "v4.local.<…>"}   ← shown ONCE
+```
 
 Sign out via the `Log out` link in the navbar (left side); the
 confirmation tile (`GET /logout`) and CSRF-protected
@@ -72,6 +105,55 @@ other kinds delegate to `repos.create.create_repo`.
 The generated token is PASETO v4 local and expires 90 days after issuance
 by default. See [security.md](security.md#personal-access-token-pat) for
 the full picture.
+
+## The repository page (`/{owner}/{name}`)
+
+Every public repository has a Hugging Face-style HTML page served by
+`src/outo_models/server/routers/ui.py`. The page is shareable, fully
+server-rendered (no JS required except for the clone-URL copy
+button), and follows the BLP Minimal Tile design language: square
+2px tiles, capsule buttons, no gradients.
+
+### URL scheme
+
+The page has three sub-views (tabs). Each tab is its own URL so the
+active state is encoded in the path — the URL is shareable as-is.
+
+| Tab | URL | Description |
+| --- | --- | --- |
+| Card | `/{owner}/{name}` | Default. Renders the README (with YAML front-matter metadata in the sidebar). |
+| Files | `/{owner}/{name}/files` | One-level listing of the repo tree; `?path=` drills into subdirs. |
+| Community | `/{owner}/{name}/community` | Comment thread + composer for logged-in users. |
+
+The header row exposes the same `owner/name` title used on HF, a
+**Copy clone URL** button, and two capsule buttons: a Like button
+with the live like count, and a Follow button that targets the
+repo's OWNER (not the repo itself). Both buttons render disabled
+for anonymous viewers with a `title="Log in to like"` /
+`title="Log in to follow"` hint; the Follow button is hidden when
+the viewer IS the owner.
+
+### Form POST mutations
+
+The page's interactive controls are real HTML forms, not fetch
+calls. Each one carries the `_csrf` double-submit cookie and
+rejects anonymous POSTs with a 303 redirect to `/login?next=...`.
+
+| Action | Form target | Notes |
+| --- | --- | --- |
+| Like / unlike | `POST /{owner}/{name}/like` | Toggles the viewer's like; idempotent. 303 redirects back to the referring tab. |
+| Comment | `POST /{owner}/{name}/comments` | Body is the `<textarea name="body">` payload; blank/over-4000-chars bodies are rejected (the JSON API at `/api/repos/{owner}/{name}/comments` is the same handler). |
+| Follow / unfollow | `POST /{owner}/follow` | Toggles the viewer's follow on the OWNER (mirrors `POST /api/users/{username}/follow`). The button is hidden for the owner themselves; a hand-crafted POST still gets a 403 from the domain layer (`follow_user` raises `ForbiddenError`). |
+
+After the domain helper mutates the row the route commits the
+session so the audit-log entry (likes / follows / comments) lands
+in the same transaction as the social-graph write.
+
+### Visibility rules
+
+The HTML page follows the same visibility rules as the JSON API.
+Anonymous viewers and other users get a 404 (not a 403) on
+private repos to avoid leaking existence.
 
 ## Repository kind
 

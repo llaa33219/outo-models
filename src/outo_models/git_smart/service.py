@@ -62,9 +62,12 @@ from outo_models.db import (
 )
 from outo_models.exceptions import QuotaExceededError
 from outo_models.git_smart.auth import GitAction, authorize, resolve_git_identity
+from outo_models.logging import get_logger
 from outo_models.repos.quota import add_usage, check_push_allowed
 from outo_models.repos.storage import REPO_LOCKS, disk_usage, repo_fs_path
 from outo_models.utils.paths import repos_dir
+
+_LOGGER = get_logger(__name__)
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -730,6 +733,14 @@ class GitSmartService:
                     actor=user,
                 )
 
+            # Clone counter. Hooked AFTER the adapter returns because the
+            # single-buffered body has already been sent to the client, so a
+            # failing DB write cannot corrupt the in-flight response. Excluding
+            # `is_ad` (the GET advertisement) means the upload-pack probe
+            # modern `git push` performs does not bump the counter.
+            if action is GitAction.PULL and not _is_ad and 200 <= status_code < 300:
+                await self._record_download(repo_id=repo_row.id)
+
         return app
 
     # ----- helpers -----
@@ -813,6 +824,26 @@ class GitSmartService:
                 )
                 await add_usage(session, owner_row, size_delta)
                 await session.commit()
+
+    async def _record_download(self, *, repo_id: int) -> None:
+        """Increment `Repo.downloads_count` for a successful upload-pack.
+
+        Best-effort: a transient DB error is swallowed because the clone
+        response has already left the server by the time this runs, and
+        failing it would surface as a 500 to a client that received
+        successful bytes.
+        """
+        try:
+            async with self._session() as session:
+                repo_row = (
+                    await session.execute(select(Repo).where(Repo.id == repo_id))
+                ).scalar_one_or_none()
+                if repo_row is None:
+                    return
+                repo_row.downloads_count = repo_row.downloads_count + 1
+                await session.commit()
+        except Exception:
+            _LOGGER.warning("git_clone_counter_failed", extra={"repo_id": repo_id})
 
 
 def _header_value(headers: object, name: str) -> str | None:

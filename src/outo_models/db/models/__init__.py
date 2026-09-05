@@ -12,6 +12,7 @@ from outo_models.db.models.base import Base, IntIdMixin, TimestampMixin, Timesta
 from outo_models.db.models.quota import UserQuota, UserUsage
 from outo_models.db.models.repo import Repo
 from outo_models.db.models.revision import Revision
+from outo_models.db.models.social import RepoComment, RepoLike, UserFollow
 from outo_models.db.models.token import PersonalAccessToken
 from outo_models.db.models.user import User
 from outo_models.db.models.web_settings import WebSetting
@@ -23,10 +24,13 @@ __all__ = [
     "IntIdMixin",
     "PersonalAccessToken",
     "Repo",
+    "RepoComment",
+    "RepoLike",
     "Revision",
     "TimestampMixin",
     "TimestampWithUpdateMixin",
     "User",
+    "UserFollow",
     "UserQuota",
     "UserUsage",
     "WebSetting",

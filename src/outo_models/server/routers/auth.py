@@ -44,6 +44,97 @@ from outo_models.server.routers._auth_helpers import (
 )
 from outo_models.utils.slug import validate_slug
 
+# ---------------------------------------------------------------------------
+# PAT helpers (shared by the JSON API and the UI settings page)
+# ---------------------------------------------------------------------------
+
+
+def parse_scopes(raw: str) -> list[str]:
+    """Decode the JSON-encoded scopes column. Tolerates malformed rows.
+
+    Public so the UI page can re-use the same decoder without re-implementing
+    the JSON-toleration rules.
+    """
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [s for s in decoded if isinstance(s, str)]
+
+
+async def mint_personal_access_token(
+    db: AsyncSession,
+    *,
+    user: User,
+    name: str,
+    scopes: list[str],
+    ttl_days: int | None,
+    settings: Settings,
+) -> tuple[PersonalAccessToken, str]:
+    """Issue a fresh PAT, persist its fingerprint, return `(row, raw_token)`.
+
+    The plaintext token is returned ONCE — callers (API + UI) are responsible
+    for surfacing it exactly once and never re-displaying it after a reload.
+    `ttl_days=None` falls back to `DEFAULT_TOKEN_TTL_SECONDS` (90 days), the
+    same default the JSON API uses.
+    """
+    service = TokenService.from_secret(settings.secret_key or "outo-dev-secret")
+    ttl_seconds = ttl_days * 86400 if ttl_days is not None else DEFAULT_TOKEN_TTL_SECONDS
+    raw_token = service.issue(
+        subject=str(user.id),
+        scopes=list(scopes),
+        ttl_seconds=ttl_seconds,
+    )
+    expires_at = datetime.now(tz=UTC) + timedelta(seconds=ttl_seconds)
+    row = PersonalAccessToken(
+        user_id=user.id,
+        name=name,
+        fingerprint_hash=fingerprint(raw_token),
+        prefix=raw_token[:8],
+        scopes=json.dumps(list(scopes)),
+        expires_at=expires_at,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row, raw_token
+
+
+async def list_user_personal_access_tokens(
+    db: AsyncSession,
+    *,
+    user: User,
+) -> list[PersonalAccessToken]:
+    """Return every PAT owned by `user` (caller renders / serializes)."""
+    rows = (
+        await db.execute(select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id))
+    ).scalars()
+    return list(rows.all())
+
+
+async def delete_personal_access_token(
+    db: AsyncSession,
+    *,
+    token_id: int,
+    actor: User,
+) -> None:
+    """Delete `token_id` if `actor` owns it OR is admin; 403/404 otherwise.
+
+    Mirrors the JSON API's authorization rule: a non-admin cannot revoke
+    another user's token. `ForbiddenError` / `NotFoundError` are raised so
+    both the API and the UI can surface them uniformly.
+    """
+    row = (
+        await db.execute(select(PersonalAccessToken).where(PersonalAccessToken.id == token_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError(f"token {token_id} not found")
+    if row.user_id != actor.id and actor.role != "admin":
+        raise ForbiddenError("Cannot delete another user's token")
+    await db.delete(row)
+    await db.commit()
+
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -180,36 +271,19 @@ async def me(
 # ---------------------------------------------------------------------------
 
 
-def _parse_scopes(raw: str) -> list[str]:
-    """Decode the JSON-encoded scopes column. Tolerates malformed rows."""
-    try:
-        decoded = json.loads(raw)
-    except (TypeError, ValueError):
-        return []
-    return [s for s in decoded if isinstance(s, str)]
-
-
 @router.get("/tokens")
 async def list_tokens(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[TokenRow]:
     """List every PAT owned by the current user."""
-    rows = (
-        (
-            await db.execute(
-                select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await list_user_personal_access_tokens(db, user=user)
     return [
         TokenRow(
             id=row.id,
             name=row.name,
             prefix=row.prefix,
-            scopes=_parse_scopes(row.scopes),
+            scopes=parse_scopes(row.scopes),
             expires_at=row.expires_at,
             created_at=row.created_at,
         )
@@ -225,25 +299,14 @@ async def create_token(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TokenCreateResponse:
     """Mint a new PAT. The plaintext is returned ONCE in the response."""
-    service = TokenService.from_secret(settings.secret_key or "outo-dev-secret")
-    ttl_seconds = body.ttl_days * 86400 if body.ttl_days is not None else DEFAULT_TOKEN_TTL_SECONDS
-    raw_token = service.issue(
-        subject=str(user.id),
-        scopes=list(body.scopes),
-        ttl_seconds=ttl_seconds,
-    )
-    expires_at = datetime.now(tz=UTC) + timedelta(seconds=ttl_seconds)
-    row = PersonalAccessToken(
-        user_id=user.id,
+    row, raw_token = await mint_personal_access_token(
+        db,
+        user=user,
         name=body.name,
-        fingerprint_hash=fingerprint(raw_token),
-        prefix=raw_token[:8],
-        scopes=json.dumps(list(body.scopes)),
-        expires_at=expires_at,
+        scopes=list(body.scopes),
+        ttl_days=body.ttl_days,
+        settings=settings,
     )
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
     return TokenCreateResponse(
         id=row.id,
         name=row.name,
@@ -261,15 +324,7 @@ async def delete_token(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Response:
     """Delete a PAT owned by the current user, or any PAT if admin."""
-    row = (
-        await db.execute(select(PersonalAccessToken).where(PersonalAccessToken.id == token_id))
-    ).scalar_one_or_none()
-    if row is None:
-        raise NotFoundError(f"token {token_id} not found")
-    if row.user_id != user.id and user.role != "admin":
-        raise ForbiddenError("Cannot delete another user's token")
-    await db.delete(row)
-    await db.commit()
+    await delete_personal_access_token(db, token_id=token_id, actor=user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

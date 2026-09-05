@@ -8,14 +8,25 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outo_models.db import Repo, User
 from outo_models.exceptions import NotFoundError
 from outo_models.repos.models import Visibility
-from outo_models.server.deps import get_current_user_optional, get_db
+from outo_models.repos.social import (
+    follow_user,
+    follower_count,
+    is_following,
+    load_user_or_404,
+    unfollow_user,
+)
+from outo_models.server.deps import (
+    get_current_user,
+    get_current_user_optional,
+    get_db,
+)
 from outo_models.utils.slug import validate_slug
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -98,6 +109,63 @@ async def list_user_repos(
     ]
 
 
-# Suppress unused-status import warning on the wildcard re-export.
-_ = status
+@router.post(
+    "/{username}/follow",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+)
+async def follow_user_route(
+    username: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+) -> dict[str, object]:
+    """Follow `username` (auth required; idempotent).
+
+    404 if the target user does not exist; 403 if the caller is trying
+    to follow themselves (DB-level CHECK + service-layer guard).
+    """
+    target = await load_user_or_404(db, username=username)
+    inserted = await follow_user(db, follower=user, followee=target)
+    await db.commit()
+    response.status_code = status.HTTP_201_CREATED if inserted else status.HTTP_200_OK
+    return {
+        "following": True,
+        "follower_count": await follower_count(db, followee=target),
+    }
+
+
+@router.delete(
+    "/{username}/follow",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def unfollow_user_route(
+    username: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Unfollow `username` (auth required; idempotent)."""
+    target = await load_user_or_404(db, username=username)
+    await unfollow_user(db, follower=user, followee=target)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{username}/follow", response_model=None)
+async def get_follow_state_route(
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> dict[str, object]:
+    """Return `following` (caller's view) and `follower_count` for `username`."""
+    target = await load_user_or_404(db, username=username)
+    following = (
+        await is_following(db, follower=viewer, followee=target) if viewer is not None else False
+    )
+    return {
+        "following": following,
+        "follower_count": await follower_count(db, followee=target),
+    }
+
+
 __all__ = ["router"]

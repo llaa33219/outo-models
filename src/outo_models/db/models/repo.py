@@ -40,6 +40,9 @@ class Repo(IntIdMixin, TimestampWithUpdateMixin, Base):
     )
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     path: Mapped[str] = mapped_column(String(500), nullable=False)
+    downloads_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     __table_args__ = (
         UniqueConstraint("owner_id", "kind", "name", name="uq_repos_owner_id_kind_name"),

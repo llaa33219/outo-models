@@ -12,8 +12,11 @@
       </div>
     </div>
     {% if is_self or viewer_is_admin %}
-      <div style="margin-left:auto">
+      <div style="margin-left:auto;display:flex;gap:var(--gap-tile);align-items:center">
         <a href="/new" class="new-btn">New</a>
+        {% if is_self %}
+          <a href="/settings/tokens" class="nav-link">Access tokens</a>
+        {% endif %}
       </div>
     {% endif %}
   </section>

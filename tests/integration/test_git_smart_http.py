@@ -675,3 +675,78 @@ class TestPathResolution:
             env=git_env,
         )
         assert (clone_workdir / "model-suffix").is_dir()
+
+
+class TestCloneCounter:
+    """A successful upload-pack bumps `Repo.downloads_count`; push must not."""
+
+    async def test_clone_increments_downloads_count(
+        self,
+        server_url: str,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_data_dir: Path,
+        git_env: dict[str, str],
+    ) -> None:
+        owner, pat = await _seed_owner_with_pat(session_factory, "alice")
+        repo = await _make_repo(
+            session_factory, owner, name="model-counted", visibility=Visibility.PUBLIC
+        )
+        repo_id = repo.id
+
+        # Pre-seed with a commit so a clone triggers a POST git-upload-pack;
+        # the counter only fires on real pack exchanges (not the GET probe,
+        # which the push flow also performs and must not bump).
+        src = tmp_data_dir / "src-counted"
+        src.mkdir()
+        await _run_git(["init"], cwd=src, env=git_env)
+        (src / "f.txt").write_text("hi")
+        await _run_git(["add", "f.txt"], cwd=src, env=git_env)
+        await _run_git(["commit", "-m", "x"], cwd=src, env=git_env)
+        push_url = _with_basic(_repo_url(server_url, "alice", "model-counted"), "alice", pat)
+        await _run_git(["push", push_url, "HEAD:refs/heads/master"], cwd=src, env=git_env)
+
+        workdir = tmp_data_dir / "clone-count"
+        workdir.mkdir()
+        await _run_git(
+            ["clone", _repo_url(server_url, "alice", "model-counted")],
+            cwd=workdir,
+            env=git_env,
+        )
+
+        deadline = time.monotonic() + 5.0
+        async with session_factory() as session:
+            row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
+            while row.downloads_count == 0 and time.monotonic() < deadline:
+                await asyncio.sleep(0.05)
+                await session.refresh(row)
+            assert row.downloads_count == 1
+
+    async def test_push_does_not_increment_downloads_count(
+        self,
+        server_url: str,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_data_dir: Path,
+        git_env: dict[str, str],
+    ) -> None:
+        owner, pat = await _seed_owner_with_pat(session_factory, "alice")
+        repo = await _make_repo(
+            session_factory, owner, name="model-push-only", visibility=Visibility.PUBLIC
+        )
+        repo_id = repo.id
+
+        src = tmp_data_dir / "src"
+        src.mkdir()
+        await _run_git(["init"], cwd=src, env=git_env)
+        (src / "f.txt").write_text("x")
+        await _run_git(["add", "f.txt"], cwd=src, env=git_env)
+        await _run_git(["commit", "-m", "x"], cwd=src, env=git_env)
+        push_url = _with_basic(_repo_url(server_url, "alice", "model-push-only"), "alice", pat)
+        await _run_git(
+            ["push", push_url, "HEAD:refs/heads/master"],
+            cwd=src,
+            env=git_env,
+        )
+
+        async with session_factory() as session:
+            row = (await session.execute(select(Repo).where(Repo.id == repo_id))).scalar_one()
+            assert row.downloads_count == 0

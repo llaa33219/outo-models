@@ -13,7 +13,8 @@ Public surface:
 
     ORM models:
         - `User`, `Repo`, `Revision`, `PersonalAccessToken`, `Approval`,
-          `UserQuota`, `UserUsage`, `AuditLog`, `WebSetting`
+          `UserQuota`, `UserUsage`, `AuditLog`, `WebSetting`,
+          `RepoLike`, `UserFollow`, `RepoComment`
         - `Base` and shared mixins
 """
 
@@ -25,10 +26,13 @@ from outo_models.db.models import (
     IntIdMixin,
     PersonalAccessToken,
     Repo,
+    RepoComment,
+    RepoLike,
     Revision,
     TimestampMixin,
     TimestampWithUpdateMixin,
     User,
+    UserFollow,
     UserQuota,
     UserUsage,
     WebSetting,
@@ -42,10 +46,13 @@ __all__ = [
     "IntIdMixin",
     "PersonalAccessToken",
     "Repo",
+    "RepoComment",
+    "RepoLike",
     "Revision",
     "TimestampMixin",
     "TimestampWithUpdateMixin",
     "User",
+    "UserFollow",
     "UserQuota",
     "UserUsage",
     "WebSetting",

@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Access tokens &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs">
+    <a href="/{{ current_user.username }}">{{ current_user.username }}</a> &rarr; Settings &rarr; Access tokens
+  </p>
+  <h1>Access tokens</h1>
+  <p class="muted">
+    Personal Access Tokens (PATs) authenticate <code>git clone</code> and
+    <code>git push</code> against your repositories. The web UI password is
+    not accepted on git endpoints &mdash; create a PAT below.
+  </p>
+
+  {% if error %}<div class="errors">{{ error }}</div>{% endif %}
+
+  {% if raw_token %}
+    <article class="card token-shown-once" aria-live="polite">
+      <h2>Your new access token</h2>
+      <p class="desc">
+        Copy this token now &mdash; it will <strong>not be shown again</strong>.
+        Treat it like a password: anyone who has it can push to your repos
+        until you revoke the token.
+      </p>
+      <div class="token-box-row">
+        <pre class="clone-cmd token-box" id="new-token-value">{{ raw_token }}</pre>
+        <button type="button" class="btn copy-btn" data-copy-target="new-token-value">Copy</button>
+      </div>
+      <h3>Use it with git</h3>
+      <p class="help">
+        Username: <strong>{{ current_user.username }}</strong><br>
+        Password: <strong>the token above</strong> (not your web login password)
+      </p>
+      <pre class="clone-cmd">git clone {{ clone_url_sample }}</pre>
+      <p class="help">
+        To avoid typing the token every time, cache it once with
+        <code>git config --global credential.helper store</code> and push
+        as usual; git will remember the credential for subsequent commands.
+      </p>
+    </article>
+  {% endif %}
+
+  <h2>Create a token</h2>
+  <form method="post" action="/settings/tokens" class="form-card token-create-card">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="token-name">Name</label>
+    <input id="token-name" type="text" name="name" required minlength="1" maxlength="64"
+           value="{{ form_name or '' }}" placeholder="ci-pipeline, laptop, …">
+    <p class="help">A short label so you can recognise this token later.</p>
+
+    <label>Scopes</label>
+    <div class="scope-row">
+      {% for value, label in scope_choices %}
+        <label class="scope-pill">
+          <input type="checkbox" name="scopes" value="{{ value }}"
+                 {% if value in form_scopes %}checked{% endif %}>
+          <span>{{ label }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <p class="help">Grant only what the consumer needs. Read is enough for <code>git clone</code>; Write is required for <code>git push</code>.</p>
+
+    <label for="token-ttl">Expires in</label>
+    <select id="token-ttl" name="ttl_days" required>
+      {% for days, label in ttl_choices %}
+        <option value="{{ days }}" {% if form_ttl_days == days %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <p class="form-actions">
+      <button type="submit" class="primary">Create</button>
+    </p>
+  </form>
+
+  <h2>Existing tokens</h2>
+  {% if tokens %}
+    <div class="token-grid">
+      {% for token in tokens %}
+        <article class="card token-card">
+          <h2>
+            <span class="token-name">{{ token.name }}</span>
+            <span class="pill token-prefix">{{ token.prefix }}</span>
+          </h2>
+          <div class="scope-row">
+            {% for scope in token.scopes %}
+              <span class="pill token-scope">{{ scope }}</span>
+            {% endfor %}
+          </div>
+          <p class="meta">
+            Created {{ token.created_at.strftime('%Y-%m-%d') if token.created_at else 'recently' }}<br>
+            {% if token.last_used_at %}
+              Last used {{ token.last_used_at.strftime('%Y-%m-%d') }}
+            {% else %}
+              Never used
+            {% endif %}<br>
+            {% if token.expires_at %}
+              Expires {{ token.expires_at.strftime('%Y-%m-%d') }}
+            {% else %}
+              No expiry
+            {% endif %}
+          </p>
+          <form method="post" action="/settings/tokens/{{ token.id }}/delete" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="danger revoke-btn">Revoke</button>
+          </form>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <p>You have not created any tokens yet.</p>
+    </div>
+  {% endif %}
+
+  <style>
+    /* Page-local chrome — kept minimal; everything is BLP-compatible
+     * (square tiles, capsule buttons/chips/pills, dark code box is
+     * content per 디자인.md §0.1).
+     *
+     * `--blp-red` is redeclared here because base.html's :root token
+     * block does not include the danger palette (pre-existing gap).
+     * Without the redeclaration the `.danger` button rule falls back
+     * to a transparent background and the Revoke control is invisible. */
+    :root {
+      --blp-red: #FF0505;
+      --blp-deep-red: #DB0000;
+    }
+    .token-create-card { margin-bottom: 24px; }
+    .scope-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 4px;
+    }
+    .scope-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: 1px solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base);
+    }
+    .scope-pill:hover { border-color: var(--color-main); }
+    .scope-pill:active,
+    .scope-pill:focus-within {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+    }
+    .scope-pill input { margin: 0; }
+
+    .token-grid {
+      display: grid;
+      gap: var(--gap-tile);
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    }
+    .token-card { gap: 8px; }
+    .token-card h2 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .token-name { color: var(--text); }
+    .pill.token-prefix {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--text-sub);
+    }
+    .pill.token-scope { background: var(--blp-paper-blue); }
+    .token-card .meta { margin-top: 4px; }
+    .token-card form.inline { margin-top: 8px; }
+    .revoke-btn { height: 32px; padding: 0 16px; font-size: 13px; }
+
+    .token-shown-once { border-color: var(--color-main); }
+    .token-box-row {
+      display: flex;
+      gap: var(--gap-tile);
+      align-items: stretch;
+    }
+    .token-box {
+      flex: 1;
+      margin: 0;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .copy-btn { height: auto; align-self: stretch; }
+  </style>
+
+  <script>
+    // Copy-to-clipboard helper for the "shown once" token box. Falls back
+    // to a hidden <textarea> + execCommand when navigator.clipboard is
+    // unavailable (older browsers, insecure contexts, headless test envs).
+    (function () {
+      function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); }
+        catch (e) { /* ignore — user will copy manually */ }
+        document.body.removeChild(ta);
+      }
+      document.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var targetId = btn.getAttribute('data-copy-target');
+          if (!targetId) return;
+          var node = document.getElementById(targetId);
+          if (!node) return;
+          var text = node.textContent || '';
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(function () {
+              fallbackCopy(text);
+            });
+          } else {
+            fallbackCopy(text);
+          }
+          var original = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = original; }, 1500);
+        });
+      });
+    })();
+  </script>
+{% endblock %}

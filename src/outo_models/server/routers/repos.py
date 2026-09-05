@@ -23,10 +23,21 @@ from sqlalchemy.orm import selectinload
 
 from outo_models.db import Repo, User
 from outo_models.exceptions import ForbiddenError, NotFoundError
+from outo_models.repos.card import read_card
 from outo_models.repos.create import create_repo
 from outo_models.repos.delete import delete_repo
+from outo_models.repos.files import list_files
 from outo_models.repos.models import RepoKind, Visibility
 from outo_models.repos.reflog import recent_revisions
+from outo_models.repos.social import (
+    add_comment,
+    is_liked,
+    like_count,
+    like_repo,
+    list_comments,
+    load_repo_or_404,
+    unlike_repo,
+)
 from outo_models.server.deps import get_current_user, get_current_user_optional, get_db
 from outo_models.utils.git_url import clone_url
 from outo_models.utils.slug import validate_slug
@@ -74,6 +85,21 @@ class PatchRepoRequest(BaseModel):
 
     visibility: Visibility | None = None
     description: str | None = Field(default=None, max_length=500)
+
+
+class CommentRequest(BaseModel):
+    """POST /api/repos/{owner}/{name}/comments body."""
+
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class CommentResponse(BaseModel):
+    """Single entry in GET /api/repos/{owner}/{name}/comments."""
+
+    id: int
+    author: str
+    body: str
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +285,192 @@ async def delete_repo_route(
     await delete_repo(db, owner=target_user, name=name, kind=RepoKind(repo.kind))
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Social endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{owner}/{name}/like",
+    response_model=None,
+    status_code=status.HTTP_201_CREATED,
+)
+async def like_repo_route(
+    owner: str,
+    name: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    response: Response,
+) -> dict[str, object]:
+    """Like a repo (auth required; idempotent).
+
+    Returns 201 on first like; 200 if the user already liked the repo
+    (idempotent). Visibility rule mirrors `GET` — anonymous / non-owner
+    callers cannot see private repos, so they get 404 instead.
+    """
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(user, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    inserted = await like_repo(db, user=user, repo=repo)
+    await db.commit()
+    response.status_code = status.HTTP_201_CREATED if inserted else status.HTTP_200_OK
+    return {"liked": True, "like_count": await like_count(db, repo=repo)}
+
+
+@router.delete("/{owner}/{name}/like", status_code=status.HTTP_204_NO_CONTENT)
+async def unlike_repo_route(
+    owner: str,
+    name: str,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Remove the caller's like (auth required; idempotent)."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(user, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    await unlike_repo(db, user=user, repo=repo)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{owner}/{name}/like",
+    response_model=None,
+)
+async def get_like_state_route(
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> dict[str, object]:
+    """Return `liked` (caller's view) and `like_count` for a repo."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(viewer, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    liked = await is_liked(db, user=viewer, repo=repo) if viewer is not None else False
+    return {"liked": liked, "like_count": await like_count(db, repo=repo)}
+
+
+@router.get(
+    "/{owner}/{name}/comments",
+    response_model=list[CommentResponse],
+)
+async def list_comments_route(
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> list[dict[str, object]]:
+    """Return comments for a repo, newest-first, gated by visibility."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(viewer, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    rows = await list_comments(db, repo=repo)
+    return [
+        {
+            "id": row.id,
+            "author": row.author.username,
+            "body": row.body,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+@router.post(
+    "/{owner}/{name}/comments",
+    response_model=CommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_comment_route(
+    owner: str,
+    name: str,
+    payload: CommentRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    """Post a comment on a repo (auth required, blank/>4000 rejected with 422)."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(user, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    comment = await add_comment(db, author=user, repo=repo, body=payload.body)
+    await db.commit()
+    await db.refresh(comment)
+    return {
+        "id": comment.id,
+        "author": user.username,
+        "body": comment.body,
+        "created_at": comment.created_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Card + files (read-only, follow visibility rules)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{owner}/{name}/card", response_model=None)
+async def get_card_route(
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> dict[str, object]:
+    """Render the model / dataset / space card for the repo."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(viewer, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    card = await read_card(owner, name, default_branch=repo.default_branch)
+    if card is None:
+        return {
+            "front_matter": {},
+            "body_html": "",
+            "task": None,
+            "datasets": [],
+            "base_model": None,
+            "license": None,
+            "tags": [],
+            "language": [],
+        }
+    return {
+        "front_matter": card.front_matter,
+        "body_html": card.body_html,
+        "task": card.task,
+        "datasets": card.datasets,
+        "base_model": card.base_model,
+        "license": card.license,
+        "tags": card.tags,
+        "language": card.language,
+    }
+
+
+@router.get("/{owner}/{name}/files", response_model=None)
+async def list_files_route(
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    path: str = "",
+) -> dict[str, object]:
+    """List one directory of the repo tree at the default branch tip."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(viewer, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    entries = await list_files(owner, name, path=path, default_branch=repo.default_branch)
+    return {
+        "path": path,
+        "entries": [
+            {
+                "name": entry.name,
+                "path": entry.path,
+                "kind": entry.kind,
+                "size_bytes": entry.size_bytes,
+            }
+            for entry in entries
+        ],
+    }
 
 
 __all__ = ["router"]

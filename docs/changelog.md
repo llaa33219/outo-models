@@ -4,6 +4,42 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.3.0 — Social layer + HF-style repo pages + PAT web UI
+
+Release date: (unreleased — dev builds only)
+
+### Added
+
+- **Repository social layer**: likes (`RepoLike`), user follows
+  (`UserFollow`), per-repo comments (`RepoComment`), and a clone/fetch
+  counter (`Repo.downloads_count`) — migration `0002_social`.
+- **HF-style repository page**: header (owner/name, copy-clone-URL button,
+  like + follow capsules), tabs as shareable URLs (Model/Dataset card ·
+  Files · Community), and a right sidebar (downloads, card metadata,
+  collections placeholder, owner tile).
+- **Model/Dataset card rendering**: `README.md` rendered from the bare repo
+  via dulwich (markdown → sanitized HTML via mistune) with YAML
+  front-matter metadata (task, license, tags, datasets, base_model,
+  language) surfaced in the sidebar.
+- **Files tab**: dulwich tree listing (dirs first, traversal-safe).
+- **Access tokens page** (`/settings/tokens`): create/list/revoke PATs,
+  token shown once with a copy button, git username+PAT usage guidance.
+  This is the supported way to get git push credentials — account
+  passwords are NOT accepted on git endpoints.
+- **Logout**: `Log out` navbar link → confirm tile → CSRF-protected POST
+  clears the session cookie.
+- **UI redesign** to the BLP Minimal Tile language (`디자인.md`):
+  square 2px tiles, capsule elements, BLP palette, Pretendard
+  (CSP gained `font-src` for the font CDN).
+
+### Fixed
+
+- `start` verifies the server actually answers `/healthz` (with a
+  plain-language diagnosis on failure) instead of trusting
+  `podman run -d`.
+- CSRF token consistency on form pages (first-visit empty token /
+  reload mismatch both fixed).
+
 ## v0.2.0 — LFS · S3 · Spaces runtime
 
 Release date: 2026-09-01

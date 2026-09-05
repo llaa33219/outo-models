@@ -1,29 +1,692 @@
 {% extends "base.html" %}
-{% block title %}{{ owner }}/{{ repo.name }} — outo-models{% endblock %}
+{% block title %}{{ owner }}/{{ repo.name }} &mdash; outo-models{% endblock %}
 {% block content %}
-<h1>{{ owner }}/{{ repo.name }}</h1>
-<p><span class="pill">{{ repo.kind }}</span> <span class="pill">{{ repo.visibility }}</span></p>
-{% if repo.description %}<p>{{ repo.description }}</p>{% endif %}
+  {# ------------------------------------------------------------------------
+   * Header row: owner/name + copy button + like + follow capsules.
+   * BLP: square 2px tiles, capsule buttons (pill radius), no gradients.
+   * Tabs are separate URLs so the active state is encoded in the path.
+   * ------------------------------------------------------------------------ #}
+  <section class="repo-header">
+    <div class="repo-header__title">
+      <h1>
+        <a href="/{{ owner }}" class="repo-header__owner">{{ owner }}</a><span class="repo-header__slash">/</span><span class="repo-header__name">{{ repo.name }}</span>
+      </h1>
+      <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+      <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+    </div>
+    <div class="repo-header__actions">
+      <button type="button" class="copy-btn" data-copy-target="clone-url-value" aria-label="Copy clone URL">
+        Copy clone URL
+      </button>
+      <pre id="clone-url-value" class="clone-url-source" aria-hidden="true">{{ clone_url }}</pre>
 
-<h2>Clone</h2>
-<pre><code>git clone {{ clone_url }}</code></pre>
+      {# Like capsule — disabled with hint for anonymous viewers. #}
+      {% if current_user %}
+        <form method="post" action="/{{ owner }}/{{ repo.name }}/like" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit" class="like-btn{% if viewer_liked %} like-btn--active{% endif %}" aria-pressed="{{ 'true' if viewer_liked else 'false' }}">
+            <span class="like-btn__icon" aria-hidden="true">{% if viewer_liked %}&#9829;{% else %}&#9825;{% endif %}</span>
+            <span class="like-btn__label">Like</span>
+            <span class="like-btn__count like-count">{{ like_count_value }}</span>
+          </button>
+        </form>
+      {% else %}
+        <button type="button" class="like-btn like-btn--disabled" disabled title="Log in to like" aria-disabled="true">
+          <span class="like-btn__icon" aria-hidden="true">&#9825;</span>
+          <span class="like-btn__label">Like</span>
+          <span class="like-btn__count like-count">{{ like_count_value }}</span>
+        </button>
+      {% endif %}
 
-<h2>Recent commits</h2>
-{% if revisions %}
-  <table>
-    <thead><tr><th>SHA</th><th>Message</th><th>Author</th><th>Time</th></tr></thead>
-    <tbody>
-      {% for rev in revisions %}
-        <tr>
-          <td><code>{{ rev.commit_sha[:10] }}</code></td>
-          <td>{{ rev.message }}</td>
-          <td>{{ rev.author }}</td>
-          <td>{{ rev.committed_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-{% else %}
-  <p class="muted">No commits yet.</p>
-{% endif %}
+      {# Follow capsule — hidden for the repo owner, disabled for anon. #}
+      {% if viewer_is_owner %}
+        {# Follow button intentionally omitted; you cannot follow yourself. #}
+      {% elif current_user %}
+        <form method="post" action="/{{ owner }}/follow" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit" class="follow-btn{% if viewer_following_owner %} follow-btn--active{% endif %}" aria-pressed="{{ 'true' if viewer_following_owner else 'false' }}">
+            <span class="follow-btn__label">{% if viewer_following_owner %}Following{% else %}Follow{% endif %}</span>
+            <span class="follow-btn__count follow-count">{{ follower_count_value }}</span>
+          </button>
+        </form>
+      {% else %}
+        <button type="button" class="follow-btn follow-btn--disabled" disabled title="Log in to follow" aria-disabled="true">
+          <span class="follow-btn__label">Follow</span>
+          <span class="follow-btn__count follow-count">{{ follower_count_value }}</span>
+        </button>
+      {% endif %}
+    </div>
+  </section>
+
+  {# ------------------------------------------------------------------------
+   * Tabs — three capsules; the active one uses the permanent-selection
+   * filled style (BLP spec §3.4 exception).
+   * ------------------------------------------------------------------------ #}
+  <nav class="repo-tabs" aria-label="Repository sections">
+    <a href="/{{ owner }}/{{ repo.name }}" class="tabs__link{% if tab_card_active %} tabs__link--active{% endif %}">{{ tab_card_label }}</a>
+    <a href="/{{ owner }}/{{ repo.name }}/files" class="tabs__link{% if tab_files_active %} tabs__link--active{% endif %}">Files</a>
+    <a href="/{{ owner }}/{{ repo.name }}/community" class="tabs__link{% if tab_community_active %} tabs__link--active{% endif %}">Community</a>
+  </nav>
+
+  {# ------------------------------------------------------------------------
+   * Two-column layout: main panel + right sidebar. Sidebar stacks below
+   * on narrow screens via media query (page-local CSS at the bottom).
+   * ------------------------------------------------------------------------ #}
+  <div class="repo-layout">
+    <div class="repo-layout__main">
+
+      {# ============== CARD TAB ============== #}
+      {% if tab_card_active %}
+        {% if card_empty %}
+          <article class="empty-state">
+            <p>This {{ repo.kind }} does not have a <code>README.md</code> yet.</p>
+            {% if viewer_is_owner %}
+              <p class="muted">Push one to <code>{{ repo.default_branch }}</code> to fill this tab.</p>
+            {% endif %}
+          </article>
+        {% else %}
+          <article class="repo-card">
+            {% if card_metadata.body_html %}
+              {{ card_metadata.body_html | safe }}
+            {% else %}
+              <p class="muted">README is empty.</p>
+            {% endif %}
+          </article>
+        {% endif %}
+
+      {# ============== FILES TAB ============== #}
+      {% elif tab_files_active %}
+        {% if files_empty %}
+          <article class="empty-state">
+            <p>This {{ repo.kind }} has no files yet.</p>
+            {% if viewer_is_owner %}
+              <p class="muted">Push commits to <code>{{ repo.default_branch }}</code> to populate the file tree.</p>
+            {% endif %}
+          </article>
+        {% else %}
+          {% if files_path %}
+            <p class="breadcrumbs">
+              <a href="/{{ owner }}/{{ repo.name }}/files">/</a>
+              {% for segment in files_path.split('/') %}
+                {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
+                / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}">{{ segment }}</a>
+              {% endfor %}
+            </p>
+          {% endif %}
+          <table class="files-table">
+            <thead>
+              <tr><th>Name</th><th class="files-size">Size</th></tr>
+            </thead>
+            <tbody>
+              {% for entry in files_entries %}
+                <tr class="files-row files-row--{{ entry.kind }}">
+                  <td>
+                    {% if entry.kind == 'dir' %}
+                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}" class="files-link">{{ entry.name }}/</a>
+                    {% else %}
+                      <span class="files-name">{{ entry.name }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="files-size muted">
+                    {% if entry.size_bytes is none %}-{% else %}
+                      {% set size = entry.size_bytes %}
+                      {% if size < 1024 %}{{ size }} B
+                      {% elif size < 1024 * 1024 %}{{ (size // 1024) }} KB
+                      {% elif size < 1024 * 1024 * 1024 %}{{ (size // (1024 * 1024)) }} MB
+                      {% else %}{{ (size // (1024 * 1024 * 1024)) }} GB
+                      {% endif %}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+
+      {# ============== COMMUNITY TAB ============== #}
+      {% elif tab_community_active %}
+        <section class="comments-section">
+          {% if comments %}
+            <ul class="comments-list">
+              {% for comment in comments %}
+                <li class="comment">
+                  <a href="/{{ comment.author }}" class="profile-chip comment__author">
+                    <span class="avatar">{{ comment.author[0]|upper }}</span>
+                    <span class="username">{{ comment.author }}</span>
+                  </a>
+                  <p class="comment__body">{{ comment.body }}</p>
+                  <p class="comment__meta muted">
+                    {{ comment.created_at.strftime('%Y-%m-%d %H:%M') if comment.created_at else '' }}
+                  </p>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <article class="empty-state">
+              <p>No comments yet. Be the first to share what you think.</p>
+            </article>
+          {% endif %}
+
+          {% if current_user %}
+            <form method="post" action="/{{ owner }}/{{ repo.name }}/comments" class="comment-composer">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <label for="comment-body" class="comment-composer__label">Write a comment</label>
+              <textarea id="comment-body" name="body" rows="4" maxlength="4000" required placeholder="Share your thoughts&hellip;"></textarea>
+              <p class="form-actions">
+                <button type="submit" class="primary">Post</button>
+              </p>
+            </form>
+          {% else %}
+            <article class="empty-state comment-login-hint">
+              <p><a href="/login?next=/{{ owner }}/{{ repo.name }}/community">Log in</a> to join the discussion.</p>
+            </article>
+          {% endif %}
+        </section>
+      {% endif %}
+
+    </div>
+
+    {# ------------------------------------------------------------------------
+     * Right sidebar — BLP square tiles; each tile is its own 2px-bordered
+     * element tile (permanent-selection exception does NOT apply here;
+     * these never take hover-fill, only border hover per §5.1).
+     * ------------------------------------------------------------------------ #}
+    <aside class="repo-sidebar" aria-label="Repository metadata">
+      <section class="repo-sidebar__tile">
+        <h3>Downloads</h3>
+        <p class="repo-sidebar__metric">{{ repo.downloads_count }}</p>
+        <p class="muted">all-time git clones + fetches</p>
+      </section>
+
+      <section class="repo-sidebar__tile">
+        <h3>{{ tab_sidebar_label }}</h3>
+        {% if sidebar_info_rows %}
+          <dl class="repo-sidebar__list">
+            {% for label, value in sidebar_info_rows %}
+              <dt>{{ label }}</dt>
+              <dd>{{ value }}</dd>
+            {% endfor %}
+          </dl>
+        {% else %}
+          <p class="muted">No metadata yet. Add a YAML front matter block to your README.</p>
+        {% endif %}
+      </section>
+
+      <section class="repo-sidebar__tile">
+        <h3>Collections</h3>
+        <p class="muted">Collections are not available yet.</p>
+      </section>
+
+      <section class="repo-sidebar__tile repo-sidebar__tile--owner">
+        <h3>Owner</h3>
+        <a href="/{{ owner }}" class="profile-chip repo-sidebar__owner-chip">
+          <span class="avatar">{{ owner[0]|upper }}</span>
+          <span class="username">{{ owner }}</span>
+        </a>
+        {% if owner_display_name %}
+          <p class="muted repo-sidebar__owner-name">{{ owner_display_name }}</p>
+        {% endif %}
+        {# Follow button on the sidebar mirrors the header capsule but lives
+         * here for visibility to anonymous viewers (disabled) — gives
+         * logged-out visitors an obvious entry point to /login. #}
+        {% if viewer_is_owner %}
+          <p class="muted">That's you.</p>
+        {% elif current_user %}
+          <form method="post" action="/{{ owner }}/follow" class="inline repo-sidebar__follow-form">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="follow-btn follow-btn--sm{% if viewer_following_owner %} follow-btn--active{% endif %}" aria-pressed="{{ 'true' if viewer_following_owner else 'false' }}">
+              <span class="follow-btn__label">{% if viewer_following_owner %}Following{% else %}Follow{% endif %}</span>
+              <span class="follow-btn__count follow-count">{{ follower_count_value }}</span>
+            </button>
+          </form>
+        {% else %}
+          <button type="button" class="follow-btn follow-btn--sm follow-btn--disabled" disabled title="Log in to follow" aria-disabled="true">
+            <span class="follow-btn__label">Follow</span>
+            <span class="follow-btn__count follow-count">{{ follower_count_value }}</span>
+          </button>
+        {% endif %}
+      </section>
+    </aside>
+  </div>
+
+  <style>
+    /* ============================================================
+     * Repo page — BLP-compatible page-local chrome.
+     * Square 2px tiles for sections, capsule buttons, no gradients.
+     * Tile hover = border only (spec §5.1, instant 0s transition).
+     * ============================================================ */
+
+    .repo-header {
+      display: flex;
+      align-items: center;
+      gap: var(--gap-tile);
+      flex-wrap: wrap;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 16px 20px;
+      transition: border-color var(--t-tile);
+    }
+    .repo-header:hover { border-color: var(--color-main); }
+    .repo-header__title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      flex: 1;
+      min-width: 0;
+    }
+    .repo-header h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .repo-header__owner {
+      color: var(--text-sub);
+      font-weight: 600;
+    }
+    .repo-header__owner:hover { color: var(--color-main); text-decoration: none; }
+    .repo-header__slash { color: var(--text-sub); }
+    .repo-header__name { color: var(--text); }
+    .repo-header__actions {
+      display: flex;
+      align-items: center;
+      gap: var(--gap-tile);
+      flex-wrap: wrap;
+    }
+
+    /* Copy button — empty capsule, matches existing copy-btn style. */
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .copy-btn:hover { border-color: var(--color-main); color: var(--color-main); }
+    .copy-btn:active,
+    .copy-btn:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    /* Hidden source element — the copy button reads its textContent. */
+    .clone-url-source {
+      position: absolute;
+      left: -9999px;
+      top: auto;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+
+    /* Like capsule — empty by default, filled when viewer liked. */
+    .like-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .like-btn:hover { border-color: var(--color-main); color: var(--color-main); }
+    .like-btn:active,
+    .like-btn:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .like-btn__icon { font-size: 14px; line-height: 1; }
+    .like-btn__count {
+      display: inline-block;
+      min-width: 18px;
+      padding: 0 4px;
+      font: 600 12px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
+      background: var(--blp-paper-blue);
+      border-radius: var(--radius-pill);
+      text-align: center;
+    }
+    /* Filled-state: the viewer has liked — same capsule but filled bg. */
+    .like-btn--active {
+      background: var(--color-main);
+      border-color: var(--color-main);
+      color: var(--tile-bg);
+    }
+    .like-btn--active .like-btn__count {
+      background: var(--tile-bg);
+      color: var(--color-main);
+    }
+    .like-btn--active:hover {
+      background: var(--el-hover);
+      border-color: var(--el-hover);
+      color: var(--tile-bg);
+    }
+    .like-btn--active:active,
+    .like-btn--active:focus-visible {
+      background: var(--el-active);
+      border-color: var(--el-active);
+      color: var(--tile-bg);
+      outline: none;
+    }
+    /* Disabled state for anonymous viewers. */
+    .like-btn--disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+    .like-btn--disabled:hover { border-color: var(--color-inactive); color: var(--text); }
+
+    /* Follow capsule — same pattern as like-btn. */
+    .follow-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .follow-btn:hover { border-color: var(--color-main); color: var(--color-main); }
+    .follow-btn:active,
+    .follow-btn:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .follow-btn__count {
+      display: inline-block;
+      min-width: 18px;
+      padding: 0 4px;
+      font: 600 12px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
+      background: var(--blp-paper-blue);
+      border-radius: var(--radius-pill);
+      text-align: center;
+    }
+    .follow-btn--active {
+      background: var(--color-main);
+      border-color: var(--color-main);
+      color: var(--tile-bg);
+    }
+    .follow-btn--active .follow-btn__count {
+      background: var(--tile-bg);
+      color: var(--color-main);
+    }
+    .follow-btn--active:hover {
+      background: var(--el-hover);
+      border-color: var(--el-hover);
+      color: var(--tile-bg);
+    }
+    .follow-btn--active:active,
+    .follow-btn--active:focus-visible {
+      background: var(--el-active);
+      border-color: var(--el-active);
+      color: var(--tile-bg);
+      outline: none;
+    }
+    .follow-btn--disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+    .follow-btn--disabled:hover { border-color: var(--color-inactive); color: var(--text); }
+    .follow-btn--sm { height: 28px; padding: 0 12px; font-size: 12px; }
+
+    /* Tabs — capsule pills; the active one is filled (permanent-selection). */
+    .repo-tabs {
+      display: flex;
+      gap: var(--gap-tile);
+      margin: 16px 0 0;
+      flex-wrap: wrap;
+    }
+    .tabs__link {
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .tabs__link:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+    .tabs__link--active {
+      background: var(--color-main);
+      border-color: var(--color-main);
+      color: var(--tile-bg);
+    }
+    .tabs__link--active:hover {
+      background: var(--el-hover);
+      border-color: var(--el-hover);
+      color: var(--tile-bg);
+    }
+
+    /* Two-column main + sidebar; stacks on narrow screens. */
+    .repo-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: var(--gap-tile);
+      margin-top: 16px;
+    }
+    @media (max-width: 900px) {
+      .repo-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+    .repo-layout__main { min-width: 0; }
+
+    /* Card tab — content panel (BLP square tile, instant border hover). */
+    .repo-card {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 24px;
+      line-height: 1.6;
+      transition: border-color var(--t-tile);
+    }
+    .repo-card:hover { border-color: var(--color-main); }
+    .repo-card h1, .repo-card h2, .repo-card h3 {
+      letter-spacing: -0.01em;
+      margin: 16px 0 8px;
+    }
+    .repo-card h1:first-child, .repo-card h2:first-child { margin-top: 0; }
+    .repo-card p { margin: 8px 0; }
+    .repo-card code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      padding: 1px 6px;
+      border-radius: 0;
+    }
+    /* Inline-code chip styling is for prose `code` only — inside a fenced
+       block the <pre> owns the background (dark), so the chip look must not
+       leak in (it painted unreadable light boxes over each code line). */
+    .repo-card pre code {
+      background: none;
+      border: none;
+      padding: 0;
+    }
+    .repo-card pre {
+      margin: 12px 0;
+    }
+
+    /* Files tab — directory listing as a table (square, 0 radius). */
+    .files-table {
+      width: 100%;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      border-collapse: collapse;
+      transition: border-color var(--t-tile);
+    }
+    .files-table:hover { border-color: var(--color-main); }
+    .files-table th { padding: 10px 14px; }
+    .files-table td { padding: 10px 14px; }
+    .files-table tbody tr { transition: background var(--t-base); }
+    .files-table tbody tr:hover { background: var(--blp-paper-blue-2); }
+    .files-table .files-size { text-align: right; white-space: nowrap; }
+    .files-link {
+      font-weight: 600;
+      color: var(--color-main);
+    }
+    .files-link:hover { color: var(--el-hover); text-decoration: underline; }
+    .files-name { color: var(--text); }
+
+    /* Community tab. */
+    .comments-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-tile);
+    }
+    .comment {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 16px;
+      transition: border-color var(--t-tile);
+    }
+    .comment:hover { border-color: var(--color-main); }
+    .comment__author { text-decoration: none; }
+    .comment__body { margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+    .comment__meta { margin: 0; font-size: 12px; }
+    .comment-composer {
+      margin-top: 24px;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 20px;
+      transition: border-color var(--t-tile);
+    }
+    .comment-composer:hover { border-color: var(--color-main); }
+    .comment-composer__label {
+      display: block;
+      margin: 0 0 8px;
+      font-weight: 500;
+      font-size: 14px;
+    }
+    .comment-composer textarea {
+      width: 100%;
+      min-height: 96px;
+      border-radius: var(--radius-pill); /* capsule to match other inputs (BLP §2.1) */
+    }
+    .comment-login-hint { margin-top: 16px; }
+
+    /* Sidebar — square tiles, 0 radius. */
+    .repo-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-tile);
+    }
+    .repo-sidebar__tile {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 16px;
+      transition: border-color var(--t-tile);
+    }
+    .repo-sidebar__tile:hover { border-color: var(--color-main); }
+    .repo-sidebar__tile h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-sub);
+    }
+    .repo-sidebar__metric {
+      margin: 4px 0;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+    .repo-sidebar__list {
+      margin: 0;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 12px;
+      row-gap: 4px;
+    }
+    .repo-sidebar__list dt {
+      color: var(--text-sub);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .repo-sidebar__list dd {
+      margin: 0;
+      font-size: 13px;
+      word-wrap: break-word;
+    }
+    .repo-sidebar__owner-chip { margin: 8px 0; }
+    .repo-sidebar__owner-name { margin: 4px 0 0; font-size: 13px; }
+    .repo-sidebar__follow-form { margin-top: 12px; }
+
+    /* Relative-positioning helper for the hidden clone-url source. */
+    .repo-header { position: relative; }
+  </style>
+
+  <script>
+    /* Copy-to-clipboard helper for the clone URL. Falls back to a hidden
+     * <textarea> + execCommand when navigator.clipboard is unavailable
+     * (older browsers, insecure contexts, headless test environments).
+     * Same pattern as users/tokens.html. */
+    (function () {
+      function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); }
+        catch (e) { /* ignore — user will copy manually */ }
+        document.body.removeChild(ta);
+      }
+      document.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var targetId = btn.getAttribute('data-copy-target');
+          if (!targetId) return;
+          var node = document.getElementById(targetId);
+          if (!node) return;
+          var text = node.textContent || '';
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(function () {
+              fallbackCopy(text);
+            });
+          } else {
+            fallbackCopy(text);
+          }
+          var original = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = original; }, 1500);
+        });
+      });
+    })();
+  </script>
 {% endblock %}
