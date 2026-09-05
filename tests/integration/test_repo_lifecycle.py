@@ -170,7 +170,9 @@ class TestRepoLifecycle:
         porcelain.push(
             str(work),
             str(fs_path),
-            b"refs/heads/master:refs/heads/main",
+            # dulwich ≥1.2 initializes `main`, older versions `master` —
+            # read the actual local branch instead of hardcoding either.
+            b"refs/heads/" + porcelain.active_branch(str(work)) + b":refs/heads/main",
             force=True,
         )
 

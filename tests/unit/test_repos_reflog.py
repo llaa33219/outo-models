@@ -34,8 +34,9 @@ def _push_commit(
 
     Multiple commits per repo reuse a single working tree (cached under
     `tmp_data_dir`); each push uses `force=True` so a fresh commit on
-    `master` replaces the previous `main` tip without needing to be a
-    descendant of it.
+    Whatever the local default branch is (dulwich ≥1.2 uses `main`,
+    older versions `master`) replaces the previous `main` tip without
+    needing to be a descendant of it.
     """
     work = tmp_data_dir / f"_work_{owner}_{name}"
     if not (work / ".git").exists():
@@ -54,10 +55,11 @@ def _push_commit(
         author=b"Tester <tester@example.com>",
         committer=b"Tester <tester@example.com>",
     )
+    local_branch = porcelain.active_branch(str(work))
     porcelain.push(
         str(work),
         str(repo_fs_path(owner, name)),
-        b"refs/heads/master:refs/heads/main",
+        b"refs/heads/" + local_branch + b":refs/heads/main",
         force=True,
     )
 
@@ -145,7 +147,7 @@ class TestRecentRevisionsEmptyBranch:
         porcelain.add(str(work), paths=[str(work / "f")])
         porcelain.commit(
             str(work),
-            message=b"on master",
+            message=b"on default branch",
             author=b"T <t@example.com>",
             committer=b"T <t@example.com>",
         )
@@ -154,6 +156,7 @@ class TestRecentRevisionsEmptyBranch:
         bare.parent.mkdir(parents=True, exist_ok=True)
         porcelain.init(str(bare), bare=True)
         # Force the push to land on a branch other than the default.
-        porcelain.push(str(work), str(bare), b"refs/heads/master:refs/heads/feature")
+        local_branch = porcelain.active_branch(str(work))
+        porcelain.push(str(work), str(bare), b"refs/heads/" + local_branch + b":refs/heads/feature")
 
         assert await recent_revisions("grace", "model-g") == []

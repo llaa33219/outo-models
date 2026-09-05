@@ -43,7 +43,8 @@ from outo_models.server.deps import get_current_user_optional, get_db
 from outo_models.server.routers._ui_helpers import (
     CSRF_COOKIE,
     ensure_csrf,
-    issue_csrf_cookie,
+    form_csrf_token,
+    set_csrf_cookie,
     verify_csrf,
 )
 from outo_models.utils.git_url import clone_url
@@ -97,20 +98,30 @@ async def repos_list_page(
     return response
 
 
+def _form_page(request: Request, template: str, **context: object) -> Response:
+    """TemplateResponse whose context and Set-Cookie carry the SAME CSRF token.
+
+    Starlette ≥1.x renders eagerly at construction, so the token is minted
+    BEFORE the response exists and the cookie attached afterwards.
+    """
+    settings = get_settings()
+    token, is_new = form_csrf_token(request, settings)
+    response = templates.TemplateResponse(request, template, {**context, "csrf_token": token})
+    if is_new:
+        set_csrf_cookie(response, token, settings)
+    return response
+
+
 @router.get("/signup", response_class=HTMLResponse)
 async def signup_page(request: Request) -> Response:
-    """Render the signup form (issues a fresh CSRF cookie)."""
-    response = templates.TemplateResponse(request, "auth/signup.html", {})
-    issue_csrf_cookie(response=response, settings=get_settings())
-    return response
+    """Render the signup form (issues a fresh CSRF cookie on first visit)."""
+    return _form_page(request, "auth/signup.html")
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request) -> Response:
-    """Render the login form (issues a fresh CSRF cookie)."""
-    response = templates.TemplateResponse(request, "auth/login.html", {})
-    issue_csrf_cookie(response=response, settings=get_settings())
-    return response
+    """Render the login form (issues a fresh CSRF cookie on first visit)."""
+    return _form_page(request, "auth/login.html")
 
 
 @router.get("/{owner}/{name}", response_class=HTMLResponse)
@@ -178,16 +189,12 @@ async def admin_dashboard_page(
         .scalars()
         .all()
     )
-    response = templates.TemplateResponse(
+    return _form_page(
         request,
         "admin/dashboard.html",
-        {
-            "pending": pending,
-            "csrf_cookie_name": CSRF_COOKIE,
-        },
+        pending=pending,
+        csrf_cookie_name=CSRF_COOKIE,
     )
-    ensure_csrf(request, response)
-    return response
 
 
 @router.post("/signup")

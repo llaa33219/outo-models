@@ -123,3 +123,35 @@ class TestAdminPageGate:
         response = client.get("/admin")
         assert response.status_code == 200
         assert "Admin" in response.text or "admin" in response.text.lower()
+
+
+class TestCsrfTokenConsistency:
+    """Field failure: 'CSRF token mismatch' on a normal login — the hidden
+    field was rendered from request.cookies while the response cookie was
+    minted separately. They must be the SAME token on the SAME response."""
+
+    def test_first_visit_form_token_equals_set_cookie(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        import re
+
+        client, _, _ = app
+        response = client.get("/login")
+        assert response.status_code == 200
+        cookie_token = response.cookies.get("_csrf")
+        assert cookie_token
+        match = re.search(r'name="_csrf" value="([^"]+)"', response.text)
+        assert match is not None
+        assert match.group(1) == cookie_token
+
+    def test_reload_reuses_cookie_token(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        import re
+
+        client, _, _ = app
+        first = client.get("/login")
+        token = first.cookies.get("_csrf")
+        assert token
+        second = client.get("/login")  # TestClient's jar replays the cookie
+        match = re.search(r'name="_csrf" value="([^"]+)"', second.text)
+        assert match is not None
+        assert match.group(1) == token

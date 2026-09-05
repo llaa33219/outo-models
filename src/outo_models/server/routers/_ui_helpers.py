@@ -35,18 +35,26 @@ def _csrf_serializer(settings: Settings) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.secret_key or "outo-dev-secret", salt=_CSRF_SALT)
 
 
-def issue_csrf_cookie(*, response: Response, settings: Settings) -> str:
-    """Mint a fresh CSRF token, attach it to `response`, and return the raw value."""
+def mint_csrf_token(settings: Settings) -> str:
+    """Mint a fresh signed CSRF token (no response side effects)."""
     serializer = _csrf_serializer(settings)
-    random_bytes = secrets.token_bytes(24)
-    token_raw: object = serializer.dumps(random_bytes.hex())
-    token = str(token_raw)
+    return str(serializer.dumps(secrets.token_bytes(24).hex()))
+
+
+def set_csrf_cookie(response: Response, token: str, settings: Settings) -> None:
+    """Attach an existing token to `response` as the CSRF cookie."""
     response.set_cookie(
         key=CSRF_COOKIE,
         value=token,
         max_age=CSRF_MAX_AGE_SECONDS,
         **cookie_kwargs(secure=settings.env == "production"),
     )
+
+
+def issue_csrf_cookie(*, response: Response, settings: Settings) -> str:
+    """Mint a fresh CSRF token, attach it to `response`, and return the raw value."""
+    token = mint_csrf_token(settings)
+    set_csrf_cookie(response, token, settings)
     return token
 
 
@@ -74,11 +82,32 @@ def ensure_csrf(request: Request, response: Response) -> None:
     issue_csrf_cookie(response=response, settings=settings)
 
 
+def form_csrf_token(request: Request, settings: Settings) -> tuple[str, bool]:
+    """Return `(token, is_new)` for a form's hidden field.
+
+    The hidden field MUST equal the cookie the browser sends back. Reuse the
+    request's cookie when present; otherwise mint a fresh one — the caller
+    must then attach it to the SAME response (`is_new=True`).
+
+    Starlette ≥1.x renders TemplateResponse EAGERLY at construction, so the
+    token has to exist before the response is built; mutating
+    `response.context` afterwards is a no-op (that ordering bug produced the
+    field's 'CSRF token mismatch' on a plain login).
+    """
+    existing = request.cookies.get(CSRF_COOKIE)
+    if existing:
+        return existing, False
+    return mint_csrf_token(settings), True
+
+
 __all__ = [
     "CSRF_COOKIE",
     "CSRF_FIELD",
     "ensure_csrf",
+    "form_csrf_token",
     "issue_csrf_cookie",
+    "mint_csrf_token",
     "read_csrf_cookie",
+    "set_csrf_cookie",
     "verify_csrf",
 ]
