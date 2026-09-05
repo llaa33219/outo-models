@@ -57,12 +57,12 @@ def resolve_tip_sha(repo: _DulwichRepo, branch: str) -> bytes | None:
     if head_sha:
         return head_sha
     try:
-        _chain, head_sha = repo.refs.follow(b"HEAD")
+        _chain, head_sha = repo.refs.follow(Ref(b"HEAD"))
         if head_sha:
             return head_sha
     except (KeyError, ValueError, NotGitRepository):
         pass
-    branches = [k for k in repo.refs.keys() if k.startswith(b"refs/heads/")]
+    branches = [k for k in repo.refs if k.startswith(b"refs/heads/")]
     if len(branches) == 1:
         try:
             return repo.refs.read_ref(branches[0])

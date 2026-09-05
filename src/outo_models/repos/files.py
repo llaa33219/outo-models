@@ -14,12 +14,11 @@ from dataclasses import dataclass
 
 from dulwich.errors import NotGitRepository
 from dulwich.objects import Blob, ObjectID, ShaFile, Tree
-from dulwich.refs import Ref
 from dulwich.repo import Repo as _DulwichRepo
 
 from outo_models.exceptions import NotFoundError
-from outo_models.repos.storage import repo_fs_path
 from outo_models.repos.card import resolve_tip_sha
+from outo_models.repos.storage import repo_fs_path
 
 _DIR_MODE = 0o040000
 _SYMLINK_MODE = 0o120000
