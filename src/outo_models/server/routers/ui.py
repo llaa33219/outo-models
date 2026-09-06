@@ -485,6 +485,29 @@ async def _render_repo_page(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/static/{filename}", include_in_schema=False)
+async def static_asset(filename: str) -> Response:
+    """Serve bundled static assets (wheel-packaged under assets/static/).
+
+    Only `.js` files, no path traversal — the response is content so the
+    BLP chrome rules do not apply to it, but the route itself is chrome.
+    """
+    if "/" in filename or "\\" in filename or not filename.endswith(".js"):
+        raise NotFoundError(f"no such asset: {filename}")
+    # Reading via importlib.resources keeps ASYNC240 happy (async route) and
+    # works identically from a wheel zip or a source tree.
+    import importlib.resources as resources
+
+    asset_ref = resources.files("outo_models.assets") / "static" / filename
+    if not asset_ref.is_file():
+        raise NotFoundError(f"no such asset: {filename}")
+    return Response(
+        content=asset_ref.read_bytes(),
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 async def repos_list_page(
     request: Request,

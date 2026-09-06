@@ -649,44 +649,4 @@
     /* Relative-positioning helper for the hidden clone-url source. */
     .repo-header { position: relative; }
   </style>
-
-  <script>
-    /* Copy-to-clipboard helper for the clone URL. Falls back to a hidden
-     * <textarea> + execCommand when navigator.clipboard is unavailable
-     * (older browsers, insecure contexts, headless test environments).
-     * Same pattern as users/tokens.html. */
-    (function () {
-      function fallbackCopy(text) {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'absolute';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); }
-        catch (e) { /* ignore — user will copy manually */ }
-        document.body.removeChild(ta);
-      }
-      document.querySelectorAll('.copy-btn').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var targetId = btn.getAttribute('data-copy-target');
-          if (!targetId) return;
-          var node = document.getElementById(targetId);
-          if (!node) return;
-          var text = node.textContent || '';
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).catch(function () {
-              fallbackCopy(text);
-            });
-          } else {
-            fallbackCopy(text);
-          }
-          var original = btn.textContent;
-          btn.textContent = 'Copied';
-          setTimeout(function () { btn.textContent = original; }, 1500);
-        });
-      });
-    })();
-  </script>
 {% endblock %}

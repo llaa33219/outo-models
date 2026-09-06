@@ -922,3 +922,30 @@ class TestNavbarLeftAlignedAuth:
         chip = nav.find('class="profile-chip"')
         assert chip != -1 and spacer != -1
         assert chip < spacer, "profile chip must be on the left of the spacer"
+
+
+class TestStaticAssetsAndClipboardJs:
+    """Inline scripts are forbidden by CSP (script-src 'self'); the copy
+    handler ships as a static asset instead. Field failure: copy buttons
+    silently did nothing on internal (plain-http) installs."""
+
+    def test_clipboard_js_served(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        client, _, _ = app
+        response = client.get("/static/clipboard.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/javascript")
+        assert "execCommand" in response.text  # non-secure-context fallback
+        assert "navigator.clipboard" in response.text
+
+    def test_no_inline_scripts_in_pages(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        client, _, _ = app
+        for page in ("/", "/login", "/signup"):
+            response = client.get(page)
+            assert response.status_code == 200
+            assert "<script>" not in response.text
+            assert '<script src="/static/clipboard.js" defer></script>' in response.text
+
+    def test_static_asset_traversal_rejected(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        client, _, _ = app
+        assert client.get("/static/..%2F..%2Fconfig.py").status_code in (400, 404)
+        assert client.get("/static/not-a-js.txt").status_code == 404
