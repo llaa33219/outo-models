@@ -20,7 +20,7 @@ flag (or the interactive prompt):
 | Mode | `--domain` value | What happens |
 | --- | --- | --- |
 | **Hostname mode** | `models.example.com` (any DNS-resolvable name) | Wizard asks for ACME email, DNS provider, public IPv4; Caddy renders with TLS + ACME; the server is reachable over `https://`. |
-| **Internal / IP mode** | empty / `192.168.1.10` / `::1` / any IP literal | Wizard skips ACME / DNS provider / public-IP prompts; Caddy renders plain `:80`; the server is reachable over `http://` from a trusted private network. |
+| **Internal / IP mode** | empty / `<server-ip>` / `::1` / any IP literal | Wizard skips ACME / DNS provider / public-IP prompts; Caddy renders plain `:80`; the server is reachable over `http://` from a trusted private network. |
 
 The two flows share the admin password / DB migration steps — only the
 network-layer configuration differs.
@@ -243,7 +243,7 @@ sudo OUTO_CLOUDFLARE_API_TOKEN=<token> \
     --domain models.example.com \
     --acme-email admin@example.com \
     --dns-provider cloudflare \
-    --public-ipv4 203.0.113.10 \
+    --public-ipv4 <public-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password "$(openssl rand -base64 24)" \
@@ -256,7 +256,7 @@ sudo outo-models setup --non-interactive \
     --domain models.example.com \
     --acme-email admin@example.com \
     --dns-provider manual \
-    --public-ipv4 203.0.113.10 \
+    --public-ipv4 <public-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password "$(openssl rand -base64 24)" \
@@ -266,7 +266,7 @@ sudo outo-models setup --non-interactive \
 ```bash
 # Internal / IP mode — no domain, plain HTTP, no DNS / ACME
 sudo outo-models setup --non-interactive \
-    --public-ipv4 192.168.1.10 \
+    --public-ipv4 <server-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password "$(openssl rand -base64 24)" \
@@ -276,8 +276,8 @@ sudo outo-models setup --non-interactive \
 ```bash
 # Internal / IP mode with an explicit IP domain
 sudo outo-models setup --non-interactive \
-    --domain 192.168.1.10 \
-    --public-ipv4 192.168.1.10 \
+    --domain <server-ip> \
+    --public-ipv4 <server-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password "$(openssl rand -base64 24)" \

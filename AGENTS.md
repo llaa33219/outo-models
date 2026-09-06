@@ -145,6 +145,16 @@ working in this repository **must** follow.
   symbol, and `OUTO_*` environment variable is documented. Do not bypass
   this check. The `Docs/code parity` step in `.github/workflows/ci.yml`
   enforces it in CI.
+- **Never pin real infrastructure in docs or examples.** This project is
+  self-hosted by anyone on any machine, so documentation and examples must
+  not contain concrete IP addresses, LAN addresses, or hostnames tied to a
+  specific deployment (e.g. `192.168.x.x`, someone's `spark-1752`). Use
+  placeholders: `<server-ip>`, `<public-ip>`, `models.example.com`
+  (RFC 2606 reserved). The ONLY exceptions are the actual release
+  infrastructure paths — `ghcr.io/llaa33219/outo-models` and the
+  `raw.githubusercontent.com/llaa33219/outo-models` install URL — which are
+  functional (they must work when pasted), not illustrative. If you catch
+  yourself pasting output from a real machine into docs, sanitize it first.
 
 ## 4. Separation of development and test environments (important)
 

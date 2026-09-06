@@ -24,7 +24,7 @@ server explicitly. Resolution order for the target:
 3. the default server chosen at `omc auth login --set-default`
 
 ```bash
-omc auth login --server http://192.168.0.239
+omc auth login --server http://<server-ip>
 # paste a Personal Access Token (create one at /settings/tokens on the web UI)
 ```
 

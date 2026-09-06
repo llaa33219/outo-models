@@ -110,7 +110,7 @@ Example instruction output:
 ```
 Add the following DNS record to the DNS host for example.com:
 
-1. name: models.example.com  type: A  value: 203.0.113.10  TTL: 300s
+1. name: models.example.com  type: A  value: <public-ip>  TTL: 300s
 
 After confirming the record has propagated, press 'confirm' in the setup wizard.
 ```

@@ -16,7 +16,7 @@ Both `omc` and `outo-models-cli` console scripts are installed.
 
 ```bash
 # 1. Log in (prompts for a PAT, masked)
-omc auth login --server http://192.168.0.239
+omc auth login --server http://<server-ip>
 
 # 2. Verify
 omc auth whoami

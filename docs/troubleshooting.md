@@ -615,7 +615,7 @@ HTTPS-Upgrades) connect to :443, get a reset, and show this error. Type
 the scheme explicitly:
 
 ```
-http://192.168.0.239
+http://<server-ip>
 ```
 
 The wizard's final message and the `start` success line both print the

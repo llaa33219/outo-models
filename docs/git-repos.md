@@ -286,7 +286,7 @@ HTTP using these endpoints — which are also directly usable with `curl`:
 | `/api/repos/{owner}/{name}/files` | `GET` | one directory level of the repo tree (what `omc ls` uses) |
 
 ```bash
-curl -O http://192.168.0.239/alice/my-model/resolve/main/README.md
+curl -O http://<server-ip>/alice/my-model/resolve/main/README.md
 ```
 
 For the `local` backend, PUT/GET are handled **same-origin**, so `git-lfs`

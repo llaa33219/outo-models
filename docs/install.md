@@ -246,7 +246,7 @@ sudo outo-models setup --non-interactive \
   --domain models.example.com \
   --acme-email admin@example.com \
   --dns-provider cloudflare \
-  --public-ipv4 203.0.113.10 \
+  --public-ipv4 <public-ip> \
   --admin-username admin \
   --admin-email admin@example.com \
   --admin-password '<a strong password you generated>' \
@@ -281,7 +281,7 @@ forward ports and don't own a DNS name.
 
 - The server is on a private LAN / VPN / loopback.
 - There is no port-forwarding from the router, and no DNS delegation.
-- Operators reach the server by IP, e.g. `http://192.168.1.10`.
+- Operators reach the server by IP, e.g. `http://<server-ip>`.
 - HTTPS / Let's Encrypt is not desired (or not possible — ACME cannot
   issue certs to raw IP addresses).
 
@@ -294,7 +294,7 @@ sudo outo-models setup
 Walk through the prompts:
 
 1. **Image track** — `stable` / `dev` / `custom` (same as hostname mode)
-2. **Domain** — leave blank, or type an IP literal (e.g. `192.168.1.10`)
+2. **Domain** — leave blank, or type an IP literal (e.g. `<server-ip>`)
 3. *(ACME email prompt is skipped)*
 4. *(DNS provider prompt is skipped)*
 5. **Server address** — the wizard probes the host's LAN interface
@@ -314,7 +314,7 @@ per-site TLS), and prints the next-step banner.
 
 ```bash
 sudo outo-models setup --non-interactive \
-    --public-ipv4 192.168.1.10 \
+    --public-ipv4 <server-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password '<a strong password you generated>' \
@@ -325,8 +325,8 @@ Or with an explicit IP `domain`:
 
 ```bash
 sudo outo-models setup --non-interactive \
-    --domain 192.168.1.10 \
-    --public-ipv4 192.168.1.10 \
+    --domain <server-ip> \
+    --public-ipv4 <server-ip> \
     --admin-username admin \
     --admin-email admin@example.com \
     --admin-password '<a strong password you generated>' \
@@ -392,7 +392,7 @@ outo-models status
 ```
 
 You can now browse to `https://models.example.com/` (hostname mode) or
-`http://192.168.1.10/` (internal mode). Log in with the admin account
+`http://<server-ip>/` (internal mode). Log in with the admin account
 you created during `setup`.
 
 ## 6. Post-install checks
