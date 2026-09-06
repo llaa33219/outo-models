@@ -273,6 +273,22 @@ is chosen via `OUTO_LFS_BACKEND` (`local` default, `s3`).
 | `/{owner}/{name}.git/info/lfs/objects/{oid}` | `GET` | `_handle_get` | `local` backend only; 64 KiB chunked streaming |
 | `/{owner}/{name}.git/info/lfs/locks*` | `*` | `lfs_not_supported` | **501** — locks land in v3 |
 
+## Without git: `omc` and the file-transfer endpoints
+
+Whole-repo git operations are not the only way to move data. The
+`omc` CLI ([docs/omc.md](omc.md)) transfers individual files over plain
+HTTP using these endpoints — which are also directly usable with `curl`:
+
+| Endpoint | Method | What it does |
+| --- | --- | --- |
+| `/{owner}/{name}/resolve/{revision}/{path}` | `GET` | raw file bytes; `Range` (206) resume; ETag; LFS pointers redirect 302 to the object |
+| `/api/repos/{owner}/{name}/upload` | `POST` (multipart) | commit files to the default branch without git (100 MiB/file cap) |
+| `/api/repos/{owner}/{name}/files` | `GET` | one directory level of the repo tree (what `omc ls` uses) |
+
+```bash
+curl -O http://192.168.0.239/alice/my-model/resolve/main/README.md
+```
+
 For the `local` backend, PUT/GET are handled **same-origin**, so `git-lfs`
 reuses the Basic credentials from the original clone/push with no extra
 headers. For the `s3` backend, the `actions.upload` / `actions.download`

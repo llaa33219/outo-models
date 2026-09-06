@@ -9,10 +9,14 @@ records, and updates are all handled automatically.
 
 - **Fully automated install**: a single `outo-models setup` run opens the
   firewall, issues and renews ACME (Let's Encrypt) HTTPS certificates, and
-  configures DNS records (Cloudflare plugin plus a manual mode).
+  configures DNS records (Cloudflare plugin plus a manual mode). Internal
+  networks work too: skip the domain and the server runs on plain HTTP over
+  an IP address.
 - **git-native repositories**: clone and push model, dataset, and Space repos
   with `git clone` / `git push` directly. Git LFS supported (local or S3
   object storage).
+- **omc — the user CLI**: HF-style client for downloading/uploading
+  artifacts and managing repos from any machine (see below).
 - **Membership management**: signup/login, admin-gated approval (toggleable),
   user bans, storage quotas, and GPU assignments — all from the CLI.
 - **Security-first**: argon2 password hashes, PASETO v4 API tokens, security
@@ -20,25 +24,25 @@ records, and updates are all handled automatically.
 - **Multi-arch single-image deployment** (linux/amd64 + linux/arm64) with two
   flavors: `stable` and `dev`.
 
-## Quick start
+## Run a server
 
-Everything runs through one container image. The CLI itself also lives in the
-image — a one-time shim install puts an `outo-models` command on the host.
+Everything runs through one container image. The operator CLI lives in the
+image — a one-time shim install puts an `outo-models` command on the host
+(it also enables the rootless podman socket and installs the host-side
+firewall/sysctl helper scripts):
 
 ```bash
 # 1. Install the host CLI shim (writes /usr/local/bin/outo-models)
 curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
-#    Until the first stable release is tagged, install against the dev track:
-#    curl -sSL .../scripts/install-cli.sh | sudo bash -s dev
 
 # 2. Pull the server image (amd64 and arm64 are both served automatically)
 sudo podman pull ghcr.io/llaa33219/outo-models:stable
 
-# 3. Initial setup — the wizard asks which image track to run (stable / dev /
-#    custom) first, then domain, DNS, admin account, ports
+# 3. Initial setup — the wizard asks the image track, domain (blank =
+#    internal/IP mode), DNS provider, admin account, and ports
 outo-models setup
 
-# 4. Run the server
+# 4. Run the server (verifies the server actually answers; prints the URL)
 outo-models start
 ```
 
@@ -68,19 +72,36 @@ the image via `outo-models update`.
 > is what puts `outo-models` on your PATH. You can also run any CLI command
 > ad hoc: `podman run --rm ghcr.io/llaa33219/outo-models:stable --help`.
 
-See [docs/index.md](docs/index.md) for the full documentation set —
-[install guide](docs/install.md), [CLI reference](docs/cli.md),
-[architecture](docs/architecture.md), [security](docs/security.md), and more.
+## Use a server: omc
 
-## Development
+`omc` (PyPI package `outo-models-cli`) is the HF-style client for anyone
+using an outo-models server. Since servers are self-hosted anywhere, every
+command targets a server explicitly:
 
 ```bash
-uv sync
-make lint typecheck test
+# install — either works
+uv tool install outo-models-cli
+pip install outo-models-cli
+
+# point at a server + authenticate (create a token at /settings/tokens first)
+omc auth login --server http://192.168.0.239
+
+omc repo list
+omc repo create my-model --kind model --public
+omc upload alice/my-model ./weights.safetensors
+omc download alice/my-model --local-dir ./out
 ```
 
-Read [AGENTS.md](AGENTS.md) before contributing — it is the binding contract
-for everyone working in this repository.
+Large transfers stream with progress bars, resume interrupted downloads via
+HTTP Range, and rename atomically from `.part` files. Full reference:
+[docs/omc.md](docs/omc.md).
+
+## Documentation
+
+See [docs/index.md](docs/index.md) for the full documentation set —
+[install guide](docs/install.md), [operator CLI reference](docs/cli.md),
+[omc (user CLI)](docs/omc.md), [architecture](docs/architecture.md),
+[security](docs/security.md), and more.
 
 ## License
 

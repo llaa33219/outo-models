@@ -6,13 +6,21 @@ working in this repository **must** follow.
 ## 1. Project characteristics
 
 - **outo-models** is a fully open-source, self-hostable model hub server. It
-  targets Hugging Face / ModelScope parity, and the v2 scope is **model
+  targets Hugging Face / ModelScope parity, and the current scope is **model
   sharing · dataset sharing · Spaces · Git LFS** — four features in total.
 - Built on Python 3.12 + FastAPI + SQLAlchemy (async) + dulwich (git
   smart-HTTP) + Caddy (automated HTTPS/ACME). Shipped as a **single Podman
   image**.
 - Every repository is git-cloneable and git-pushable
-  (`git clone https://<domain>/<owner>/<name>.git`).
+  (`git clone https://<domain>/<owner>/<name>.git`). Individual files can
+  also be fetched (`GET /{owner}/{name}/resolve/{revision}/{path}`) and
+  uploaded (`POST /api/repos/{owner}/{name}/upload`) without git — that is
+  what `omc` uses.
+- **omc** (`omc/`, PyPI: `outo-models-cli`, console scripts `omc` and
+  `outo-models-cli`) is the USER-facing CLI: `auth login --server`,
+  `repo create/delete/list`, `ls`, resumable parallel `download`, folder
+  `upload`. It is a separate package with its own version line — do not
+  bump it in lockstep with the server.
 - Server operators manage everything through the `outo-models` CLI:
   - `setup` — first-time interactive setup (domain, DNS provider, admin
     account, ports)
@@ -172,7 +180,7 @@ src/outo_models/
   firewall/                               # firewalld / ufw / nft detection + host-script invocation
   tls/                                    # Caddyfile rendering, reload, renewal healthcheck
   tasks/                                  # APScheduler jobs (cert, quota reconcile, audit prune)
-  repos/                                  # repo disk layout, create / delete, quota
+  repos/                                  # disk layout, create/delete, quota, social, card, files, commit
   spaces/                                 # Spaces metadata + v2 container runtime
     registry.py                            # SDK sidecar + CRUD
     runtime.py                             # RuntimeState / Status mapping
@@ -183,10 +191,12 @@ src/outo_models/
     local.py                               # disk backend (streaming PUT/GET)
     s3.py                                  # S3 backend (in-house SigV4, MinIO compatible)
     factory.py                             # OUTO_LFS_BACKEND dispatch
+  hostsys.py                              # rootless low-port sysctl (enable-low-ports.sh orchestration)
   git_smart/                              # dulwich-backed git smart-HTTP service
-  server/                                 # FastAPI app, routers, middleware, Jinja templates
-  cli/                                    # `outo-models` Typer CLI
+  server/                                 # FastAPI app, routers (incl. resolve/upload), middleware, Jinja templates
+  cli/                                    # `outo-models` operator Typer CLI
   cli_remote/                             # CLI → admin REST client
+omc/                                      # `omc` / `outo-models-cli` — the USER-facing CLI (own package)
 container/                                # image rootfs, systemd/quadlet examples
 src/outo_models/assets/                   # packaged runtime assets: Caddyfile.j2 + host scripts
                                           # (wheel-safe — never resolve container/ from Python)
@@ -210,3 +220,9 @@ tests/                                    # unit / integration / fixtures
    `vX.Y.Z-dev` tag maps to `ghcr.io/<repo>:X.Y.Z-dev` + `:dev`. Container
    builds use `podman build --build-arg IMAGE_FLAVOR=stable|dev ...` only.
    Do not bypass the dev/prod combination guard from AGENTS.md §4.
+7. **CLI releases follow `.github/workflows/release-cli.yml`.** A
+   `vX.Y.Z-cli` tag builds the `omc/` package and publishes
+   `outo-models-cli` to PyPI via trusted publishing (OIDC). The tag's
+   version must equal `omc/pyproject.toml`'s `version` — the workflow
+   refuses mismatches. The server package (`outo-models`, src/) and the
+   user CLI (`outo-models-cli`, omc/) version independently.
