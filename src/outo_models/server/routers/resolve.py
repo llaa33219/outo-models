@@ -150,7 +150,7 @@ async def resolve_file(
         raise NotFoundError(f"file not found: {owner}/{name}/resolve/{revision}/{path}")
 
     fs_path = repo_fs_path(owner, name)
-    blob_sha, blob_size = await resolve_blob(owner, name, revision, path)
+    blob_sha, blob_size = await resolve_blob(owner, name, revision, path, repo_row.default_branch)
 
     head = await asyncio.to_thread(peek_blob_head, str(fs_path), blob_sha, max_bytes=512)
     if head is not None:

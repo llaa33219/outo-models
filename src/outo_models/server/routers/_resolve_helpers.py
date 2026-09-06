@@ -89,7 +89,9 @@ def maybe_lfs_pointer(data: bytes) -> LfsPointer | None:
     return LfsPointer(oid=oid_match.group(1).decode("ascii"), size=int(size_match.group(1)))
 
 
-def resolve_commit_sha(repo: _DulwichRepo, revision: str) -> bytes | None:
+def resolve_commit_sha(
+    repo: _DulwichRepo, revision: str, default_branch: str = "main"
+) -> bytes | None:
     """Translate `revision` (branch / tag / sha) to the commit SHA.
 
     Branch names resolve via `resolve_tip_sha` (the same helper the card
@@ -97,10 +99,12 @@ def resolve_commit_sha(repo: _DulwichRepo, revision: str) -> bytes | None:
     SHAs are validated against the object store.
 
     For branch names we additionally require the resolved SHA to be the
-    tip of an actual `refs/heads/<revision>` ref. `resolve_tip_sha`
-    falls back to HEAD when the named ref is missing — useful for the
-    card endpoint but wrong here, where a non-existent branch must
-    404 instead of silently serving HEAD. Bare SHA inputs skip the
+    tip of an actual `refs/heads/<revision>` ref — except when the
+    requested revision IS the repo's recorded default branch: a repo
+    whose only branch is `master` (older git defaults) must still serve
+    `resolve/main/...`, so the default branch name falls back through
+    `resolve_tip_sha` (HEAD symref, then the single branch if exactly
+    one). Any other non-existent branch 404s. Bare SHA inputs skip the
     branch-resolvability gate so a 40-char commit identifier is
     always validated against the object store directly.
     """
@@ -114,7 +118,7 @@ def resolve_commit_sha(repo: _DulwichRepo, revision: str) -> bytes | None:
     except (KeyError, ValueError):
         pass
 
-    if not is_sha and _branch_is_resolvable(repo, revision):
+    if not is_sha and (_branch_is_resolvable(repo, revision) or revision == default_branch):
         tip = resolve_tip_sha(repo, revision)
         if tip is not None:
             return tip
@@ -213,7 +217,9 @@ def _walk_tree(repo: _DulwichRepo, tree: Tree, segments: list[str]) -> ObjectID 
     return None
 
 
-def resolve_blob_sync(owner: str, name: str, revision: str, path: str) -> tuple[ObjectID, int]:
+def resolve_blob_sync(
+    owner: str, name: str, revision: str, path: str, default_branch: str = "main"
+) -> tuple[ObjectID, int]:
     """Resolve `(owner, name, revision, path)` to `(blob_sha, size)`.
 
     Raises `NotFoundError` (mapped to 404) for any missing piece. The
@@ -226,7 +232,7 @@ def resolve_blob_sync(owner: str, name: str, revision: str, path: str) -> tuple[
 
     repo = _DulwichRepo(str(fs_path))
     try:
-        commit_sha = resolve_commit_sha(repo, revision)
+        commit_sha = resolve_commit_sha(repo, revision, default_branch)
         if commit_sha is None:
             raise NotFoundError(f"revision not found: {revision}")
         try:
@@ -264,9 +270,11 @@ def resolve_blob_sync(owner: str, name: str, revision: str, path: str) -> tuple[
         repo.close()
 
 
-async def resolve_blob(owner: str, name: str, revision: str, path: str) -> tuple[ObjectID, int]:
+async def resolve_blob(
+    owner: str, name: str, revision: str, path: str, default_branch: str = "main"
+) -> tuple[ObjectID, int]:
     """Async wrapper around `resolve_blob_sync`."""
-    return await asyncio.to_thread(resolve_blob_sync, owner, name, revision, path)
+    return await asyncio.to_thread(resolve_blob_sync, owner, name, revision, path, default_branch)
 
 
 def iter_blob_window(

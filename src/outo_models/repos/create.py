@@ -69,6 +69,15 @@ async def create_repo(
         # — there is nothing to clean up yet.
         fs_path.parent.mkdir(parents=True, exist_ok=True)
         porcelain.init(str(fs_path), bare=True)
+        # Pin the bare repo's HEAD to the recorded default branch. Dulwich
+        # honors the platform's init.defaultBranch git config (master on
+        # some CI images), which would otherwise make HEAD nondeterministic
+        # and break every reader that follows HEAD. `update_head` cannot
+        # point at a not-yet-existing branch, so write the symref directly.
+        from dulwich.refs import Ref as _Ref
+        from dulwich.repo import Repo as _BareRepo
+
+        _BareRepo(str(fs_path)).refs.set_symbolic_ref(_Ref(b"HEAD"), _Ref(b"refs/heads/main"))
 
         # Step 5: anything past this point must roll back the on-disk repo
         # if the DB write fails, so the system does not accumulate orphan

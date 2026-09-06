@@ -46,7 +46,6 @@ from pathlib import Path
 
 from dulwich import porcelain
 from dulwich.errors import NotGitRepository
-from dulwich.objects import ObjectID
 from dulwich.refs import Ref
 from dulwich.repo import Repo as _DulwichRepo
 
@@ -150,32 +149,23 @@ def _commit_files_sync_inner(
             # If the bare repo already has the branch, fetch it so the
             # new commit has a parent (otherwise `push` will create the
             # ref from scratch).
-            try:
+            with contextlib.suppress(Exception):
+                # Empty bare repo: fetch has nothing to pull; the first
+                # commit creates the branch on push.
                 porcelain.fetch(str(worktree), str(fs_path))
-                try:
-                    porcelain.checkout(
-                        str(worktree),
-                        target=branch,
-                        force=True,
-                    )
-                except Exception:
-                    bare_for_tip = _DulwichRepo(str(fs_path))
-                    try:
-                        bare_tip = bare_for_tip.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
-                        if bare_tip is not None:
-                            wt_repo = _DulwichRepo(str(worktree))
-                            try:
-                                wt_repo.refs[Ref(f"refs/heads/{branch}".encode())] = ObjectID(
-                                    bare_tip
-                                )
-                            finally:
-                                wt_repo.close()
-                    finally:
-                        bare_for_tip.close()
-            # Empty bare repo: nothing to fetch; commit creates the branch.
-            except Exception:
-                with contextlib.suppress(Exception):
-                    pass
+
+            # Checkout the target branch only when the worktree actually
+            # has it (i.e. the repo already had commits). On an empty repo
+            # the local init branch may be `master` on platforms whose git
+            # config says so (field failure in CI) — the push below maps
+            # whatever the active branch is onto the target branch name.
+            wt = _DulwichRepo(str(worktree))
+            try:
+                target_ref = Ref(f"refs/heads/{branch}".encode())
+                if target_ref in wt.refs:
+                    porcelain.checkout(str(worktree), target=branch, force=True)
+            finally:
+                wt.close()
 
             bytes_written = 0
             written_paths: list[str] = []
@@ -189,8 +179,12 @@ def _commit_files_sync_inner(
                 canonical = _join_repo_path(prefix, rel_name).as_posix()
                 written_paths.append(canonical)
 
-            # Stage everything under the worktree.
-            porcelain.add(str(worktree), paths=list(files.keys()))
+            # Stage everything under the worktree. Paths must include the
+            # upload prefix — `files` keys are bare names.
+            porcelain.add(
+                str(worktree),
+                paths=[_join_repo_path(prefix, rel).as_posix() for rel in files],
+            )
 
             identity = _normalize_user_identity(actor_username, actor_email)
             resolved_message = message if message else f"upload: {len(files)} file(s)"
@@ -215,10 +209,11 @@ def _commit_files_sync_inner(
             # Push the active branch back to the bare repo. Using a
             # local path sidesteps the smart-HTTP protocol; dulwich
             # treats it the same way.
+            active = porcelain.active_branch(str(worktree))
             porcelain.push(
                 str(worktree),
                 str(fs_path),
-                b"refs/heads/" + branch.encode("ascii") + b":refs/heads/" + branch.encode("ascii"),
+                b"refs/heads/" + active + b":refs/heads/" + branch.encode("ascii"),
                 force=False,
             )
 
