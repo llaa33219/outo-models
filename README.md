@@ -84,7 +84,7 @@ uv tool install outo-models-cli
 pip install outo-models-cli
 
 # point at a server + authenticate (create a token at /settings/tokens first)
-omc auth login --server http://<server-ip>
+omc auth login --server https://models.example.com
 
 omc repo list
 omc repo create my-model --kind model --public

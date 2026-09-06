@@ -24,9 +24,12 @@ server explicitly. Resolution order for the target:
 3. the default server chosen at `omc auth login --set-default`
 
 ```bash
-omc auth login --server http://<server-ip>
+omc auth login --server https://models.example.com
 # paste a Personal Access Token (create one at /settings/tokens on the web UI)
 ```
+
+Servers on internal networks (no DNS/TLS) use plain http — pass the
+scheme explicitly: `omc auth login --server http://<server-ip>`.
 
 Credentials are stored per-server in `~/.config/omc/config.json` (mode 0600).
 `OMC_TOKEN` overrides the stored token (CI usage). `omc auth status` lists
