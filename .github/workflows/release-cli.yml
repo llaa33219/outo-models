@@ -1,0 +1,64 @@
+name: release-cli
+
+# Tag-driven PyPI release for the user-facing CLI (omc / outo-models-cli).
+# Push a tag of the form:
+#   v0.1.0-cli   →  builds omc/ and publishes outo-models-cli 0.1.0 to PyPI
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) — no long-lived API token.
+# One-time setup on PyPI: project → Publishing → add a trusted publisher for
+# repo <owner>/outo-models, workflow file release-cli.yml.
+on:
+  push:
+    tags:
+      - "v*-cli"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+        working-directory: omc
+      - run: uv run pytest -q
+        working-directory: omc
+      - run: uv run ruff check . && uv run ruff format --check . && uv run mypy src
+        working-directory: omc
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag/version consistency
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-cli$ ]]; then
+            tag_version="${BASH_REMATCH[1]}"
+          else
+            echo "::error::Tag '$REF' must match vX.Y.Z-cli"
+            exit 1
+          fi
+          pkg_version=$(grep -m1 '^version = ' omc/pyproject.toml | cut -d'"' -f2)
+          if [[ "$tag_version" != "$pkg_version" ]]; then
+            echo "::error::Tag version $tag_version != omc/pyproject.toml version $pkg_version"
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build the package
+        run: uv build --package-dir omc --out-dir omc/dist
+        working-directory: omc
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1

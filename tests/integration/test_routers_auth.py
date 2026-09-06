@@ -219,6 +219,27 @@ class TestTokens:
         assert "token" in body
         assert body["prefix"] == body["token"][:8]
 
+    async def test_pat_with_expiry_authenticates_bearer(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        # Field failure: deps._resolve_pat_user filtered on
+        # expires_at IS NULL, so every token WITH an expiry got 401.
+        client, _, _ = app
+        await seed_approved_user(username="ivan")
+        client.post(
+            "/api/auth/login",
+            json={"username": "ivan", "password": "correct horse battery staple"},
+        )
+        created = client.post(
+            "/api/auth/tokens",
+            json={"name": "expiry-test", "scopes": ["read"], "ttl_days": 30},
+        )
+        assert created.status_code == 201
+        token = created.json()["token"]
+        me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["username"] == "ivan"
+
     async def test_list_tokens_returns_rows(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:

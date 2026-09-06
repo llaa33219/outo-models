@@ -31,6 +31,7 @@ and cross-doc consistency automatically through `scripts/check-docs.sh`.
   reverse proxy
 - [Troubleshooting](troubleshooting.md) — common operational issues (Podman,
   LFS, S3 included)
+- [omc (user CLI)](omc.md)
 - [Testing](testing.md) — `make lint/typecheck/test/smoke` and the integration
   test scope
 - [Changelog](changelog.md) — release notes for v0.1.0 and v0.2.0

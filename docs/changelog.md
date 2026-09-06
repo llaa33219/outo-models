@@ -4,6 +4,32 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.0 — omc (user CLI) + file transfer endpoints
+
+Release date: (unreleased — dev builds only)
+
+### Added
+
+- **`omc` / `outo-models-cli`** — the user-facing CLI (own package in
+  `omc/`, PyPI `outo-models-cli`). `auth login --server` with multi-server
+  credentials, `repo create/delete/list`, `ls`, resumable parallel
+  `download` (`.part` + Range + ETag revalidation), folder `upload`.
+- **`GET /{owner}/{name}/resolve/{revision}/{path}`** — raw file download
+  with Range (206) resume support, ETag, and LFS pointer redirection.
+- **`POST /api/repos/{owner}/{name}/upload`** — server-side commit of
+  uploaded files (100 MiB/file cap; larger → git + LFS).
+- **`GET /api/repos/{owner}/{name}/files`** — repo tree listing for
+  `omc ls`.
+- **release-cli.yml** — tag `vX.Y.Z-cli` publishes the CLI to PyPI via
+  trusted publishing (OIDC). One-time setup: register the repo +
+  workflow as a trusted publisher on the PyPI project.
+
+### Fixed
+
+- PAT Bearer auth on API endpoints silently rejected every token that had
+  an expiry date (`expires_at IS NULL` pre-filter) — the field failure
+  behind "Server rejected the token".
+
 ## v0.3.0 — Social layer + HF-style repo pages + PAT web UI
 
 Release date: (unreleased — dev builds only)

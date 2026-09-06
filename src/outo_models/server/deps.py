@@ -115,9 +115,12 @@ async def _resolve_pat_user(db: AsyncSession, *, bearer: str) -> int | None:
     candidates = (
         (
             await db.execute(
-                select(PersonalAccessToken).where(
-                    PersonalAccessToken.expires_at.is_(None),
-                )
+                select(PersonalAccessToken)
+                # Do NOT pre-filter on expires_at: a where(expires_at.is_(None))
+                # silently excluded every token that HAS an expiry (i.e. every
+                # normally-issued PAT) and returned 401 for valid tokens
+                # (field failure behind "Server rejected the token").
+                # Expiry is enforced per-row below via is_expired.
             )
         )
         .scalars()

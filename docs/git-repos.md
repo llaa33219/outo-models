@@ -377,6 +377,108 @@ Migration steps:
 See the [MinIO documentation](https://min.io/docs/minio/linux/index.html)
 and [security.md §LFS auth model](security.md#lfs-auth-model) for more.
 
+## Raw file downloads (`/{owner}/{name}/resolve/...`)
+
+The `resolve` endpoint serves a single file at a given revision without
+the git pack-protocol overhead:
+
+```
+GET /{owner}/{name}/resolve/{revision}/{path}
+```
+
+`revision` may be a branch name, a tag, or a full 40-character commit
+SHA. The server walks the tree from the named revision and streams the
+matching blob back. The response is the Hugging Face-compatible shape:
+
+| Header | Value |
+| --- | --- |
+| `Content-Length` | blob size in bytes |
+| `Accept-Ranges` | `bytes` |
+| `ETag` | the blob's git SHA-1 in double quotes |
+| `Content-Type` | by extension: `.md` → `text/markdown; charset=utf-8`, `.txt` → `text/plain; charset=utf-8`, `.json` → `application/json`, etc. Default is `application/octet-stream`. |
+
+Range requests are honoured: `Range: bytes=start-end` returns `206
+Partial Content` with the exact byte window in the `Content-Range`
+header. Invalid ranges (start past the end, reversed window, etc.)
+return `416` with `Content-Range: bytes */<size>`.
+
+LFS pointer files (`version https://git-lfs...` followed by
+`oid sha256:<64-hex>` and `size <N>` lines) are detected on-the-fly and
+redirect (302) to the existing LFS GET endpoint
+(`/{owner}/{name}.git/info/lfs/objects/{oid}`), so a CLI asking for an
+LFS-backed file transparently receives the actual object.
+
+Visibility and auth match the rest of the API: anonymous callers can
+resolve files in public repos; private repos require either a session
+cookie or HTTP Basic auth with a Personal Access Token (the same PAT
+the git smart-HTTP service uses). 404 — not 403 — for unauthorized
+private-repo access, so the endpoint does not leak existence.
+
+The endpoint streams blob bytes in 64 KiB chunks so a 500 MiB blob
+does not sit in memory.
+
+## Server-side upload (`POST /api/repos/{owner}/{name}/upload`)
+
+The upload endpoint lands one or more files as a single commit on the
+repo's default branch without going through the git smart-HTTP pack
+protocol. Request:
+
+```
+POST /api/repos/{owner}/{name}/upload
+Content-Type: multipart/form-data
+Authorization: Bearer <PAT with write scope>     (or session cookie)
+
+--boundary
+Content-Disposition: form-data; name="message"
+
+add weights
+--boundary
+Content-Disposition: form-data; name="path"
+
+docs
+--boundary
+Content-Disposition: form-data; name="files"; filename="weights.bin"
+Content-Type: application/octet-stream
+
+<binary bytes>
+--boundary--
+```
+
+* `message` (optional) — commit message.
+* `path` (optional, default `""`) — directory prefix the files are
+  written under; subdirectories inside the path are created on demand.
+* `files[]` — one or more file parts; each part's `filename` may include
+  `/`-separated subpaths (`docs/intro.md`, etc.).
+
+Response (200):
+
+```json
+{
+  "commit_sha": "abcdef...",
+  "files": ["docs/weights.bin"],
+  "message": "add weights"
+}
+```
+
+Validation:
+
+* Path traversal (`..`, absolute paths, empty segments) → **422**.
+* Empty `files[]` → **422**.
+* Any single file > **100 MiB** → **413** with the hint
+  `use git+lfs for larger files` (matches the per-object cap policy).
+* Sum of file bytes > user's remaining quota → **413** with the same
+  LFS hint.
+
+Auth: session cookie OR `Authorization: Bearer <PAT>` carrying the
+`write` (or `repos:write`) scope. **401** for anonymous or read-only
+PATs; **403** for an authenticated non-owner (admin always succeeds);
+**404** when the repo does not exist or is private + invisible.
+
+The endpoint writes a `Revision` row, a `repo.upload` `AuditLog` entry,
+refreshes `Repo.size_bytes` and `UserUsage.used_bytes`, and serializes
+against concurrent pushes via the per-repo
+`RepoLockRegistry.REPO_LOCKS`.
+
 ## Concurrency
 
 - Per-repo `asyncio.Lock` (`RepoLockRegistry.REPO_LOCKS`) serializes
