@@ -4,30 +4,130 @@
   <h1>{{ heading }}</h1>
   <p class="muted">Public {{ kind_label }} shared by the community.</p>
 
-  {% if repos %}
-    <div class="repo-grid">
-      {% for repo in repos %}
-        <article class="card">
-          <h2>
-            <a href="/{{ repo.owner.username }}/{{ repo.name }}">{{ repo.owner.username }}/{{ repo.name }}</a>
-          </h2>
-          <div>
-            <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
-            <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
-          </div>
-          <p class="desc">{{ repo.description or "" }}</p>
-          <p class="meta">Updated {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else 'recently' }}</p>
-        </article>
-      {% endfor %}
-    </div>
-  {% else %}
-    <div class="empty-state">
-      <p>No public {{ kind_label }} yet.</p>
-      {% if not current_user %}
-        <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first one.</p>
+  <div class="catalog-layout">
+    <aside class="catalog-filter" aria-label="Catalog filters">
+      <form method="get" action="/{{ repo_kind }}s" class="catalog-filter__form">
+        <label for="catalog-q">Search</label>
+        <input id="catalog-q" type="search" name="q" placeholder="name or description"
+               value="{{ filter_q }}" maxlength="200" autocomplete="off">
+
+        <label for="catalog-owner">Owner</label>
+        <input id="catalog-owner" type="text" name="owner" placeholder="username"
+               value="{{ filter_owner }}" maxlength="63" autocomplete="off">
+
+        <label for="catalog-sort">Sort by</label>
+        <select id="catalog-sort" name="sort">
+          <option value="recent" {% if filter_sort == 'recent' %}selected{% endif %}>Most recent</option>
+          <option value="downloads" {% if filter_sort == 'downloads' %}selected{% endif %}>Downloads</option>
+          <option value="likes" {% if filter_sort == 'likes' %}selected{% endif %}>Likes</option>
+        </select>
+
+        <p class="catalog-filter__actions">
+          <button type="submit" class="primary">Apply</button>
+          {% if filter_q or filter_owner or filter_sort != 'recent' %}
+            <a class="catalog-filter__clear" href="/{{ repo_kind }}s">Clear</a>
+          {% endif %}
+        </p>
+
+        <p class="catalog-filter__state muted">
+          {% if filter_q or filter_owner or filter_sort != 'recent' %}
+            Filters:
+            {% if filter_q %}<span class="pill">q: {{ filter_q }}</span>{% endif %}
+            {% if filter_owner %}<span class="pill">owner: {{ filter_owner }}</span>{% endif %}
+            <span class="pill">sort: {{ filter_sort }}</span>
+          {% else %}
+            No filters applied.
+          {% endif %}
+        </p>
+      </form>
+    </aside>
+
+    <section class="catalog-results">
+      {% if repos %}
+        <div class="repo-grid">
+          {% for repo in repos %}
+            <article class="card">
+              <h2>
+                <a href="/{{ repo.owner.username }}/{{ repo.name }}">{{ repo.owner.username }}/{{ repo.name }}</a>
+              </h2>
+              <div>
+                <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+                <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+              </div>
+              <p class="desc">{{ repo.description or "" }}</p>
+              <p class="meta">Updated {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else 'recently' }}</p>
+            </article>
+          {% endfor %}
+        </div>
       {% else %}
-        <p>Be the first &mdash; <a href="/new?kind={{ repo_kind }}">create a {{ kind_label }}</a>.</p>
+        <div class="empty-state">
+          {% if filter_q or filter_owner %}
+            <p>No {{ kind_label }} matched the current filters.</p>
+            <p><a href="/{{ repo_kind }}s">Clear filters</a> to see everything.</p>
+          {% else %}
+            <p>No public {{ kind_label }} yet.</p>
+            {% if not current_user %}
+              <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first one.</p>
+            {% else %}
+              <p>Be the first &mdash; <a href="/new?kind={{ repo_kind }}">create a {{ kind_label }}</a>.</p>
+            {% endif %}
+          {% endif %}
+        </div>
       {% endif %}
-    </div>
-  {% endif %}
+    </section>
+  </div>
+
+  <style>
+    /* Filter sidebar — square tile on the left, results on the right.
+     * Stacks on narrow viewports via media query. Tile border-radius
+     * = 0 (디자인.md §1.3). */
+    .catalog-layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: var(--gap-tile);
+      margin-top: 8px;
+    }
+    @media (max-width: 900px) {
+      .catalog-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+    .catalog-filter {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 16px;
+      transition: border-color var(--t-tile);
+    }
+    .catalog-filter:hover { border-color: var(--color-main); }
+    .catalog-filter__form label { margin-top: 12px; }
+    .catalog-filter__form label:first-of-type { margin-top: 0; }
+    .catalog-filter__form input[type="search"],
+    .catalog-filter__form input[type="text"],
+    .catalog-filter__form select {
+      width: 100%;
+    }
+    .catalog-filter__actions {
+      display: flex;
+      gap: var(--gap-tile);
+      align-items: center;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+    .catalog-filter__clear {
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      padding: 8px 14px;
+      background: var(--tile-bg);
+    }
+    .catalog-filter__clear:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+    .catalog-filter__state {
+      margin: 12px 0 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+    .catalog-results { min-width: 0; }
+  </style>
 {% endblock %}

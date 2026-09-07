@@ -198,6 +198,53 @@
         <p class="muted">all-time git clones + fetches</p>
       </section>
 
+      {% if space_runtime %}
+        <section class="repo-sidebar__tile repo-sidebar__tile--runtime" aria-label="Space runtime status">
+          <h3>Runtime</h3>
+          <p class="repo-sidebar__runtime-state">
+            <span class="repo-sidebar__runtime-chip repo-sidebar__runtime-chip--{{ space_runtime.state }}">{{ space_runtime.state }}</span>
+            <span class="repo-sidebar__runtime-sdk">sdk: {{ space_runtime.sdk }}</span>
+          </p>
+          <p class="muted repo-sidebar__runtime-message">{{ space_runtime.message }}</p>
+          {% if space_runtime.state == 'running' and space_runtime.url %}
+            <p class="repo-sidebar__runtime-open">
+              <a class="new-btn repo-sidebar__runtime-open-link" href="{{ space_runtime.url }}" target="_blank" rel="noopener noreferrer">
+                Open the Space
+              </a>
+            </p>
+            <p class="repo-sidebar__runtime-iframe-wrap">
+              <iframe
+                class="repo-sidebar__runtime-iframe"
+                title="Embedded preview of {{ owner }}/{{ repo.name }}"
+                src="{{ space_runtime.url }}"
+                loading="lazy"
+                referrerpolicy="no-referrer">
+              </iframe>
+            </p>
+          {% endif %}
+          {% if space_runtime.runtime_enabled and (viewer_is_owner or current_user and current_user.role == 'admin') %}
+            <p class="repo-sidebar__runtime-actions">
+              {% if space_runtime.state == 'running' %}
+                <form method="post" action="/{{ owner }}/{{ repo.name }}/space/stop" class="inline">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button type="submit" class="run-btn run-btn--stop">Stop</button>
+                </form>
+              {% else %}
+                <form method="post" action="/{{ owner }}/{{ repo.name }}/space/start" class="inline">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button type="submit" class="run-btn run-btn--start">Start</button>
+                </form>
+              {% endif %}
+            </p>
+          {% elif not space_runtime.runtime_enabled %}
+            <p class="muted repo-sidebar__runtime-hint">
+              The Space runtime is disabled. An operator must set
+              <code>OUTO_SPACES_RUNTIME_ENABLED=true</code> on the server.
+            </p>
+          {% endif %}
+        </section>
+      {% endif %}
+
       <section class="repo-sidebar__tile">
         <h3>{{ tab_sidebar_label }}</h3>
         {% if sidebar_info_rows %}
@@ -592,7 +639,7 @@
     .comment-composer textarea {
       width: 100%;
       min-height: 96px;
-      border-radius: var(--radius-pill); /* capsule to match other inputs (BLP §2.1) */
+      border-radius: 0; /* square per 디자인.md §2.1 — textareas break capsule pattern */
     }
     .comment-login-hint { margin-top: 16px; }
 
@@ -645,6 +692,110 @@
     .repo-sidebar__owner-chip { margin: 8px 0; }
     .repo-sidebar__owner-name { margin: 4px 0 0; font-size: 13px; }
     .repo-sidebar__follow-form { margin-top: 12px; }
+
+    /* Runtime tile — present only on Space pages. */
+    .repo-sidebar__tile--runtime { padding: 16px; }
+    .repo-sidebar__runtime-state {
+      margin: 4px 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .repo-sidebar__runtime-chip {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 10px;
+      font: 600 12px/1 'Pretendard', system-ui, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      border-radius: 0;
+      color: var(--text);
+    }
+    .repo-sidebar__runtime-chip--running { background: var(--blp-paper-green); border-color: var(--blp-green); color: var(--blp-deep-dark); }
+    .repo-sidebar__runtime-chip--building { background: var(--blp-paper-blue); border-color: var(--blp-sky); }
+    .repo-sidebar__runtime-chip--stopped { background: var(--blp-paper-blue-2); border-color: var(--blp-light-dark); color: var(--text-sub); }
+    .repo-sidebar__runtime-chip--failed { background: var(--blp-paper-blue-2); border-color: var(--blp-soft-red); color: var(--blp-deep-red); }
+    .repo-sidebar__runtime-chip--disabled { background: var(--blp-paper-blue-2); border-color: var(--color-inactive); color: var(--text-sub); }
+    .repo-sidebar__runtime-sdk {
+      font: 500 12px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
+    }
+    .repo-sidebar__runtime-message { margin: 0 0 12px; font-size: 13px; }
+    .repo-sidebar__runtime-open { margin: 8px 0; }
+    .repo-sidebar__runtime-open-link { width: 100%; }
+    .repo-sidebar__runtime-iframe-wrap {
+      margin: 12px 0 0;
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      background: var(--blp-paper-blue-2);
+      height: 220px;
+      overflow: hidden;
+    }
+    .repo-sidebar__runtime-iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: var(--tile-bg);
+    }
+    .repo-sidebar__runtime-actions {
+      margin: 12px 0 0;
+      display: flex;
+      gap: var(--gap-tile);
+      flex-wrap: wrap;
+    }
+    .repo-sidebar__runtime-hint {
+      margin: 12px 0 0;
+      font-size: 12px;
+      border: var(--border-el) dashed var(--color-inactive);
+      border-radius: 0;
+      padding: 10px 12px;
+      background: var(--blp-paper-blue-2);
+    }
+    .run-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 32px;
+      padding: 0 16px;
+      font: 600 13px/1 'Pretendard', system-ui, sans-serif;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base);
+    }
+    .run-btn--start {
+      background: var(--color-main);
+      border: var(--border-el) solid var(--color-main);
+      color: var(--tile-bg);
+    }
+    .run-btn--start:hover { background: var(--el-hover); border-color: var(--el-hover); }
+    .run-btn--start:active,
+    .run-btn--start:focus-visible {
+      background: var(--el-active);
+      border-color: var(--el-active);
+      outline: none;
+    }
+    .run-btn--stop {
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--blp-red);
+      color: var(--blp-red);
+    }
+    .run-btn--stop:hover {
+      background: var(--blp-paper-orange);
+      border-color: var(--blp-deep-red);
+      color: var(--blp-deep-red);
+    }
+    .run-btn--stop:active,
+    .run-btn--stop:focus-visible {
+      background: var(--blp-paper-orange);
+      border-color: var(--blp-deep-red);
+      color: var(--blp-deep-red);
+      outline: none;
+    }
 
     /* Relative-positioning helper for the hidden clone-url source. */
     .repo-header { position: relative; }

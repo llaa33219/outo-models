@@ -117,6 +117,49 @@ only.
 | `/api/spaces/{owner}/{name}/restart` | `POST` | The `static` SDK re-runs `export_static_site`; everything else does stop → build_image → start |
 | `/api/spaces/{owner}/{name}/status` | `GET` | Maps Podman inspect output to `RuntimeStatus` (also open to anonymous reads) |
 
+### Space runtime UI surface
+
+The web UI for a Space surfaces the runtime in a **sidebar tile**
+(`/repos/view.html`, rendered for `kind=space`) — it is the same tile
+shape as the existing sidebar info / downloads / collections / owner
+tiles, so it inherits the BLP Minimal Tile chrome (square 2px border,
+0 radius, instant border hover).
+
+The tile carries:
+
+1. A **state chip** in the running/stopped/building/failed/disabled
+   palette (see CSS classes in `repos/view.html`):
+   - `stopped`     → paper-blue-2 background, muted text
+   - `building`    → paper-blue background, sky border
+   - `running`     → paper-green background, green border, deep-dark text
+   - `failed`      → soft-red border, deep-red text
+   - `disabled`    → muted, inactive border
+2. The SDK label (`sdk: <value>`) next to the state chip.
+3. The `RuntimeStatus.message` from
+   [`runtime_status(...)`](../src/outo_models/spaces/runtime.py).
+4. When `state == running` AND a URL is set: a primary "Open the Space"
+   capsule (open in a new tab) plus an embedded **preview iframe**
+   (`<iframe src="{run_url}" loading="lazy" referrerpolicy="no-referrer">`).
+5. Owner-only Start / Stop capsules when
+   `settings.spaces_runtime_enabled` is `True`. Each one is a form POST
+   on the same Space page:
+   - `POST /{owner}/{name}/space/start`
+   - `POST /{owner}/{name}/space/stop`
+   - Both are CSRF-protected (`_csrf` cookie), login-required
+     (anonymous → `303 /login?next=...`), and 403 for non-owners
+     (including other logged-in users — same domain check the JSON
+     API uses).
+   - Both delegate to the JSON API's `_run_lifecycle` helper, so
+     audit logs and the Podman call path are identical.
+6. When the runtime is **disabled**, the tile surfaces a
+   `OUTO_SPACES_RUNTIME_ENABLED=true` admin hint instead of any
+   buttons — the operator's hint stays visible to all viewers.
+
+> The form POSTs are intentionally separate from the JSON API POSTs
+> at `/api/spaces/.../start` because the page form needs CSRF
+> protection and same-tab redirect semantics, while the JSON API
+> stays stateless + token-friendly.
+
 Each action:
 
 1. `_ensure_runtime_enabled(settings)` — returns `503 runtime_disabled`

@@ -869,6 +869,37 @@ class TestBlpDesignChrome:
         assert "linear-gradient" not in body
         assert "radial-gradient" not in body
 
+    async def test_textarea_has_square_border_radius(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        body = response.text
+        # The combined input/select/textarea rule uses capsule radius;
+        # the standalone `textarea { ... }` block below it overrides
+        # with border-radius: 0 (디자인.md §2.1 — textareas break the
+        # capsule pattern at large sizes).
+        overrides = re.findall(r"textarea\s*\{([^}]*)\}", body)
+        assert overrides, "expected a textarea CSS block"
+        override = overrides[-1]
+        assert "border-radius: 0" in override
+        assert "var(--radius-pill)" not in override
+        assert "999px" not in override
+
+    async def test_page_shell_uses_tile_grid_with_4px_gaps(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/")
+        body = response.text
+        assert ".page-tile-grid" in body
+        assert "display: grid" in body
+        assert "--gap-tile:             4px" in body
+        assert ".page-grid {" not in body
+        shell_block = body.split(".page-tile-grid {", 1)[1].split("}", 1)[0]
+        assert "padding:" not in shell_block or "0" in shell_block
+        assert "margin:" not in shell_block or "0" in shell_block
+
 
 class TestNavbarLeftAlignedAuth:
     """Product spec: auth controls (login/signup, or the profile chip when

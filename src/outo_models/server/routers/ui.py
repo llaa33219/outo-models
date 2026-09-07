@@ -22,6 +22,7 @@ so the navbar context (current user, active section) is uniform.
 
 from __future__ import annotations
 
+import contextlib
 import secrets
 from collections.abc import Mapping
 from pathlib import Path
@@ -50,7 +51,7 @@ from outo_models.auth import (
 from outo_models.auth.permissions import Scope
 from outo_models.auth.sessions import SESSION_COOKIE_NAME
 from outo_models.config import Settings, get_settings
-from outo_models.db import Repo, User
+from outo_models.db import Repo, RepoLike, User
 from outo_models.exceptions import (
     ConflictError,
     NotFoundError,
@@ -95,7 +96,14 @@ from outo_models.server.routers.auth import (
 from outo_models.server.routers.auth import (
     parse_scopes,
 )
-from outo_models.spaces.registry import create_space
+from outo_models.spaces import (
+    SpaceRuntimeManager,
+    create_space,
+    read_space_meta,
+)
+from outo_models.spaces import (
+    runtime_status as runtime_status_async,
+)
 from outo_models.utils.git_url import clone_url
 from outo_models.utils.slug import validate_slug
 
@@ -210,21 +218,66 @@ async def _render_kind_list(
     db: AsyncSession,
     user: User | None,
     repo_kind: RepoKind,
+    *,
+    q: str | None = None,
+    owner_filter: str | None = None,
+    sort: str | None = None,
 ) -> Response:
-    """Shared backend for /models, /datasets, /spaces."""
-    repos = (
-        (
-            await db.execute(
-                select(Repo)
-                .where(Repo.kind == repo_kind.value)
-                .where(Repo.visibility == "public")
-                .options(selectinload(Repo.owner))
-                .order_by(Repo.id)
-            )
-        )
-        .scalars()
-        .all()
+    """Shared backend for /models, /datasets, /spaces.
+
+    `q` matches `name` OR `description` case-insensitively (server-side,
+    SQL `func.lower()` LIKE so the index is irrelevant for a substring
+    scan at v0.4 — Postgres installs can swap to ILIKE later). `owner`
+    matches the owner's `username` exactly (slug, case-insensitive).
+    `sort` ∈ {None, "recent", "downloads", "likes"}:
+
+    - `None` / `"recent"` → most recent first by `Repo.id` desc
+    - `"downloads"`     → highest `downloads_count` first
+    - `"likes"`         → highest `like_count` first (subquery)
+
+    The likes sort uses a correlated subquery over `RepoLike` so we do
+    NOT loop per repo (one query batches the count). Counts are
+    computed in SQL, never in Python.
+    """
+    from sqlalchemy import desc, func, or_
+
+    _ALLOWED_SORT = {"recent", "downloads", "likes"}
+    sort_value = sort if sort in _ALLOWED_SORT else "recent"
+
+    stmt = (
+        select(Repo)
+        .where(Repo.kind == repo_kind.value)
+        .where(Repo.visibility == "public")
+        .options(selectinload(Repo.owner))
     )
+    if q:
+        like = f"%{q.lower()}%"
+        lowered_name = func.lower(Repo.name)
+        lowered_desc = func.lower(func.coalesce(Repo.description, ""))
+        stmt = stmt.where(or_(lowered_name.like(like), lowered_desc.like(like)))
+    if owner_filter:
+        try:
+            validate_slug(owner_filter)
+        except ValidationFailedError:
+            owner_filter = None
+        if owner_filter:
+            stmt = stmt.join(Repo.owner).where(User.username == owner_filter)
+
+    if sort_value == "downloads":
+        stmt = stmt.order_by(desc(Repo.downloads_count), desc(Repo.id))
+    elif sort_value == "likes":
+        like_count_sq = (
+            select(func.count(RepoLike.repo_id))
+            .where(RepoLike.repo_id == Repo.id)
+            .correlate(Repo)
+            .scalar_subquery()
+        )
+        stmt = stmt.order_by(desc(like_count_sq), desc(Repo.id))
+    else:
+        stmt = stmt.order_by(desc(Repo.id))
+
+    repos = (await db.execute(stmt)).scalars().all()
+
     headings = {
         RepoKind.MODEL: "Models",
         RepoKind.DATASET: "Datasets",
@@ -241,6 +294,9 @@ async def _render_kind_list(
             "repo_kind": repo_kind.value,
             "kind_label": _kind_label(repo_kind),
             "heading": headings[repo_kind],
+            "filter_q": q or "",
+            "filter_owner": owner_filter or "",
+            "filter_sort": sort_value,
         },
     )
 
@@ -438,6 +494,37 @@ async def _render_repo_page(
         if card_metadata.language:
             sidebar_info_rows.append(("Language", ", ".join(card_metadata.language)))
 
+    # Spaces runtime tile — present only when the repo IS a space. The
+    # disabled branch surfaces an admin hint (set OUTO_SPACES_RUNTIME_ENABLED)
+    # instead of Start/Stop capsules; any exception vs Podman is swallowed
+    # and shown as a "failed" tile rather than 500.
+    space_runtime: dict[str, Any] | None = None
+    if repo.kind == "space":
+        from outo_models.spaces.runtime import RuntimeState, RuntimeStatus
+
+        settings = request.app.state.settings
+        try:
+            rs: RuntimeStatus = await runtime_status_async(
+                repo,
+                settings=settings,
+                manager=SpaceRuntimeManager(settings),
+            )
+        except Exception as exc:
+            rs = RuntimeStatus(
+                state=RuntimeState.FAILED,
+                message=f"Failed to contact the runtime manager: {exc}",
+                url=None,
+            )
+        space_runtime = {
+            "state": rs.state.value,
+            "message": rs.message,
+            "url": rs.url,
+            "container_id": rs.container_id,
+            "port": rs.port,
+            "sdk": read_space_meta(owner, name).sdk,
+            "runtime_enabled": bool(getattr(settings, "spaces_runtime_enabled", False)),
+        }
+
     context = {
         "repo": repo,
         "owner": owner,
@@ -469,6 +556,9 @@ async def _render_repo_page(
         # Sidebar:
         "sidebar_info_rows": sidebar_info_rows,
         "has_readme": card_metadata is not None,
+        # Spaces runtime tile (None for non-space repos; populated by
+        # the dispatcher above for kind="space").
+        "space_runtime": space_runtime,
     }
 
     return _form_page(
@@ -541,9 +631,14 @@ async def models_page(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
+    q: Annotated[str | None, Query()] = None,
+    owner: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
 ) -> Response:
     """List public Models (HF-style catalog)."""
-    return await _render_kind_list(request, db, user, RepoKind.MODEL)
+    return await _render_kind_list(
+        request, db, user, RepoKind.MODEL, q=q, owner_filter=owner, sort=sort
+    )
 
 
 @router.get("/datasets", response_class=HTMLResponse)
@@ -551,9 +646,14 @@ async def datasets_page(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
+    q: Annotated[str | None, Query()] = None,
+    owner: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
 ) -> Response:
     """List public Datasets."""
-    return await _render_kind_list(request, db, user, RepoKind.DATASET)
+    return await _render_kind_list(
+        request, db, user, RepoKind.DATASET, q=q, owner_filter=owner, sort=sort
+    )
 
 
 @router.get("/spaces", response_class=HTMLResponse)
@@ -561,9 +661,14 @@ async def spaces_page(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
+    q: Annotated[str | None, Query()] = None,
+    owner: Annotated[str | None, Query()] = None,
+    sort: Annotated[str | None, Query()] = None,
 ) -> Response:
     """List public Spaces."""
-    return await _render_kind_list(request, db, user, RepoKind.SPACE)
+    return await _render_kind_list(
+        request, db, user, RepoKind.SPACE, q=q, owner_filter=owner, sort=sort
+    )
 
 
 @router.get("/signup", response_class=HTMLResponse)
@@ -1188,6 +1293,136 @@ async def new_repo_form(
         url=f"/{user.username}/{repo_name}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+# Spaces runtime UI POSTs — owner-only start/stop form targets. They
+# delegate to `_run_lifecycle` in `routers/spaces.py` so the JSON API
+# and the HTML form stay behaviour-aligned (audit log, Podman call,
+# error semantics). Failures are swallowed so the next GET surfaces
+# the `RuntimeStatus.message` instead of a 500.
+
+
+async def _owner_or_403(repo: Repo, user: User | None) -> User:
+    if user is None:
+        raise UnauthorizedError("Authentication required")
+    if user.id != repo.owner_id and user.role != "admin":
+        raise StarletteHTTPException(status_code=403, detail="Space owner only")
+    return user
+
+
+def _space_runtime_redirect_target(request: Request, owner: str, name: str) -> str:
+    return _safe_redirect_target(request, owner=owner, name=name, default_tab="")
+
+
+@router.post("/{owner}/{name}/space/start")
+async def space_start_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    if user is None:
+        target = _space_runtime_redirect_target(request, owner, name)
+        return RedirectResponse(url=f"/login?next={target}", status_code=status.HTTP_303_SEE_OTHER)
+    verify_csrf(request, form_token=csrf)
+    repo = (
+        (
+            await db.execute(
+                select(Repo)
+                .where(Repo.name == name)
+                .where(Repo.kind == "space")
+                .options(selectinload(Repo.owner))
+                .join(Repo.owner)
+                .where(User.username == owner)
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    if repo is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "space not found"},
+        )
+    await _owner_or_403(repo, user)
+    settings: Settings = request.app.state.settings
+    if not bool(getattr(settings, "spaces_runtime_enabled", False)):
+        target = _space_runtime_redirect_target(request, owner, name)
+        return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+    from outo_models.server.routers.spaces import _load_owner_gpu_ids, _run_lifecycle
+
+    owner_username = repo.owner.username if repo.owner is not None else owner
+    with contextlib.suppress(Exception):
+        await _run_lifecycle(
+            db=db,
+            user=user,
+            settings=settings,
+            manager=SpaceRuntimeManager(settings),
+            repo=repo,
+            action="start",
+            audit_target_id=str(repo.id),
+            gpu_ids=await _load_owner_gpu_ids(db, owner_username),
+        )
+    target = _space_runtime_redirect_target(request, owner, name)
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{owner}/{name}/space/stop")
+async def space_stop_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    if user is None:
+        target = _space_runtime_redirect_target(request, owner, name)
+        return RedirectResponse(url=f"/login?next={target}", status_code=status.HTTP_303_SEE_OTHER)
+    verify_csrf(request, form_token=csrf)
+    repo = (
+        (
+            await db.execute(
+                select(Repo)
+                .where(Repo.name == name)
+                .where(Repo.kind == "space")
+                .options(selectinload(Repo.owner))
+                .join(Repo.owner)
+                .where(User.username == owner)
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    if repo is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "space not found"},
+        )
+    await _owner_or_403(repo, user)
+    settings: Settings = request.app.state.settings
+    if not bool(getattr(settings, "spaces_runtime_enabled", False)):
+        target = _space_runtime_redirect_target(request, owner, name)
+        return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+    from outo_models.server.routers.spaces import _run_lifecycle
+
+    with contextlib.suppress(Exception):
+        await _run_lifecycle(
+            db=db,
+            user=user,
+            settings=settings,
+            manager=SpaceRuntimeManager(settings),
+            repo=repo,
+            action="stop",
+            audit_target_id=str(repo.id),
+            gpu_ids=[],
+        )
+    target = _space_runtime_redirect_target(request, owner, name)
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 __all__ = ["router", "templates"]

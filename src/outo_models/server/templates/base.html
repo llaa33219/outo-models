@@ -126,7 +126,7 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
 .bg-tile__inner {
   max-width: var(--max-content);
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 16px;
 }
 
 /* ============================================================
@@ -273,34 +273,68 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
 .avatar.lg { width: 72px; height: 72px; font-size: 32px; }
 
 /* ============================================================
- * Layout — square content tile, 1000px cap (§1.1)
+ * Layout — page grid of background tiles (§1.1).
+ * The shell is a full-viewport grid: header tile / content tile /
+ * footer tile, 4px gaps, NO outer margins — tiles touch the viewport
+ * edges. The 1000px cap applies only to the inner content wrapper
+ * (.bg-tile__inner) so tile SURFACES still tile the screen.
  * ============================================================ */
-main {
-  padding: var(--gap-tile);
-  max-width: 1200px;
-  margin: 0 auto;
+.page-tile-grid {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--gap-tile);
+  min-height: 100vh;
+  /* No padding, no max-width, no margin — tile surfaces touch edges */
 }
-.content-tile {
+.bg-tile {
   background: var(--tile-bg);
   border: var(--border-tile) solid var(--color-inactive);
   border-radius: 0;
-  padding: 24px 16px;
+  transition: border-color var(--t-tile);
 }
-.content-tile__inner { max-width: var(--max-content); margin: 0 auto; }
+.bg-tile:hover { border-color: var(--color-main); }
+.bg-tile__inner {
+  max-width: var(--max-content);
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* Header / footer tiles — square, no inner cap (they ARE the chrome). */
+.site-header-tile,
+.site-footer-tile {
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  padding: 0;
+  transition: border-color var(--t-tile);
+}
+.site-header-tile:hover,
+.site-footer-tile:hover { border-color: var(--color-main); }
+.site-header-tile__inner,
+.site-footer-tile__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+.site-footer-tile__inner { padding: 16px; }
+
+main {
+  /* No margin / padding — the main IS a bg-tile in the grid. */
+  background: var(--tile-bg);
+  border: var(--border-tile) solid var(--color-inactive);
+  border-radius: 0;
+  transition: border-color var(--t-tile);
+  min-width: 0;
+}
+main:hover { border-color: var(--color-main); }
+
+.content-tile { background: transparent; border: 0; }
+.content-tile__inner { max-width: var(--max-content); margin: 0 auto; padding: 24px 16px; }
 h1, h2, h3 { line-height: 1.25; letter-spacing: -0.01em; }
 h1 { font-size: 24px; font-weight: 700; margin: 0 0 16px; }
 h2 { font-size: 18px; font-weight: 700; margin: 24px 0 8px; }
 h3 { font-size: 16px; font-weight: 600; margin: 16px 0 8px; }
 p { margin: 8px 0; }
-
-footer {
-  background: var(--tile-bg);
-  border: var(--border-tile) solid var(--color-inactive);
-  border-radius: 0;
-  padding: 16px 24px;
-  margin: var(--gap-tile) auto 0;
-  max-width: 1200px;
-}
 
 /* ============================================================
  * Cards / grids — element tiles, square (§7.3).
@@ -435,12 +469,16 @@ textarea {
   outline: none;
   transition: background var(--t-base), border-color var(--t-base);
 }
+/* Multiline textarea — square border-radius (디자인.md §2.1).
+ * Single-line inputs/buttons keep the capsule radius above; the
+ * textarea element rule below overrides the shared input/select rule
+ * because capsule radii on multi-line fields look wrong. */
 textarea {
   height: auto;
   min-height: 96px;
   padding: 12px 14px;
   line-height: 1.5;
-  border-radius: var(--radius-pill); /* capsule, consistent with other form controls (§2.1) */
+  border-radius: 0;
 }
 input:hover, select:hover, textarea:hover { border-color: var(--color-main); }
 input:focus, select:focus, textarea:focus {
@@ -553,54 +591,57 @@ th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
 .breadcrumbs a { color: var(--text-sub); }
 .breadcrumbs a:hover { color: var(--color-main); }
 
-/* Page-level grid: navbar tile + content tile separated by 4px */
-.page-grid {
+/* Page-level bg-tile grid: header tile + main tile + footer tile,
+ * 4px gaps, NO outer margins — surfaces tile the viewport. The
+ * .bg-tile__inner (1000px cap) lives inside <main>, NOT on the tiles. */
+.page-tile-grid {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: var(--gap-tile);
   min-height: 100vh;
-  padding: var(--gap-tile);
-  max-width: 1200px;
-  margin: 0 auto;
 }
 </style>
   <script src="/static/clipboard.js" defer></script>
 </head>
 <body>
-<header class="site-header">
-  <nav class="navbar" aria-label="Primary">
-    <a href="/" class="brand">outo-models</a>
-    <div class="nav-section">
-      <a href="/models" class="nav-link{% if active_nav == 'models' %} active{% endif %}">Models</a>
-      <a href="/datasets" class="nav-link{% if active_nav == 'datasets' %} active{% endif %}">Datasets</a>
-      <a href="/spaces" class="nav-link{% if active_nav == 'spaces' %} active{% endif %}">Spaces</a>
-    </div>
-    {# Auth controls live on the LEFT per the product spec (not the HF default) #}
-    <div class="nav-section">
-      {% if current_user %}
-        <a href="/new" class="new-btn">New</a>
-        <a href="/{{ current_user.username }}" class="profile-chip" aria-label="My profile">
-          <span class="avatar">{{ current_user.username[0]|upper }}</span>
-          <span class="username">{{ current_user.username }}</span>
-        </a>
-        <a href="/logout" class="logout-link">Log out</a>
-      {% else %}
-        <a href="/login" class="nav-link">Log in</a>
-        <a href="/signup" class="nav-link">Sign up</a>
-      {% endif %}
-    </div>
-    <div class="nav-spacer"></div>
-  </nav>
+<div class="page-tile-grid">
+<header class="site-header-tile">
+  <div class="site-header-tile__inner">
+    <nav class="navbar" aria-label="Primary">
+      <a href="/" class="brand">outo-models</a>
+      <div class="nav-section">
+        <a href="/models" class="nav-link{% if active_nav == 'models' %} active{% endif %}">Models</a>
+        <a href="/datasets" class="nav-link{% if active_nav == 'datasets' %} active{% endif %}">Datasets</a>
+        <a href="/spaces" class="nav-link{% if active_nav == 'spaces' %} active{% endif %}">Spaces</a>
+      </div>
+      {# Auth controls live on the LEFT per the product spec (not the HF default) #}
+      <div class="nav-section">
+        {% if current_user %}
+          <a href="/new" class="new-btn">New</a>
+          <a href="/{{ current_user.username }}" class="profile-chip" aria-label="My profile">
+            <span class="avatar">{{ current_user.username[0]|upper }}</span>
+            <span class="username">{{ current_user.username }}</span>
+          </a>
+          <a href="/logout" class="logout-link">Log out</a>
+        {% else %}
+          <a href="/login" class="nav-link">Log in</a>
+          <a href="/signup" class="nav-link">Sign up</a>
+        {% endif %}
+      </div>
+      <div class="nav-spacer"></div>
+    </nav>
+  </div>
 </header>
 <main>
-  <div class="content-tile">
-    <div class="content-tile__inner">
-      {% block content %}{% endblock %}
-    </div>
+  <div class="bg-tile__inner">
+    {% block content %}{% endblock %}
   </div>
 </main>
-<footer>
-  <p class="muted">&copy; outo-models &mdash; self-hostable model hub</p>
+<footer class="site-footer-tile">
+  <div class="site-footer-tile__inner">
+    <p class="muted">&copy; outo-models &mdash; self-hostable model hub</p>
+  </div>
 </footer>
+</div>
 </body>
 </html>

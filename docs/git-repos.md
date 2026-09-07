@@ -155,6 +155,45 @@ The HTML page follows the same visibility rules as the JSON API.
 Anonymous viewers and other users get a 404 (not a 403) on
 private repos to avoid leaking existence.
 
+## Catalog search + filter (`/models`, `/datasets`, `/spaces`)
+
+Every catalog page (`/models`, `/datasets`, `/spaces`) renders a
+**left-side filter panel** next to the results grid. Both surfaces
+are BLP background tiles (square, 2px border, 0 radius) with a 4px
+gap between them — the same chrome the rest of the app uses.
+
+| Control | Form field | Effect |
+| --- | --- | --- |
+| Search input | `q` | Substring match (case-insensitive) on repo `name` OR `description` |
+| Owner input | `owner` | Exact match on the owner's `username` (slug-validated, case-insensitive) |
+| Sort select | `sort` | `recent` (default) / `downloads` / `likes` |
+
+Submitting the form does a **GET** on the same path — the URL stays
+shareable (e.g. `/models?q=nano&owner=alice&sort=likes`). A **Clear**
+capsule in the panel restores the unfiltered URL. The panel also
+recaps active filters as pills (`q: nano`, `owner: alice`,
+`sort: likes`) so the viewer sees what's applied.
+
+### Sorting
+
+| `sort` value | Order |
+| --- | --- |
+| `recent` (default) | `Repo.id` desc — newest first |
+| `downloads` | `Repo.downloads_count` desc, ties broken by `Repo.id` desc |
+| `likes` | Correlated subquery `SELECT count(*) FROM repo_likes WHERE repo_id = repo.id` desc, ties broken by `Repo.id` desc |
+
+The `likes` sort uses **one SQL** statement that batches the count —
+no N+1 queries against `RepoLike`. Counts are computed in SQL, never
+in Python, and the panel keeps the public-visibility filter
+(`WHERE visibility = 'public'`) intact across every sort.
+
+### Empty state
+
+When no repos match the filter combination, the catalog shows a
+friendly empty state tile that prompts the viewer to **Clear
+filters** to see everything (instead of the generic "No public
+models yet" copy, which only renders when no repos exist at all).
+
 ## Repository kind
 
 `Repo.kind` is one of three values (SQL `model` / `dataset` / `space`).
