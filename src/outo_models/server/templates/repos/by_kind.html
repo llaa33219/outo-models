@@ -5,7 +5,7 @@
   <p class="muted">Public {{ kind_label }} shared by the community.</p>
 
   <div class="catalog-layout">
-    <aside class="catalog-filter" aria-label="Catalog filters">
+    <aside class="catalog-filter el-tile" aria-label="Catalog filters">
       <form method="get" action="/{{ repo_kind }}s" class="catalog-filter__form">
         <label for="catalog-q">Search</label>
         <input id="catalog-q" type="search" name="q" placeholder="name or description"
@@ -42,7 +42,7 @@
       </form>
     </aside>
 
-    <section class="catalog-results">
+    <section class="catalog-results el-tile">
       {% if repos %}
         <div class="repo-grid">
           {% for repo in repos %}
@@ -128,6 +128,16 @@
       gap: 4px;
       align-items: center;
     }
-    .catalog-results { min-width: 0; }
+    .catalog-results {
+      min-width: 0;
+      /* One big element tile for the whole results region — the split
+         filter-tile vs results-tile IS the page layout. */
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 16px;
+      transition: border-color var(--t-tile);
+    }
+    .catalog-results:hover { border-color: var(--color-main); }
   </style>
 {% endblock %}

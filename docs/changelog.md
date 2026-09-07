@@ -4,6 +4,17 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.2 — Design polish: flat navbar, flush edges, catalog split tiles
+
+### Changed
+
+- Navbar no longer renders as a boxed tile inside the header background
+  tile — its content sits directly on the header tile.
+- Header/footer inner width now matches the 1000px content cap so every
+  page shares one left edge (no perceived edge gaps).
+- Catalog pages split into exactly two large element tiles: the filter
+  tile and the results tile.
+
 ## v0.4.1 — Viewport-filling tile shell + Spaces runtime UI + clipboard fix
 
 Release date: (unreleased — dev builds only)
