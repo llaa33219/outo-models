@@ -150,6 +150,10 @@
       min-height: 100%;
       display: flex;
       flex-direction: column;
+      /* The stretched tiles carry their own padding; without this the
+         inner's bottom padding stacks on the 4px grid gap and the seam
+         above the footer reads as ~28px instead of the spec'd 4px. */
+      padding-bottom: 0;
     }
   </style>
 {% endblock %}

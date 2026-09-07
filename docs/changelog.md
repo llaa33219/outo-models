@@ -4,6 +4,14 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.4 — Footer seam is the spec'd 4px
+
+### Fixed
+
+- Catalog pages no longer stack the inner wrapper's bottom padding on the
+  4px tile gap — the seam between the catalog tiles and the footer tile is
+  exactly 4px now.
+
 ## v0.4.3 — Catalog tiles fill the page vertically
 
 ### Changed
