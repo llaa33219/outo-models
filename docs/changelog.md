@@ -4,6 +4,14 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.3 — Catalog tiles fill the page vertically
+
+### Changed
+
+- The catalog filter tile and results tile now stretch to fill the page
+  down to the 4px gap above the footer (previously they ended at the
+  content's natural height).
+
 ## v0.4.2 — Design polish: flat navbar, flush edges, catalog split tiles
 
 ### Changed
