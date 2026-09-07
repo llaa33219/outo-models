@@ -349,13 +349,24 @@ class TestPushBookkeeping:
             env=git_env,
         )
 
+        # The git response is flushed BEFORE _record_push commits (the adapter
+        # single-buffers the body, then bookkeeping runs) — the client can
+        # return while bookkeeping is still in flight, so poll instead of
+        # reading once (flaky on slow CI).
+        revs: list[Revision] = []
+        for _ in range(100):
+            async with session_factory() as session:
+                revs = (
+                    (await session.execute(select(Revision).where(Revision.repo_id == repo_id)))
+                    .scalars()
+                    .all()
+                )
+            if len(revs) >= 1:
+                break
+            await asyncio.sleep(0.1)
+        assert len(revs) == 1
+
         async with session_factory() as session:
-            revs = (
-                (await session.execute(select(Revision).where(Revision.repo_id == repo_id)))
-                .scalars()
-                .all()
-            )
-            assert len(revs) == 1
             assert revs[0].branch == "master"
             # Git appends a newline to every commit message.
             assert revs[0].message.strip() == "alpha commit"
