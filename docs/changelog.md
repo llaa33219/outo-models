@@ -4,6 +4,32 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.1 — Viewport-filling tile shell + Spaces runtime UI + clipboard fix
+
+Release date: (unreleased — dev builds only)
+
+### Added
+
+- **Space runtime surface**: the repo page of a Space now shows a RUNTIME
+  tile (state chip + operator guidance), owner-only Start/Stop buttons,
+  and an "Open the Space" link while running.
+- **Catalog search & filters**: `/models`, `/datasets`, `/spaces` gain a
+  left filter panel — name/description search, owner filter, and sort by
+  recent / downloads / likes.
+- **Viewport-filling tile shell**: background tiles reach the viewport
+  edges with 4px gaps per the BLP tiling model.
+
+### Fixed
+
+- Copy buttons were dead: the CSP (`script-src 'self'`) blocked the inline
+  scripts. Handlers now ship as `assets/static/clipboard.js`, served by a
+  dedicated route — with the `execCommand` fallback for plain-http
+  internal installs.
+- Textareas render square instead of capsule (BLP element rule).
+- Deterministic default branch: repos created on hosts whose git config
+  defaults to `master` now work consistently (HEAD pinned to `main`;
+  resolve falls back for the recorded default branch).
+
 ## v0.4.0 — omc (user CLI) + file transfer endpoints
 
 Release date: (unreleased — dev builds only)
