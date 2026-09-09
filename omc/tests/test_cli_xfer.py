@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
 from typer.testing import CliRunner
@@ -53,17 +54,37 @@ def test_ls_bad_repo_format_aborts(runner: CliRunner) -> None:
     assert "<name>" in result.stderr or "name" in result.stderr
 
 
-def test_upload_rejects_oversized_file(runner: CliRunner, tmp_path: Path) -> None:
-    """The 100 MiB gate is enforced client-side BEFORE the upload is issued."""
+def test_upload_routes_oversized_file_through_lfs(runner: CliRunner, tmp_path: Path) -> None:
+    """An oversized file is routed through the LFS batch + PUT dance.
+
+    The client must NOT pre-reject > 100 MiB files any more — that
+    "must use git + LFS" wall was the field failure this whole change
+    fixes. Now the CLI transparently partitions the set and issues the
+    LFS batch call.
+    """
+    import respx as _respx
+
     _mock_me()
     runner.invoke(app, ["auth", "login", "--server", SERVER, "--token", "t"])
+
+    _respx.post(f"{SERVER}/alice/bert.git/info/lfs/objects/batch").mock(
+        return_value=httpx.Response(
+            200,
+            json={"objects": []},
+        )
+    )
+
     big = tmp_path / "huge.bin"
     big.write_bytes(b"\x00" * 16)
     with big.open("wb") as fp:
         fp.truncate(101 * 1024 * 1024)  # 101 MiB
+    respx.post(f"{SERVER}/api/repos/alice/bert/upload").respond(
+        200,
+        json={"commit_sha": "deadbeef", "files": ["huge.bin"], "message": None},
+    )
     result = runner.invoke(app, ["upload", "alice/bert", str(big)])
-    assert result.exit_code != 0
-    assert "100 MiB" in result.stderr or "LFS" in result.stderr
+    assert result.exit_code == 0, result.stderr
+    assert "deadbeef" in result.stdout
 
 
 def test_upload_missing_file_aborts(runner: CliRunner) -> None:

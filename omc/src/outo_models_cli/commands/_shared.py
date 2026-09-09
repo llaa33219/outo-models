@@ -9,8 +9,8 @@ This module owns:
     * the local-path collector used by `upload`.
 
 The Typer `app` and command registration live in `main.py`. Concentrating
-    the shared infrastructure here keeps each command module under the
-    250-LOC ceiling without scattering the error contract across files.
+the shared infrastructure here keeps each command module under the
+250-LOC ceiling without scattering the error contract across files.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import httpx
 from rich.console import Console
 
-from outo_models_cli import api
+from outo_models_cli import api, config
 from outo_models_cli.errors import (
     FileMissingError,
     FileTooLargeError,
@@ -33,8 +33,9 @@ from outo_models_cli.errors import (
 if TYPE_CHECKING:
     from outo_models_cli.config import Store
 
-# 100 MiB per-file cap mirrors the server's multipart boundary. Anything
-# larger must be uploaded via git + LFS.
+# 100 MiB per-file cap mirrors the server's multipart boundary. Larger
+# files go through Git LFS rather than the multipart endpoint; the
+# partitioner in `outo_models_cli.api.lfs` uses this value.
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 
 # 50 MiB total upload cap before the CLI auto-batches per-file. Anything
@@ -109,6 +110,33 @@ def _resolve_target(store: Store, *, server: str | None) -> tuple[str, httpx.Cli
     return base_url, api.with_client(base_url, token)
 
 
+def resolve_username(
+    store: Store,
+    *,
+    base_url: str,
+    token: str,
+    config_path: Path | None,
+) -> tuple[str, Store]:
+    """Return the username for `base_url`, fetching via `/api/auth/me` if missing.
+
+    LFS endpoints and the `/resolve/...` raw-file endpoint both require
+    HTTP Basic auth (`username:token`), so the CLI needs the username in
+    addition to the PAT. Login stores it (`ServerEntry.username`), but
+    older config files and the `OMC_TOKEN` env-var path do not carry one
+    — those flows call `me()` to learn the username and the helper
+    persists the result when there is a backing config file.
+    """
+    entry = store.get(base_url)
+    if entry is not None and entry.username:
+        return entry.username, store
+    with api.with_client(base_url, token) as client:
+        identity = api.me(client)
+    new_store = store.with_username(base_url, identity.username)
+    if entry is not None and config_path is not None:
+        config.save_store(new_store, config_path)
+    return identity.username, new_store
+
+
 # ---------------------------------------------------------------------------
 # Upload helpers
 # ---------------------------------------------------------------------------
@@ -166,6 +194,7 @@ __all__ = [
     "_visibility",
     "console",
     "err_console",
+    "resolve_username",
 ]
 
 # `os` is used implicitly through `os.environ` callers in `commands.auth`,

@@ -34,6 +34,12 @@ omc download alice/my-model --local-dir ./my-model
 omc upload alice/my-model ./checkpoints --path-in-repo weights --message "v1"
 ```
 
+Files larger than 100 MiB are uploaded through Git LFS automatically;
+the CLI partitions the input set, runs the LFS batch + PUT dance for
+each large file, and commits the resulting pointer text alongside any
+small files in a single commit. No `git lfs track` setup is required
+on the user side.
+
 ## Commands
 
 ```

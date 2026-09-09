@@ -95,10 +95,18 @@ def config_path(home_dir: str | os.PathLike[str] | None = None) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class ServerEntry:
-    """One server's stored credential."""
+    """One server's stored credential.
+
+    `username` is captured at login time (the same `me()` round-trip
+    verifies the token and learns the username) so the CLI can build
+    `Authorization: Basic <b64(user:token)>` headers the LFS endpoints
+    require. Older config files may have `None` here — `Store.with_username`
+    fills it on demand.
+    """
 
     url: str
     token: str
+    username: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,12 +114,8 @@ class Store:
     """In-memory snapshot of the credential store.
 
     `default_server` is the URL the CLI uses when no `--server` flag is
-    passed. It must be a member of `servers`; the constructor enforces
-    this so a stale `default_server` cannot outlive its entry.
-
-    `servers` is keyed by the normalized server URL. Order is preserved
-    by the underlying JSON object; ``display_name`` is derived from the URL
-    at render time so the on-disk format stays small.
+    passed; the constructor enforces that it is a member of `servers`
+    so a stale default cannot outlive its entry.
     """
 
     default_server: str | None
@@ -122,9 +126,6 @@ class Store:
             raise ConfigError(
                 f"Default server {self.default_server!r} is not in the credential store.",
             )
-        # Reject duplicate empty keys (defensive — the constructor is the
-        # only path that builds the dict, but a malformed on-disk file
-        # could in principle contain one).
         for url in self.servers:
             if not url:
                 raise ConfigError("Server URL must not be empty.")
@@ -140,12 +141,7 @@ class Store:
 
     @classmethod
     def load(cls, path: Path) -> Self:
-        """Load the store from `path`.
-
-        Missing file → `empty()`. Malformed JSON or missing required
-        fields raise `ConfigError` with a message that points at the
-        offending location so the user knows to delete the file.
-        """
+        """Load the store from `path`; missing file → `empty()`."""
         if not path.exists():
             return cls.empty()
         try:
@@ -171,21 +167,23 @@ class Store:
             token = entry.get("token")
             if not isinstance(token, str) or not token:
                 raise ConfigError(f"Server entry for {url!r} is missing a token.")
-            servers[url] = ServerEntry(url=url, token=token)
+            raw_username = entry.get("username")
+            username = raw_username if isinstance(raw_username, str) and raw_username else None
+            servers[url] = ServerEntry(url=url, token=token, username=username)
         return cls(default_server=default_server, servers=servers)
 
     def save(self, path: Path) -> None:
-        """Persist the store to `path`, creating parents with 0700 and file 0600.
-
-        If the file already exists with looser permissions, the mode is
-        tightened as part of the same atomic write. The write itself uses
-        `os.replace` against a sibling temp file so a Ctrl-C mid-write
-        cannot leave the user with a half-written config.
-        """
+        """Persist the store to `path` (atomic via sibling tmp; mode 0600)."""
         path.parent.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
+        servers_payload: dict[str, dict[str, str]] = {}
+        for url, entry in self.servers.items():
+            row: dict[str, str] = {"token": entry.token}
+            if entry.username:
+                row["username"] = entry.username
+            servers_payload[url] = row
         payload: dict[str, Any] = {
             "default_server": self.default_server,
-            "servers": {url: {"token": entry.token} for url, entry in self.servers.items()},
+            "servers": servers_payload,
         }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -197,17 +195,22 @@ class Store:
     # Mutations (return new `Store` so the dataclass stays frozen)
     # ------------------------------------------------------------------
 
-    def with_login(self, url: str, token: str) -> Self:
-        """Add or replace `url → token`, leaving the default server alone."""
+    def with_login(self, url: str, token: str, *, username: str | None = None) -> Self:
+        """Add or replace `url → token`, leaving the default server alone.
+
+        `username` is captured by `auth login` (same `me()` round-trip
+        that verifies the token). When omitted, any existing username
+        for the server is preserved so a bare re-login does not blank
+        the Basic-auth identity the LFS path needs.
+        """
         new_servers = dict(self.servers)
-        new_servers[url] = ServerEntry(url=url, token=token)
+        prior = new_servers.get(url)
+        effective_username = username if username else (prior.username if prior else None)
+        new_servers[url] = ServerEntry(url=url, token=token, username=effective_username)
         default = self.default_server if self.default_server in new_servers else None
         if default is None and new_servers:
             # First-ever login: pin the default to the new server so a
-            # `omc auth whoami` immediately afterwards works without
-            # `--server`. Re-login on an existing server keeps the prior
-            # default so `auth login --set-default` is still the only way
-            # to switch targets.
+            # subsequent `omc auth whoami` works without `--server`.
             default = url
         return replace(self, default_server=default, servers=new_servers)
 
@@ -242,15 +245,12 @@ class Store:
     ) -> tuple[str, str]:
         """Pick `(server_url, token)` honoring env overrides.
 
-        Resolution order:
-            1. `requested` argument (from `--server`).
-            2. `OMC_SERVER` env var.
-            3. `default_server` in the config file.
-
+        Resolution order: `requested` argument (from `--server`), then
+        `OMC_SERVER` env var, then `default_server` in the config file.
         The token is sourced from `OMC_TOKEN` first, then from the
-        resolved server's stored entry. Splitting URL and token sources
-        lets a CI job run `OMC_SERVER=… OMC_TOKEN=… omc ...` without ever
-        touching the on-disk store, and lets `--server` carry just the URL.
+        resolved server's stored entry, so a CI job can run
+        `OMC_SERVER=… OMC_TOKEN=… omc …` without ever touching the on-disk
+        store.
         """
         env_map = env if env is not None else os.environ
         url = requested or env_map.get(_ENV_SERVER) or self.default_server
@@ -280,6 +280,18 @@ class Store:
     def get(self, url: str) -> ServerEntry | None:
         """Return the stored entry for `url` (already-normalized) or `None`."""
         return self.servers.get(url)
+
+    def with_username(self, url: str, username: str) -> Self:
+        """Return a new store with `username` set on the entry for `url`."""
+        if not username:
+            raise ConfigError("Username must not be empty.")
+        entry = self.servers.get(url)
+        if entry is None:
+            msg = f"Unknown server: {url!r}. Run `omc auth login --server <url>` first."
+            raise ConfigError(msg)
+        new_servers = dict(self.servers)
+        new_servers[url] = ServerEntry(url=entry.url, token=entry.token, username=username)
+        return replace(self, servers=new_servers)
 
 
 # ---------------------------------------------------------------------------

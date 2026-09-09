@@ -14,12 +14,13 @@ from outo_models_cli.commands._shared import (
     _human_bytes,
     _parse_owner_repo,
     console,
+    resolve_username,
 )
 from outo_models_cli.errors import (
     AuthRequiredError,
     OmcError,
 )
-from outo_models_cli.http import build_async_client
+from outo_models_cli.http import build_basic_async_client
 
 if TYPE_CHECKING:
     from outo_models_cli.config import Store
@@ -58,9 +59,16 @@ def download_command(
 ) -> None:
     """Recursively download a repository to `--local-dir`."""
     store: Store = ctx.obj["store"]
+    config_path: Path | None = ctx.obj.get("config_path")
     try:
         owner, name = _parse_owner_repo(repo)
         base_url, token = store.resolve(server)
+        username, store = resolve_username(
+            store,
+            base_url=base_url,
+            token=token,
+            config_path=config_path,
+        )
     except (OmcError, AuthRequiredError) as exc:
         _errprint(str(exc))
         raise typer.Exit(code=1) from exc
@@ -74,7 +82,10 @@ def download_command(
         max_workers=max_workers,
     )
 
-    client = build_async_client(base_url, token)
+    # Basic auth + follow_redirects: LFS blobs redirect to
+    # `/info/lfs/objects/{oid}` and the redirect target must receive
+    # the same credential the resolve request used.
+    client = build_basic_async_client(base_url, username, token)
     try:
         outcomes = asyncio.run(
             downloader.download_repo(

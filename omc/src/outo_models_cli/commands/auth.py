@@ -108,7 +108,7 @@ def auth_login(
         _errprint(str(exc))
         raise typer.Exit(code=1) from exc
 
-    new_store = store.with_login(url, pat)
+    new_store = store.with_login(url, pat, username=identity.username)
     if set_default:
         new_store = new_store.with_default(url)
     config.save_store(new_store, ctx.obj["config_path"])

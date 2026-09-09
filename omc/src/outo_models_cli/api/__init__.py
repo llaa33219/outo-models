@@ -189,6 +189,22 @@ def display_filename(path_str: str, *, file_root: Path | None, idx: int) -> str:
 # sites can write `api.me(...)` instead of `api.auth.me(...)`.
 
 from outo_models_cli.api.auth import me  # noqa: E402
+from outo_models_cli.api.lfs import (  # noqa: E402
+    LFS_CONTENT_TYPE,
+    DedupMap,
+    LargeFile,
+    Partition,
+    dedupe_objects,
+    partition_files,
+    pointer_text,
+    pointers_for,
+)
+from outo_models_cli.api.lfs_batch import (  # noqa: E402
+    BatchAction,
+    BatchObjectError,
+    batch_upload,
+)
+from outo_models_cli.api.lfs_upload import upload_objects  # noqa: E402
 from outo_models_cli.api.repos import (  # noqa: E402
     create_repo,
     delete_repo,
@@ -201,23 +217,35 @@ from outo_models_cli.api.repos import (  # noqa: E402
 from outo_models_cli.api.upload import upload  # noqa: E402
 
 __all__ = [
+    "LFS_CONTENT_TYPE",
+    "BatchAction",
+    "BatchObjectError",
+    "DedupMap",
     "FileEntry",
+    "LargeFile",
+    "Partition",
     "RepoDetail",
     "RepoSummary",
     "UploadResult",
     "WhoAmI",
+    "batch_upload",
     "create_repo",
+    "dedupe_objects",
     "delete_repo",
     "display_filename",
     "get_repo",
     "list_files",
     "list_repos",
     "me",
+    "partition_files",
+    "pointer_text",
+    "pointers_for",
     "resolve_url",
     "send",
     "summary_from",
     "unwrap",
     "upload",
+    "upload_objects",
     "walk_repo",
     "with_client",
 ]
