@@ -26,6 +26,7 @@ from rich.progress import (
     Progress,
     TaskID,
     TextColumn,
+    TimeRemainingColumn,
     TransferSpeedColumn,
 )
 
@@ -108,56 +109,69 @@ def upload_objects(
     actions: list[BatchAction],
     paths_by_oid: dict[str, list[Path]],
     show_progress: bool = True,
+    progress: _ProgressLike | None = None,
 ) -> None:
     """Stream-PUT every `BatchAction` from disk with a Rich progress bar.
 
     `paths_by_oid` maps an oid to its one-or-more source paths; the
     first one is used as the byte source (dedup is exact — same sha256
-    means same bytes). The caller MUST ensure `actions` and
-    `paths_by_oid` agree on the oid set.
+    means same bytes) AND as the human-facing task label — users track
+    "weights-00002-of-00004.safetensors", never a sha prefix. The caller
+    MUST ensure `actions` and `paths_by_oid` agree on the oid set.
+    `progress` lets tests inject a recorder instead of Rich.
     """
     if not actions:
         return
+    # ONE column set for every task row. (The previous layout concatenated
+    # a per-object group and a "total" group, so every row rendered both
+    # groups and the output read as doubled, unlabeled bars.)
     columns: tuple[Any, ...] = (
         TextColumn("[bold blue]{task.description}[/bold blue]", justify="left"),
-        BarColumn(bar_width=40),
+        BarColumn(bar_width=32),
         DownloadColumn(),
         TransferSpeedColumn(),
-    )
-    overall_columns: tuple[Any, ...] = (
-        TextColumn("[bold green]total[/bold green]"),
-        BarColumn(bar_width=40),
-        DownloadColumn(),
-        TransferSpeedColumn(),
+        TimeRemainingColumn(),
     )
     total_bytes = sum(a.size for a in actions)
-    if show_progress:
-        progress_cm: Any = Progress(*columns, *overall_columns, expand=True)
-    else:
-        progress_cm = _NullProgress()
-    with progress_cm as progress:
-        overall = progress.add_task("total", total=total_bytes)
-        for action in actions:
-            sources = paths_by_oid.get(action.oid) or []
-            if not sources:
-                raise BadResponseError(
-                    f"LFS action for oid {action.oid} has no source file on disk.",
-                )
-            task_id = progress.add_task(
-                action.oid[:12],
-                total=action.size,
+    if progress is not None:
+        _upload_all(
+            progress, client, actions=actions, paths_by_oid=paths_by_oid, total_bytes=total_bytes
+        )
+        return
+    progress_cm: Any = Progress(*columns, expand=True) if show_progress else _NullProgress()
+    with progress_cm as active:
+        _upload_all(
+            active, client, actions=actions, paths_by_oid=paths_by_oid, total_bytes=total_bytes
+        )
+
+
+def _upload_all(
+    progress: Any,
+    client: httpx.Client,
+    *,
+    actions: list[BatchAction],
+    paths_by_oid: dict[str, list[Path]],
+    total_bytes: int,
+) -> None:
+    overall = progress.add_task(f"Total ({len(actions)} object(s))", total=total_bytes)
+    for action in actions:
+        sources = paths_by_oid.get(action.oid) or []
+        if not sources:
+            raise BadResponseError(
+                f"LFS action for oid {action.oid} has no source file on disk.",
             )
-            _put_stream(
-                client,
-                url=action.href,
-                path=sources[0],
-                extra_headers=action.header,
-                progress=progress,
-                task_id=task_id,
-            )
-            progress.update(task_id, completed=action.size)
-            progress.update(overall, advance=action.size)
-            progress.remove_task(task_id)
+        task_id = progress.add_task(sources[0].name, total=action.size)
+        _put_stream(
+            client,
+            url=action.href,
+            path=sources[0],
+            extra_headers=action.header,
+            progress=progress,
+            task_id=task_id,
+        )
+        progress.update(task_id, completed=action.size)
+        progress.update(overall, advance=action.size)
+        progress.remove_task(task_id)
 
 
 class _NullProgress:

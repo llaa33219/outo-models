@@ -40,7 +40,7 @@ import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 LFS_CONTENT_TYPE = "application/vnd.git-lfs+json"
 
@@ -104,10 +104,17 @@ class Partition:
     large: list[LargeFile] = field(default_factory=list)
 
 
-def _sha256_of(path: Path) -> tuple[str, int]:
+def _sha256_of(
+    path: Path,
+    *,
+    progress: _ProgressSink | None = None,
+    task_id: Any = None,
+) -> tuple[str, int]:
     """Stream `path` through sha256; return `(hex_digest, size)`.
 
     A 1 MiB read buffer keeps memory bounded regardless of file size.
+    When `progress`/`task_id` are given, hashing advances the task so a
+    multi-GiB file does not sit in silent disk reads for minutes.
     Errors from the underlying `open()` (file removed between the
     partition step and the PUT) surface unchanged so the caller's
     `OmcError` mapping sees the real cause.
@@ -121,10 +128,17 @@ def _sha256_of(path: Path) -> tuple[str, int]:
                 break
             hasher.update(chunk)
             total += len(chunk)
+            if progress is not None and task_id is not None:
+                progress.update(task_id, advance=len(chunk))
     return hasher.hexdigest(), total
 
 
-def partition_files(files: Iterable[Path], *, cap_bytes: int) -> Partition:
+def partition_files(
+    files: Iterable[Path],
+    *,
+    cap_bytes: int,
+    show_progress: bool = True,
+) -> Partition:
     """Split `files` into small (multipart) and large (LFS) buckets.
 
     The function streams each large file exactly once to compute its
@@ -137,22 +151,65 @@ def partition_files(files: Iterable[Path], *, cap_bytes: int) -> Partition:
 
     small: list[Path] = []
     large: list[LargeFile] = []
-    for f in files:
-        size = f.stat().st_size
-        if size <= cap_bytes:
-            small.append(f)
-            continue
-        oid, observed = _sha256_of(f)
-        if observed != size:
-            # Defensive: `stat().st_size` could race with concurrent
-            # writers. Surface as `BadResponseError`-shaped failure so
-            # the user sees a clean English line, not a Python traceback.
-            raise BadResponseError(
-                f"Size of {f} changed during hashing ({observed} != {size}); retry.",
+    hashing: _ProgressSink | None = None
+    try:
+        for f in files:
+            size = f.stat().st_size
+            if size <= cap_bytes:
+                small.append(f)
+                continue
+            if hashing is None and show_progress:
+                hashing = _make_hash_progress()
+            task_id = (
+                hashing.add_task(f"hash {f.name}", total=size) if hashing is not None else None
             )
-        large.append(LargeFile(path=f, oid=oid, size=size))
+            oid, observed = _sha256_of(f, progress=hashing, task_id=task_id)
+            if hashing is not None and task_id is not None:
+                hashing.remove_task(task_id)
+            if observed != size:
+                # Defensive: `stat().st_size` could race with concurrent
+                # writers. Surface as `BadResponseError`-shaped failure so
+                # the user sees a clean English line, not a Python traceback.
+                raise BadResponseError(
+                    f"Size of {f} changed during hashing ({observed} != {size}); retry.",
+                )
+            large.append(LargeFile(path=f, oid=oid, size=size))
+    finally:
+        if hashing is not None:
+            hashing.stop()
     large.sort(key=lambda lf: lf.size, reverse=True)
     return Partition(small=small, large=large)
+
+
+class _ProgressSink(Protocol):
+    """The add/update/remove/stop surface partition_files needs."""
+
+    def add_task(self, description: str, *, total: float | None = None) -> Any: ...
+    def update(self, task_id: Any, **kwargs: Any) -> None: ...
+    def remove_task(self, task_id: Any) -> None: ...
+    def stop(self) -> None: ...
+
+
+def _make_hash_progress() -> _ProgressSink:
+    """A Rich progress dedicated to the hashing phase (file-named tasks)."""
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        TextColumn,
+        TimeRemainingColumn,
+        TransferSpeedColumn,
+    )
+
+    progress = Progress(
+        TextColumn("[bold cyan]{task.description}[/bold cyan]", justify="left"),
+        BarColumn(bar_width=40),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+    )
+    progress.start()
+    return progress
 
 
 # ---------------------------------------------------------------------------
