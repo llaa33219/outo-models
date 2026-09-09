@@ -62,7 +62,7 @@ the password is lost, SSH into the server and run this command locally.
 
 ## 4. Storage quotas
 
-The default quota is `OUTO_DEFAULT_QUOTA_BYTES` (10 GiB by default). It is
+The default quota is `OUTO_DEFAULT_QUOTA_BYTES` (500 GiB by default). It is
 auto-assigned to each new user and can be changed at any time.
 
 ```bash

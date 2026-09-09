@@ -80,9 +80,9 @@ definition of every `OUTO_*` variable, see the [CLI reference](cli.md#environmen
 | `OUTO_SECRET_KEY` | Session / token signing key (32+ chars in production) | (none) |
 | `OUTO_ENV` | Runtime environment (`development` / `production`) | `development` |
 | `OUTO_REQUIRE_APPROVAL` | Require admin approval on new signups | `true` |
-| `OUTO_DEFAULT_QUOTA_BYTES` | Default storage quota for new users | `10737418240` (10 GiB) |
+| `OUTO_DEFAULT_QUOTA_BYTES` | Default storage quota for new users | `536870912000` (500 GiB) |
 | `OUTO_LFS_BACKEND` | LFS backend (`local` / `s3`) | `local` |
-| `OUTO_LFS_MAX_OBJECT_BYTES` | Max size of a single LFS object | `5368709120` (5 GiB) |
+| `OUTO_LFS_MAX_OBJECT_BYTES` | Max size of a single LFS object | `107374182400` (100 GiB) |
 | `OUTO_S3_ENDPOINT` / `OUTO_S3_BUCKET` / `OUTO_S3_REGION` | S3 backend endpoint, bucket, region | (none / none / `us-east-1`) |
 | `OUTO_S3_ACCESS_KEY` / `OUTO_S3_SECRET_KEY` | S3 credentials — inject via env vars only | (none) |
 | `OUTO_S3_PREFIX` / `OUTO_S3_PRESIGN_TTL_SECONDS` | S3 object-key prefix, presign TTL | `lfs` / `3600` |

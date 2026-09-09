@@ -44,10 +44,10 @@ class TestSettingsDefaults:
         s = Settings(_env_file=None)  # type: ignore[call-arg]
         assert s.require_approval is True
 
-    def test_default_quota_bytes_is_10_gib(self) -> None:
+    def test_default_quota_bytes_is_500_gib(self) -> None:
         get_settings.cache_clear()
         s = Settings(_env_file=None)  # type: ignore[call-arg]
-        assert s.default_quota_bytes == 10 * 1024**3
+        assert s.default_quota_bytes == 500 * 1024**3
 
 
 class TestResolvedDbUrl:

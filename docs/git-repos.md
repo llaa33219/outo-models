@@ -368,7 +368,7 @@ one object's failure does not fail the whole batch. Example response:
     { "oid": "aaaa…", "size": 1048576,
       "actions": { "upload": { "href": "…", "expires_in": 3600 } } },
     { "oid": "bbbb…", "size": 2147483648,
-      "error": { "code": 413, "message": "object size 2147483648 exceeds per-object limit 5368709120" } },
+      "error": { "code": 413, "message": "object exceeds per-object limit 107374182400 bytes (raise OUTO_LFS_MAX_OBJECT_BYTES ...)" } },
     { "oid": "cccc…", "size": 5242880,
       "error": { "code": 413, "message": "quota exceeded: used=… + incoming=… > max=…" } }
   ]

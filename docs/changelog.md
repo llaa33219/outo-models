@@ -4,6 +4,13 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.6 — Default user quota 500 GiB
+
+### Changed
+
+- `default_quota_bytes` 10 GiB → 500 GiB: modern model artifacts are
+  hundreds of GiB; the old default rejected real uploads on day one.
+
 ## v0.4.5 — LFS per-object cap raised to 100 GiB
 
 ### Fixed

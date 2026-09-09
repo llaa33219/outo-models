@@ -494,9 +494,9 @@ Pydantic Settings maps every `OUTO_*` environment variable by stripping the
 | `OUTO_SECRET_KEY` | `secret_key` | `""` | Session / token signing key (32+ chars in production) |
 | `OUTO_ENV` | `env` | `development` | `development` or `production` |
 | `OUTO_REQUIRE_APPROVAL` | `require_approval` | `true` | Require admin approval on signup |
-| `OUTO_DEFAULT_QUOTA_BYTES` | `default_quota_bytes` | `10737418240` (10 GiB) | Default quota for new users |
+| `OUTO_DEFAULT_QUOTA_BYTES` | `default_quota_bytes` | `536870912000` (500 GiB) | Default quota for new users |
 | `OUTO_LFS_BACKEND` | `lfs_backend` | `local` | LFS backend (`local` / `s3`) |
-| `OUTO_LFS_MAX_OBJECT_BYTES` | `lfs_max_object_bytes` | `5368709120` (5 GiB) | Max size of a single LFS object |
+| `OUTO_LFS_MAX_OBJECT_BYTES` | `lfs_max_object_bytes` | `107374182400` (100 GiB) | Max size of a single LFS object |
 | `OUTO_S3_ENDPOINT` | `s3_endpoint` | `""` | S3-compatible endpoint URL |
 | `OUTO_S3_BUCKET` | `s3_bucket` | `""` | S3 bucket name |
 | `OUTO_S3_REGION` | `s3_region` | `us-east-1` | S3 region |

@@ -46,9 +46,9 @@ env: production
 # self-service.
 require_approval: true
 
-# Default storage quota granted to new users (bytes). 10 GiB =
-# 10737418240.
-default_quota_bytes: 10737418240
+# Default storage quota granted to new users (bytes). 500 GiB =
+# 536870912000. Modern model artifacts are large — keep it generous.
+default_quota_bytes: 536870912000
 
 # -----------------------------------------------------------------------------
 # Git LFS object storage

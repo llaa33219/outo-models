@@ -151,6 +151,17 @@ uvicorn (127.0.0.1:8000) ← outo-models server serve
         │       └── SlowAPIMiddleware (rate limit)
         │       └── get_current_user / require_admin deps
         │
+        ├── /{owner}/{name}/resolve/{revision}/{path}
+        │       raw file download for `omc` (Range resume + ETag; LFS
+        │       pointers 302-redirect to the LFS object endpoint)
+        │
+        ├── POST /api/repos/{owner}/{name}/upload
+        │       server-side commit (multipart; 100 MiB/file — larger files
+        │       ride LFS, which is what `omc upload` does transparently)
+        │
+        │   omc (PyPI: outo-models-cli) is the user-facing client over
+        │   these endpoints + the JSON API — see docs/omc.md.
+        │
         ├── /, /models, /datasets, /spaces, /new, /login, /signup, /admin  UI routers (Jinja2 + CSRF double-submit)
         │
         └── /{owner}/{name}.git/...      GitSmartService (root mount)

@@ -327,10 +327,10 @@ verify `filter.lfs.*` is set with `git config --list | grep lfs`.
 The batch response body or the PUT response body is one of:
 
 ```json
-{ "error": "object size 2147483648 exceeds per-object limit 5368709120" }
+{ "error": "object exceeds per-object limit 107374182400 bytes (raise OUTO_LFS_MAX_OBJECT_BYTES ...)" }
 ```
 
-→ Exceeded `OUTO_LFS_MAX_OBJECT_BYTES` (default 5 GiB). Raise
+→ Exceeded `OUTO_LFS_MAX_OBJECT_BYTES` (default 100 GiB). Raise
 `lfs_max_object_bytes` in `/etc/outo-models/config.yaml` or split the
 object.
 

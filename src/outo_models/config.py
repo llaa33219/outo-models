@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     secret_key: str = ""
     env: Literal["development", "production"] = "development"
     require_approval: bool = True
-    default_quota_bytes: int = 10 * 1024**3
+    default_quota_bytes: int = 500 * 1024**3
 
     # Git LFS object storage. "local" stores objects under
     # `data_dir/lfs/`; "s3" presigns uploads/downloads against an
