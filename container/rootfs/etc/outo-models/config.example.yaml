@@ -59,8 +59,10 @@ default_quota_bytes: 10737418240
 # AWS S3, etc.) with presigned URL upload / download.
 lfs_backend: local
 
-# Maximum size of a single LFS object (bytes). 5 GiB = 5368709120.
-lfs_max_object_bytes: 5368709120
+# Maximum size of a single LFS object (bytes). 100 GiB = 107374182400.
+# LFS is the path for large files — keep this generous; tighten only on
+# constrained hosts.
+lfs_max_object_bytes: 107374182400
 
 # S3 backend settings (only used when lfs_backend: s3).
 # Endpoint example: https://s3.ap-northeast-2.amazonaws.com or a MinIO URL.

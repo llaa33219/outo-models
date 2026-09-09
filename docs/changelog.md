@@ -4,6 +4,17 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.5 — LFS per-object cap raised to 100 GiB
+
+### Fixed
+
+- The default `lfs_max_object_bytes` was 5 GiB — small enough that real
+  model shards (5+ GiB safetensors) died mid-PUT with an opaque 413.
+  LFS exists exactly for those files: the default is now 100 GiB
+  (still configurable via `OUTO_LFS_MAX_OBJECT_BYTES`).
+- The 413 body now names the configured limit and the env var; `omc`
+  (0.2.2) surfaces that reason instead of a generic "too large" line.
+
 ## v0.4.4 — Footer seam is the spec'd 4px
 
 ### Fixed

@@ -64,3 +64,38 @@ class TestPartitionHashingProgress:
         partition = partition_files([big, small], cap_bytes=512, show_progress=True)
         assert [f.name for f in partition.small] == ["small.txt"]
         assert partition.large and partition.large[0].path.name == "big.bin"
+
+
+class Test413SurfacesServerReason:
+    def test_put_413_includes_server_detail(self, tmp_path):
+        import httpx
+        import pytest
+
+        from outo_models_cli.api.lfs_upload import _put_stream
+        from outo_models_cli.errors import FileTooLargeError
+
+        big = tmp_path / "shard-00001.safetensors"
+        big.write_bytes(b"z" * 32)
+        transport = httpx.MockTransport(
+            lambda req: httpx.Response(
+                413,
+                json={
+                    "error": (
+                        "object exceeds per-object limit 107374182400 bytes "
+                        "(raise OUTO_LFS_MAX_OBJECT_BYTES ...)"
+                    )
+                },
+            )
+        )
+        client = httpx.Client(transport=transport)
+        with pytest.raises(FileTooLargeError) as excinfo:
+            _put_stream(
+                client,
+                url="http://srv/put",
+                path=big,
+                extra_headers={},
+                progress=None,
+                task_id=None,
+            )
+        assert "shard-00001.safetensors" in str(excinfo.value)
+        assert "OUTO_LFS_MAX_OBJECT_BYTES" in str(excinfo.value)

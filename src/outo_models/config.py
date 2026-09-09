@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # `data_dir/lfs/`; "s3" presigns uploads/downloads against an
     # S3-compatible endpoint (MinIO, AWS S3, ...).
     lfs_backend: Literal["local", "s3"] = "local"
-    lfs_max_object_bytes: int = 5 * 1024**3
+    lfs_max_object_bytes: int = 100 * 1024**3
     s3_endpoint: str = ""  # e.g. "https://s3.ap-northeast-2.amazonaws.com" or MinIO URL
     s3_bucket: str = ""
     s3_region: str = "us-east-1"

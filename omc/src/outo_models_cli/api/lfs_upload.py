@@ -84,7 +84,8 @@ def _put_stream(
                 chunk = fp.read(PUT_CHUNK_BYTES)
                 if not chunk:
                     break
-                progress.update(task_id, advance=len(chunk))
+                if progress is not None and task_id is not None:
+                    progress.update(task_id, advance=len(chunk))
                 yield chunk
 
     response = client.put(url, content=_chunk_iter(), headers=headers)
@@ -96,8 +97,17 @@ def _put_stream(
             "Check that the configured PAT matches the account owner.",
         )
     if response.status_code == 413:
+        # Prefer the server's reason: it names the configured limit and the
+        # env var that raises it (field failure: the generic line gave the
+        # operator nothing actionable).
+        detail = ""
+        try:
+            detail = str(response.json().get("error", ""))
+        except ValueError:
+            detail = response.text[:200]
+        suffix = f" ({detail})" if detail else ""
         raise FileTooLargeError(
-            f"LFS object exceeds the server's per-object cap: {path.name}.",
+            f"{path.name} was rejected by the server as too large.{suffix}",
         )
     if response.status_code >= 400:
         raise map_response_error(response)

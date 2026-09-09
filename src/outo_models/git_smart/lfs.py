@@ -534,7 +534,10 @@ async def _handle_put(
                 send,
                 status=413,
                 payload={
-                    "error": (f"object exceeds per-object limit {settings.lfs_max_object_bytes}")
+                    "error": (
+                        f"object exceeds per-object limit {settings.lfs_max_object_bytes} bytes "
+                        f"(raise OUTO_LFS_MAX_OBJECT_BYTES on the server to allow bigger objects)"
+                    )
                 },
             )
             return
