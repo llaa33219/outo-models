@@ -112,6 +112,7 @@ class TestTimeoutMessageSplit:
 
     def test_timeout_gets_its_own_message(self):
         import httpx
+
         from outo_models_cli.errors import map_transport_error
 
         exc = httpx.ReadTimeout("took too long")
@@ -121,6 +122,7 @@ class TestTimeoutMessageSplit:
 
     def test_connect_error_keeps_unreachable_message(self):
         import httpx
+
         from outo_models_cli.errors import map_transport_error
 
         exc = httpx.ConnectError("refused")
