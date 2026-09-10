@@ -15,6 +15,7 @@ from outo_models_cli.api import (
     unwrap,
 )
 from outo_models_cli.errors import BadResponseError, map_response_error
+from outo_models_cli.http import TIMEOUT_COMMIT
 
 
 def upload(
@@ -84,6 +85,7 @@ def upload(
             f"/api/repos/{owner}/{name}/upload",
             files=multipart_files,
             data=fields,
+            timeout=TIMEOUT_COMMIT,
         )
         if response.status_code >= 400:
             raise map_response_error(response)

@@ -23,6 +23,7 @@ import httpx
 from outo_models_cli.api import send, unwrap
 from outo_models_cli.api.lfs import LFS_CONTENT_TYPE
 from outo_models_cli.errors import BadResponseError, map_response_error
+from outo_models_cli.http import TIMEOUT_BATCH
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,7 @@ def batch_upload(
         f"/{owner}/{name}.git/info/lfs/objects/batch",
         headers={"Accept": LFS_CONTENT_TYPE, "Content-Type": LFS_CONTENT_TYPE},
         json=body,
+        timeout=TIMEOUT_BATCH,
     )
     if response.status_code == 404:
         raise BadResponseError(

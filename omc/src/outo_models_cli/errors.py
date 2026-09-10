@@ -130,12 +130,20 @@ def map_response_error(response: httpx.Response, *, fallback: str | None = None)
 
 
 def map_transport_error(exc: httpx.HTTPError) -> OmcError:
-    """Wrap an `httpx.HTTPError` as `ServerUnreachableError`.
+    """Wrap an `httpx.HTTPError` as a stable, actionable CLI error.
 
-    Used by the API client so transport-layer failures (DNS, refusal,
-    timeouts, TLS) surface with a single stable message instead of leaking
-    the underlying class name into the operator's terminal.
+    Timeouts get their own message (field failure: a slow-but-working
+    server was reported as "cannot reach", sending the operator hunting
+    for outages). A timeout often means the server is STILL processing —
+    retrying a commit can duplicate work, so tell the user to check
+    first.
     """
+    if isinstance(exc, httpx.TimeoutException):
+        return ServerUnreachableError(
+            "The server did not respond in time. It may still be processing — "
+            "verify with `omc ls` before retrying, then use a longer timeout "
+            "if it keeps happening.",
+        )
     return ServerUnreachableError(
         "Cannot reach the server. Check the URL, network, and that the server is running.",
     )

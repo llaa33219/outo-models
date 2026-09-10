@@ -19,6 +19,16 @@ import httpx
 # the connection for a few seconds. Anything longer is genuinely hung.
 _TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
+# Long operations need long read timeouts. A multipart commit after a
+# multi-hundred-GiB LFS session does real server-side work (worktree
+# clone, fetch, quota, audit) that can exceed 30 s — the field failure
+# surfaced as "Cannot reach the server" while the server was alive and
+# working. Writes stay unlimited: the transport buffers, so a slow disk
+# on either side must not abort a 3 GiB PUT mid-stream.
+TIMEOUT_BATCH = httpx.Timeout(120.0, connect=5.0)
+TIMEOUT_COMMIT = httpx.Timeout(600.0, connect=5.0)
+TIMEOUT_PUT = httpx.Timeout(None, connect=10.0, read=900.0)
+
 
 def build_client(
     base_url: str,
@@ -138,6 +148,9 @@ def build_basic_async_client(
 
 
 __all__ = [
+    "TIMEOUT_BATCH",
+    "TIMEOUT_COMMIT",
+    "TIMEOUT_PUT",
     "basic_auth_header",
     "build_async_client",
     "build_basic_async_client",

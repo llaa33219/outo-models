@@ -1,6 +1,6 @@
 [project]
 name = "outo-models-cli"
-version = "0.2.2"
+version = "0.2.3"
 description = "Command-line client for self-hosted outo-models servers — auth, repo, download, and upload."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

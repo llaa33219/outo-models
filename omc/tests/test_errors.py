@@ -105,3 +105,24 @@ def test_every_omc_error_has_stable_code() -> None:
     assert ValidationFailedError.code == "validation_failed"
     assert ServerUnreachableError.code == "server_unreachable"
     assert BadResponseError.code == "bad_response"
+
+
+class TestTimeoutMessageSplit:
+    """A working-but-slow server is NOT 'unreachable' (field failure)."""
+
+    def test_timeout_gets_its_own_message(self):
+        import httpx
+        from outo_models_cli.errors import map_transport_error
+
+        exc = httpx.ReadTimeout("took too long")
+        err = map_transport_error(exc)
+        assert "did not respond in time" in str(err)
+        assert "Cannot reach" not in str(err)
+
+    def test_connect_error_keeps_unreachable_message(self):
+        import httpx
+        from outo_models_cli.errors import map_transport_error
+
+        exc = httpx.ConnectError("refused")
+        err = map_transport_error(exc)
+        assert "Cannot reach the server" in str(err)

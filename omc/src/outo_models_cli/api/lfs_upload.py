@@ -37,6 +37,7 @@ from outo_models_cli.errors import (
     FileTooLargeError,
     map_response_error,
 )
+from outo_models_cli.http import TIMEOUT_PUT
 
 
 class _ProgressLike(Protocol):
@@ -88,7 +89,7 @@ def _put_stream(
                     progress.update(task_id, advance=len(chunk))
                 yield chunk
 
-    response = client.put(url, content=_chunk_iter(), headers=headers)
+    response = client.put(url, content=_chunk_iter(), headers=headers, timeout=TIMEOUT_PUT)
     if response.status_code == 404:
         raise BadResponseError("LFS object endpoint returned 404.")
     if response.status_code == 401:
