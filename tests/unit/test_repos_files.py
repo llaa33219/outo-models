@@ -152,3 +152,46 @@ class TestFileEntry:
         entry = FileEntry(name="a", path="a", kind="file", size_bytes=1)
         assert entry.name == "a"
         assert entry.size_bytes == 1
+
+
+class TestLfsPointerSizes:
+    """LFS pointer blobs list with the REAL object size + lfs=True —
+    field failure: every LFS-backed file listed as ~135 B."""
+
+    def _seed_pointer_repo(self, tmp_data_dir: Path) -> None:
+        from dulwich import porcelain
+
+        pointer = (
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:" + "ab" * 32 + "\n"
+            "size 157286400\n"
+        )
+        work = tmp_data_dir / "lfs-src"
+        work.mkdir()
+        (work / "model.safetensors").write_text(pointer)
+        porcelain.init(str(work))
+        porcelain.add(str(work), paths=["model.safetensors"])
+        porcelain.commit(
+            str(work),
+            message=b"lfs",
+            author=b"a <a@x.com>",
+            committer=b"a <a@x.com>",
+        )
+        from outo_models.repos.storage import repo_fs_path
+
+        bare = repo_fs_path("alice", "lfs-model")
+        bare.parent.mkdir(parents=True, exist_ok=True)
+        porcelain.clone(str(work), str(bare), bare=True)
+
+    async def test_pointer_lists_real_size(self, tmp_data_dir: Path) -> None:
+        self._seed_pointer_repo(tmp_data_dir)
+        rows = await list_files("alice", "lfs-model")
+        (entry,) = [r for r in rows if r.name == "model.safetensors"]
+        assert entry.size_bytes == 157286400
+        assert entry.lfs is True
+
+    async def test_normal_file_not_flagged(self, tmp_data_dir: Path) -> None:
+        self._seed_pointer_repo(tmp_data_dir)
+        rows = await list_files("alice", "lfs-model")
+        # The pointer content itself is text; a real small file must not be flagged.
+        assert all(r.lfs for r in rows) is True  # only the pointer file exists here

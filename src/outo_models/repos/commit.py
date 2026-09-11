@@ -46,6 +46,7 @@ from pathlib import Path
 
 from dulwich import porcelain
 from dulwich.errors import NotGitRepository
+from dulwich.objects import ObjectID
 from dulwich.refs import Ref
 from dulwich.repo import Repo as _DulwichRepo
 
@@ -154,15 +155,18 @@ def _commit_files_sync_inner(
                 # commit creates the branch on push.
                 porcelain.fetch(str(worktree), str(fs_path))
 
-            # Checkout the target branch only when the worktree actually
-            # has it (i.e. the repo already had commits). On an empty repo
-            # the local init branch may be `master` on platforms whose git
-            # config says so (field failure in CI) — the push below maps
-            # whatever the active branch is onto the target branch name.
+            # Second-and-later commits: fetch does NOT create a local branch
+            # in the worktree, so point it at the bare tip ourselves — the
+            # new commit then has the previous one as its PARENT and the
+            # push is a fast-forward instead of a DivergedBranches 500
+            # (field failure: every upload after the first one failed).
+            # On an empty repo the tip is None and the commit starts the
+            # branch from scratch.
+            bare_tip = bare.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
             wt = _DulwichRepo(str(worktree))
             try:
-                target_ref = Ref(f"refs/heads/{branch}".encode())
-                if target_ref in wt.refs:
+                if bare_tip is not None:
+                    wt.refs[Ref(f"refs/heads/{branch}".encode())] = ObjectID(bare_tip)
                     porcelain.checkout(str(worktree), target=branch, force=True)
             finally:
                 wt.close()

@@ -131,10 +131,11 @@
                     {% if entry.size_bytes is none %}-{% else %}
                       {% set size = entry.size_bytes %}
                       {% if size < 1024 %}{{ size }} B
-                      {% elif size < 1024 * 1024 %}{{ (size // 1024) }} KB
-                      {% elif size < 1024 * 1024 * 1024 %}{{ (size // (1024 * 1024)) }} MB
-                      {% else %}{{ (size // (1024 * 1024 * 1024)) }} GB
+                      {% elif size < 1024 * 1024 %}{{ (size / 1024) | round(1) }} KB
+                      {% elif size < 1024 * 1024 * 1024 %}{{ (size / (1024 * 1024)) | round(1) }} MB
+                      {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
                       {% endif %}
+                      {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
                     {% endif %}
                   </td>
                 </tr>

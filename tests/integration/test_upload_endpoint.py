@@ -604,3 +604,44 @@ class TestEmptyRepoUpload:
 
         bare = _DulwichRepo(str(repo_fs_path("alice", "upload-empty-repo")))
         assert bare.refs.read_ref(b"refs/heads/main") is not None
+
+
+class TestRepeatedUploadsSameRepo:
+    """Second-and-later uploads must fast-forward, not DivergedBranches-500
+    (field failure: every upload after the first one failed with HTTP 500)."""
+
+    async def test_two_uploads_both_succeed(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        owner, pat = await _seed_user_with_pat(
+            session_factory, username="repeat", pat="v4.local.repeat"
+        )
+        await _make_repo(session_factory, owner, name="twice")
+        headers = {"Authorization": f"Bearer {pat}"}
+        first = client.post(
+            "/api/repos/repeat/twice/upload",
+            files={"files": ("a.txt", b"first")},
+            data={"message": "one"},
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+        second = client.post(
+            "/api/repos/repeat/twice/upload",
+            files={"files": ("b.txt", b"second")},
+            data={"message": "two"},
+            headers=headers,
+        )
+        assert second.status_code == 200, second.text
+
+        from sqlalchemy import select
+
+        from outo_models.db.models import Revision
+
+        async with session_factory() as session:
+            revs = (await session.execute(select(Revision).order_by(Revision.id))).scalars().all()
+            assert len(revs) == 2
+            assert revs[1].commit_sha != revs[0].commit_sha

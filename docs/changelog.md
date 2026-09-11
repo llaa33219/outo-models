@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.4.7 — Fix repeated-upload DivergedBranches + real LFS sizes in listings
+
+### Fixed
+
+- **Uploads after the first commit failed with HTTP 500** (`DivergedBranches`):
+  the server-side commit worktree never pointed its local branch at the
+  previous tip, so every second upload was a non-fast-forward root commit.
+  The worktree now parents on the bare tip, so repeated uploads
+  fast-forward.
+- **LFS files listed at ~135 B** in the Files tab, the files API, and
+  `omc ls`: listings now sniff LFS pointer blobs and show the declared
+  real object size, with an `LFS` marker in the Files tab.
+- Fractional sizes render with one decimal (`2.8 GB`, `150.0 MiB`)
+  instead of integer division.
+
 ## v0.4.6 — Default user quota 500 GiB
 
 ### Changed

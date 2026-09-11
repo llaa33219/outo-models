@@ -38,6 +38,10 @@ class FileEntry:
     path: str
     kind: str  # "file" | "dir"
     size_bytes: int | None
+    # True when the blob is a Git LFS pointer — `size_bytes` then holds the
+    # POINTER'S declared size (the real object size), not the pointer text
+    # length. Field failure: every LFS-backed file listed as ~135 B.
+    lfs: bool = False
 
 
 def _validate_path(path: str) -> list[str]:
@@ -106,6 +110,31 @@ def _descend(tree: Tree, segments: list[str], repo: _DulwichRepo) -> Tree:
     return current
 
 
+_LFS_PREFIX = b"version https://git-lfs"
+
+
+def _lfs_pointer_size(data: bytes) -> int | None:
+    """Return the declared size of an LFS pointer blob, or `None`.
+
+    Pointer text is three lines (`version` / `oid sha256:…` / `size N`);
+    anything bigger than 4 KiB or not starting with the version line is
+    treated as a normal blob without a second read.
+    """
+    if len(data) > 4096 or not data.startswith(_LFS_PREFIX):
+        return None
+    has_oid = False
+    size: int | None = None
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("oid sha256:"):
+            has_oid = True
+        elif line.startswith("size "):
+            try:
+                size = int(line[len("size ") :].strip())
+            except ValueError:
+                return None
+    return size if has_oid and size is not None else None
+
+
 def _list_one_level(tree: Tree, lookup: Callable[[ObjectID], ShaFile]) -> list[FileEntry]:
     """Return direct children of `tree` sorted dirs-first then by name."""
     rows: list[FileEntry] = []
@@ -126,12 +155,20 @@ def _list_one_level(tree: Tree, lookup: Callable[[ObjectID], ShaFile]) -> list[F
         except (KeyError, NotGitRepository):
             continue
         if isinstance(obj, Blob):
+            size: int = len(obj.data)
+            is_lfs = False
+            if size < 4096:
+                pointer_size = _lfs_pointer_size(obj.data)
+                if pointer_size is not None:
+                    size = pointer_size
+                    is_lfs = True
             rows.append(
                 FileEntry(
                     name=name,
                     path=name,
                     kind="file",
-                    size_bytes=len(obj.data),
+                    size_bytes=size,
+                    lfs=is_lfs,
                 )
             )
     rows.sort(key=lambda r: (0 if r.kind == "dir" else 1, r.name))
@@ -162,6 +199,7 @@ def _list_files_sync(owner: str, name: str, *, default_branch: str, path: str) -
                     path=f"{'/'.join(segments)}/{row.name}",
                     kind=row.kind,
                     size_bytes=row.size_bytes,
+                    lfs=row.lfs,
                 )
                 for row in rows
             ]
