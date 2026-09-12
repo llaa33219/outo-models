@@ -982,10 +982,14 @@ class TestRepoSettingsTab:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 200
-        body = response.text
-        assert 'class="errors"' in body
-        assert "RRGGBB" in body or "color" in body.lower()
+        # POST now redirects back to the settings tab (the GET renders
+        # through the shared repo-page renderer and picks the error up
+        # from the query string).
+        assert response.status_code == 303
+        assert "settings_error=" in response.headers["location"]
+        followed = client.get(response.headers["location"])
+        assert followed.status_code == 200
+        assert 'class="errors"' in followed.text
 
     async def test_settings_post_stranger_returns_403(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user

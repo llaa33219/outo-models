@@ -760,6 +760,12 @@ async def _render_repo_page(
         # Spaces runtime tile (None for non-space repos; populated by
         # the dispatcher above for kind="space").
         "space_runtime": space_runtime,
+        # Settings tab (populated lazily so the other tabs stay lean).
+        "form_visibility": repo.visibility,
+        "form_description": repo.description or "",
+        "form_color": repo.color or "",
+        "settings_error": request.query_params.get("settings_error"),
+        "settings_saved": request.query_params.get("saved") == "1",
     }
 
     return _form_page(
@@ -1546,11 +1552,11 @@ async def repo_settings_page(
 ) -> Response:
     """Render the repo settings tab (owner/admin only).
 
-    The tab nav entry is hidden for non-owner / non-admin viewers, so
-    a hand-crafted GET must still fail cleanly with 403 / 404 instead
-    of leaking the form. The repo lookup reuses the same visibility
-    gate as the other repo GETs so a private repo a non-owner could
-    not see on the card tab stays invisible here too.
+    Uses the SAME `_render_repo_page` as the other tabs (card / files /
+    community) so the Settings page shares the identical header, tab
+    strip, panel, and sidebar chrome — not a detached form template.
+    The tab nav entry is hidden for non-owner / non-admin viewers; a
+    hand-crafted GET fails with 403 / 404 instead of leaking the form.
     """
     if viewer is None:
         return RedirectResponse(
@@ -1579,24 +1585,7 @@ async def repo_settings_page(
                 "message": "only the owner or an admin may edit settings",
             },
         )
-    return _form_page(
-        request,
-        "repos/settings.html",
-        user=viewer,
-        active_nav=_kind_to_nav(repo.kind),
-        context={
-            "repo": repo,
-            "owner": owner,
-            "name": name,
-            "form_visibility": repo.visibility,
-            "form_description": repo.description or "",
-            "form_color": repo.color or "",
-            "tab_card_label": _kind_tab_label(repo.kind),
-            "color_palette": REPO_COLOR_PALETTE,
-            "error": None,
-            "saved": request.query_params.get("saved") == "1",
-        },
-    )
+    return await _render_repo_page(request, db, viewer, owner=owner, name=name, tab="settings")
 
 
 @router.post("/{owner}/{name}/settings")
@@ -1659,42 +1648,16 @@ async def repo_settings_form(
     try:
         normalized_color = _validate_palette_color(color)
     except ValidationFailedError as exc:
-        return _form_page(
-            request,
-            "repos/settings.html",
-            user=viewer,
-            active_nav=_kind_to_nav(repo.kind),
-            context={
-                "repo": repo,
-                "owner": owner,
-                "name": name,
-                "form_visibility": repo.visibility,
-                "form_description": description,
-                "form_color": color,
-                "color_palette": REPO_COLOR_PALETTE,
-                "error": str(exc),
-                "saved": False,
-            },
+        return RedirectResponse(
+            url=f"/{owner}/{name}/settings?settings_error={str(exc)[:200]}",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     description_clean = description.strip() or None
     if normalized_visibility is None:
-        return _form_page(
-            request,
-            "repos/settings.html",
-            user=viewer,
-            active_nav=_kind_to_nav(repo.kind),
-            context={
-                "repo": repo,
-                "owner": owner,
-                "name": name,
-                "form_visibility": repo.visibility,
-                "form_description": description_clean or "",
-                "form_color": color,
-                "color_palette": REPO_COLOR_PALETTE,
-                "error": f"Unknown visibility: {visibility!r}.",
-                "saved": False,
-            },
+        return RedirectResponse(
+            url=f"/{owner}/{name}/settings?settings_error=Unknown+visibility",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     repo.visibility = normalized_visibility.value

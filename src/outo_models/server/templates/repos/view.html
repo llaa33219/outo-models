@@ -258,6 +258,62 @@
             </article>
           {% endif %}
         </section>
+
+      {# ============== SETTINGS TAB (owner/admin only) ============== #}
+      {% elif tab_settings_active %}
+        <article class="repo-card settings-form" aria-label="Repository settings">
+          <h2>Settings</h2>
+          <p class="muted">
+            Visibility, description, and accent color. Renames are not supported
+            because they would invalidate the clone URL and every downstream
+            consumer pointing at the old name.
+          </p>
+
+          {% if settings_error %}<div class="errors" role="alert">{{ settings_error }}</div>{% endif %}
+          {% if settings_saved %}
+            <div class="settings-form__success" role="status">Settings saved.</div>
+          {% endif %}
+
+          <form method="post" action="/{{ owner }}/{{ repo.name }}/settings">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+            <label for="settings-name">Name</label>
+            <div class="settings-form__read-only">
+              <span class="settings-form__read-only-code">{{ repo.name }}</span>
+              <span class="muted">Renames are not supported yet.</span>
+            </div>
+
+            <label for="settings-visibility">Visibility</label>
+            <select id="settings-visibility" name="visibility" required>
+              <option value="public" {% if form_visibility == 'public' %}selected{% endif %}>Public (everyone)</option>
+              <option value="private" {% if form_visibility == 'private' %}selected{% endif %}>Private (only you)</option>
+            </select>
+            <p class="help">Public repos appear in the catalog and can be cloned anonymously. Private repos require authentication and are invisible to non-owners.</p>
+
+            <label for="settings-description">Description</label>
+            <textarea id="settings-description" name="description" rows="4"
+                      maxlength="500"
+                      placeholder="A short summary of what this {{ repo.kind }} contains&hellip;">{{ form_description }}</textarea>
+            <p class="help">Up to 500 characters. Plain text; line breaks are preserved.</p>
+
+            <label for="settings-color">Accent color</label>
+            <select id="settings-color" name="color">
+              {% for entry in color_palette %}
+                <option value="{{ entry.value }}"
+                        {% if (form_color or '') == entry.value %}selected{% endif %}
+                        {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
+                  {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <p class="help">Soft tint shown on catalog cards and the repo header. Pick <em>None</em> to clear it.</p>
+
+            <p class="form-actions">
+              <button type="submit" class="primary">Save changes</button>
+              <a class="nav-link" href="/{{ owner }}/{{ repo.name }}">Cancel</a>
+            </p>
+          </form>
+        </article>
       {% endif %}
 
     </div>
@@ -626,6 +682,18 @@
       transition: border-color var(--t-tile);
     }
     .repo-card:hover { border-color: var(--color-main); }
+    .settings-form__success {
+      margin: 16px 0; padding: 12px 16px;
+      color: var(--blp-deep-green); background: var(--blp-paper-lime);
+      border: var(--border-el) solid var(--blp-paper-green); border-radius: 0; font-size: 13px;
+    }
+    .settings-form__read-only { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
+    .settings-form__read-only-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px;
+      background: var(--blp-paper-blue); border: var(--border-el) solid var(--blp-light-blue); padding: 4px 10px;
+    }
+    .settings-form label { display: block; font-weight: 600; margin-top: 16px; }
+    .settings-form .help { margin-top: 4px; }
     .repo-card h1, .repo-card h2, .repo-card h3 {
       letter-spacing: -0.01em;
       margin: 16px 0 8px;

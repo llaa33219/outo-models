@@ -4,6 +4,16 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.5 — Settings tab unified into the repo page renderer
+
+### Changed
+
+- The Settings tab now renders through the SAME `_render_repo_page`
+  path as Model card / Files / Community — identical header, tab
+  strip, panel, and sidebar chrome. The separate `settings.html`
+  template is deleted. Form errors surface as redirect query params
+  (`settings_error=…`) instead of a detached re-render.
+
 ## v0.5.4 — Settings fixes, HTML in model cards, picker cleanup
 
 ### Fixed
