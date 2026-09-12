@@ -59,33 +59,6 @@
     </div>
   </section>
 
-  {# Owner-only color picker — capsule form below the header so the
-   * tint can be tweaked without an extra page. Hidden for non-owners
-   * and anonymous viewers; submits to POST /{owner}/{name}/color. #}
-  {% if viewer_is_owner %}
-    <section class="repo-color-picker el-tile" aria-label="Repo accent color">
-      <h3>Accent color</h3>
-      {% if color_error %}
-        <div class="errors">{{ color_error }}</div>
-      {% endif %}
-      <form method="post" action="/{{ owner }}/{{ repo.name }}/color" class="repo-color-picker__form">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <label for="repo-color-select" class="muted">Tint</label>
-        <select id="repo-color-select" name="color">
-          {% for entry in color_palette %}
-            <option value="{{ entry.value }}"
-                    {% if (repo.color or '') == entry.value %}selected{% endif %}
-                    {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
-              {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
-            </option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="primary">Apply</button>
-      </form>
-      <p class="help">Tints catalog cards and this header. Leave on <em>None</em> for the default.</p>
-    </section>
-  {% endif %}
-
   {# ------------------------------------------------------------------------
    * Tabs — capsules; the active one uses the permanent-selection
    * filled style (BLP spec §3.4 exception). The Settings tab is

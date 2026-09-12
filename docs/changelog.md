@@ -4,6 +4,29 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.4 — Settings fixes, HTML in model cards, picker cleanup
+
+### Fixed
+
+- Settings accent color always showed "None": palette entries were
+  uppercase hex but the validator stored lowercase — the select
+  comparison never matched. Palette values are now lowercase
+  end-to-end.
+- Settings page CSS was missing the shared repo-page layout rules,
+  making the header/tabs/panel render broken — now embedded.
+- The duplicate accent-color picker on the repo header is removed;
+  color editing lives only in the Settings tab.
+
+### Changed
+
+- **Model card markdown now renders raw HTML** (HF parity): tables,
+  images, links all work. Dangerous constructs are sanitized
+  server-side: `<script>/<style>/<iframe>/<object>/<embed>/<form>/
+  <link>/<meta>` tags (with content), `on*` event-handler attributes,
+  `javascript:`/`vbscript:`/`data:` URLs, and `style` attributes are
+  all stripped. The CSP (`script-src 'self'`) remains the second line
+  of defense.
+
 ## v0.5.3 — Settings tab matches the repo page; colors render as true tints
 
 ### Fixed

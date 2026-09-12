@@ -568,35 +568,6 @@ class TestRepoColorTint:
         ]
         assert "background-color:" not in header_block
 
-    async def test_color_picker_invalid_color_redirects_with_error(
-        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
-    ) -> None:
-        client, _, _ = app
-        await seed_approved_user(username="alice")
-        client.post(
-            "/api/auth/login",
-            json={"username": "alice", "password": "correct horse battery staple"},
-        )
-        client.post(
-            "/api/repos",
-            json={"name": "switchable", "kind": "model", "visibility": "public"},
-        )
-        csrf = _form_csrf(client, "/alice/switchable")
-        response = client.post(
-            "/alice/switchable/color",
-            data={"_csrf": csrf, "color": "not-a-color"},
-            follow_redirects=False,
-        )
-        assert response.status_code == 303
-        # The redirect carries the validation error in the query string
-        # so the header picker re-renders with an in-page error.
-        assert "color_error=" in response.headers["location"]
-
-        # Following the redirect surfaces the error in the picker tile.
-        view = client.get(response.headers["location"])
-        assert view.status_code == 200
-        assert 'class="errors"' in view.text
-
     async def test_color_picker_stranger_returns_403(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
@@ -653,24 +624,6 @@ class TestRepoColorTint:
         )
         assert response.status_code == 303
         assert response.headers["location"].startswith("/login")
-
-    async def test_repo_page_renders_picker_for_owner_only(
-        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
-    ) -> None:
-        client, _, _ = app
-        await seed_approved_user(username="alice")
-        client.post(
-            "/api/auth/login",
-            json={"username": "alice", "password": "correct horse battery staple"},
-        )
-        client.post(
-            "/api/repos",
-            json={"name": "switchable", "kind": "model", "visibility": "public"},
-        )
-
-        owner = client.get("/alice/switchable")
-        assert 'class="repo-color-picker el-tile"' in owner.text
-        assert "Accent color" in owner.text
 
     async def test_repo_page_picker_absent_for_anon(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user

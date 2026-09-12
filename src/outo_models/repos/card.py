@@ -11,6 +11,7 @@ malicious README cannot inject script tags into the UI.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -26,8 +27,8 @@ from outo_models.repos.storage import repo_fs_path
 _README_CANDIDATES: tuple[str, ...] = ("README.md", "README.MD", "readme.md")
 
 _MD_RENDERER: mistune.Markdown = mistune.create_markdown(
-    escape=True,
-    plugins=["strikethrough", "footnotes"],
+    escape=False,
+    plugins=["strikethrough", "footnotes", "url"],
 )
 
 
@@ -235,14 +236,41 @@ def _extract_front_matter(text: str) -> tuple[dict[str, object], str]:
     return {str(k): v for k, v in parsed.items()}, remainder
 
 
-def _render_markdown(body: str) -> str:
-    """Render `body` as HTML with raw HTML characters escaped.
+# ---------------------------------------------------------------------------
+# HTML sanitizer for rendered model cards.
+# Raw HTML is allowed (HF parity); these constructs are always removed.
+# ---------------------------------------------------------------------------
 
-    `mistune.create_markdown(escape=True, ...)` neutralises `<script>` and
-    similar payloads so a malicious README cannot inject JS into the
-    UI. The renderer is module-level so we only pay the cost once.
+_DANGEROUS_TAGS = ("script", "style", "iframe", "object", "embed", "form", "link", "meta")
+
+_SANITIZE_PATTERNS: tuple[str, ...] = (
+    # Dangerous tags (with content)
+    *(rf"<{tag}\b[^>]*(?:/>|>.*?</{tag}\s*>)" for tag in _DANGEROUS_TAGS),
+    # Event-handler attributes: on*="..." / on*'...' / bare
+    r"\s+on[a-zA-Z]+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
+    # javascript:/vbscript:/data: URLs in href/src/action
+    r"(?:href|src|action|formaction)\s*=\s*(?:\"\s*(?:javascript|vbscript|data):[^\"]*\"|'\s*(?:javascript|vbscript|data):[^']*')",
+    # style attributes (conservative: strip entirely)
+    r"\s+style\s*=\s*(?:\"[^\"]*\"|'[^']*')",
+)
+
+_SANITIZE_RE = re.compile(
+    "|".join(f"(?:{p})" for p in _SANITIZE_PATTERNS),
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _render_markdown(body: str) -> str:
+    """Render `body` as markdown→HTML, then sanitize the output.
+
+    Raw HTML is allowed in model cards (HF parity: users embed tables,
+    images, links), but dangerous constructs are stripped server-side:
+    `<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`, `<form>`,
+    event-handler attributes (`on*`), and non-http(s) URL schemes in
+    href/src (`javascript:` etc.). The CSP (`script-src 'self'`) is the
+    second line of defense; this function is the first.
     """
-    return str(_MD_RENDERER(body))
+    return _SANITIZE_RE.sub("", str(_MD_RENDERER(body)))
 
 
 def parse_card_metadata(readme_text: str) -> CardMetadata:

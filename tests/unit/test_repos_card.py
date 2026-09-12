@@ -169,11 +169,20 @@ class TestParseCardMetadata:
         # Body still contains the literal text (mistune escapes HTML).
         assert "body text" in card.body_html
 
-    def test_escapes_raw_html_to_prevent_xss(self) -> None:
-        text = "Hello <script>alert(1)</script> world\n"
+    def test_sanitizes_dangerous_html_but_keeps_safe(self) -> None:
+        """Raw HTML is allowed (HF parity); dangerous constructs are stripped."""
+        text = (
+            "Hello <b>bold</b> <script>alert(1)</script> "
+            '<img src=x onerror="evil()"> '
+            '<a href="javascript:p()">x</a> <a href="https://ok.com">y</a>\n'
+        )
         card = parse_card_metadata(text)
-        assert "<script>" not in card.body_html
-        assert "&lt;script&gt;" in card.body_html
+        assert "<b>bold</b>" in card.body_html  # safe HTML kept
+        assert "<script" not in card.body_html  # script stripped
+        assert "alert(1)" not in card.body_html  # script content stripped
+        assert "onerror" not in card.body_html  # event handlers stripped
+        assert "javascript:" not in card.body_html  # dangerous URL stripped
+        assert "https://ok.com" in card.body_html  # safe link kept
 
     def test_single_string_dataset_normalised_to_list(self) -> None:
         text = "---\ndatasets: glue\n---\nbody\n"

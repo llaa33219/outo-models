@@ -226,15 +226,15 @@ def _kind_to_nav(repo_kind: str) -> str | None:
 
 REPO_COLOR_PALETTE: list[dict[str, str]] = [
     {"value": "", "label": "None", "hex": ""},
-    {"value": "#DBEDFF", "label": "Sky", "hex": "#DBEDFF"},
-    {"value": "#D4DCE8", "label": "Mist", "hex": "#D4DCE8"},
-    {"value": "#DBE3FF", "label": "Periwinkle", "hex": "#DBE3FF"},
-    {"value": "#EEF5FC", "label": "Paper", "hex": "#EEF5FC"},
-    {"value": "#7FBCFF", "label": "Soft blue", "hex": "#7FBCFF"},
-    {"value": "#B8E1D8", "label": "Mint", "hex": "#B8E1D8"},
-    {"value": "#F2F6ED", "label": "Lime", "hex": "#F2F6ED"},
-    {"value": "#FCF5EE", "label": "Apricot", "hex": "#FCF5EE"},
-    {"value": "#D67FFF", "label": "Lilac", "hex": "#D67FFF"},
+    {"value": "#dbedff", "label": "Sky", "hex": "#DBEDFF"},
+    {"value": "#d4dce8", "label": "Mist", "hex": "#D4DCE8"},
+    {"value": "#dbe3ff", "label": "Periwinkle", "hex": "#DBE3FF"},
+    {"value": "#eef5fc", "label": "Paper", "hex": "#EEF5FC"},
+    {"value": "#7fbcff", "label": "Soft blue", "hex": "#7FBCFF"},
+    {"value": "#b8e1d8", "label": "Mint", "hex": "#B8E1D8"},
+    {"value": "#f2f6ed", "label": "Lime", "hex": "#F2F6ED"},
+    {"value": "#fcf5ee", "label": "Apricot", "hex": "#FCF5EE"},
+    {"value": "#d67fff", "label": "Lilac", "hex": "#D67FFF"},
 ]
 _REPO_COLOR_HEX_VALUES: set[str] = {entry["hex"] for entry in REPO_COLOR_PALETTE if entry["hex"]}
 
