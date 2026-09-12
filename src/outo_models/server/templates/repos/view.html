@@ -87,13 +87,20 @@
   {% endif %}
 
   {# ------------------------------------------------------------------------
-   * Tabs — three capsules; the active one uses the permanent-selection
-   * filled style (BLP spec §3.4 exception).
+   * Tabs — capsules; the active one uses the permanent-selection
+   * filled style (BLP spec §3.4 exception). The Settings tab is
+   * owner/admin-only — hidden for everyone else so visitors don't see
+   * a dead link. Adding the tab here keeps the URL canonical
+   * (`/{owner}/{name}/settings`) and lets the active state live in
+   * the path the same way as the other three tabs.
    * ------------------------------------------------------------------------ #}
   <nav class="repo-tabs" aria-label="Repository sections">
     <a href="/{{ owner }}/{{ repo.name }}" class="tabs__link{% if tab_card_active %} tabs__link--active{% endif %}">{{ tab_card_label }}</a>
     <a href="/{{ owner }}/{{ repo.name }}/files" class="tabs__link{% if tab_files_active %} tabs__link--active{% endif %}">Files</a>
     <a href="/{{ owner }}/{{ repo.name }}/community" class="tabs__link{% if tab_community_active %} tabs__link--active{% endif %}">Community</a>
+    {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
+      <a href="/{{ owner }}/{{ repo.name }}/settings" class="tabs__link{% if tab_settings_active %} tabs__link--active{% endif %}">Settings</a>
+    {% endif %}
   </nav>
 
   {# ------------------------------------------------------------------------
@@ -175,18 +182,85 @@
       {# ============== COMMUNITY TAB ============== #}
       {% elif tab_community_active %}
         <section class="comments-section">
-          {% if comments %}
+          {# Likes roster — server-rendered chips for every user who liked
+             the repo. The data comes from `list_likes` (loaded in
+             `_render_repo_page`) and is gated by repo visibility, so
+             anonymous viewers only see the roster on public repos. #}
+          <section class="likes-roster el-tile" aria-label="Liked by">
+            <h3 class="likes-roster__title">Liked by</h3>
+            {% if likes_users %}
+              <ul class="likes-roster__list">
+                {% for liker in likes_users %}
+                  <li class="likes-roster__chip">
+                    <a href="/{{ liker.username }}" class="likes-roster__link" title="{{ liker.display_name or liker.username }}">
+                      <span class="avatar likes-roster__avatar" aria-hidden="true">{{ liker.username[0]|upper }}</span>
+                      <span class="likes-roster__name">{{ liker.username }}</span>
+                    </a>
+                  </li>
+                {% endfor %}
+                {% if likes_overflow_count > 0 %}
+                  <li class="likes-roster__chip likes-roster__chip--more">
+                    <span class="muted">+{{ likes_overflow_count }} more</span>
+                  </li>
+                {% endif %}
+              </ul>
+            {% else %}
+              <p class="likes-roster__empty muted">No likes yet.</p>
+            {% endif %}
+          </section>
+
+          {# Threaded comments — one level of nesting (replies to replies are
+             flattened into the same chain). Each top-level comment
+             renders its body, metadata, and a list of indented
+             replies; a reply form (small textarea + Reply button)
+             appears under each top-level comment for logged-in
+             viewers. #}
+          <h3 class="comments-section__heading">Comments</h3>
+          {% if threads %}
             <ul class="comments-list">
-              {% for comment in comments %}
-                <li class="comment">
-                  <a href="/{{ comment.author }}" class="profile-chip comment__author">
-                    <span class="avatar">{{ comment.author[0]|upper }}</span>
-                    <span class="username">{{ comment.author }}</span>
-                  </a>
-                  <p class="comment__body">{{ comment.body }}</p>
-                  <p class="comment__meta muted">
-                    {{ comment.created_at.strftime('%Y-%m-%d %H:%M') if comment.created_at else '' }}
-                  </p>
+              {% for thread in threads %}
+                <li class="comment-thread">
+                  <article class="comment comment--top">
+                    <a href="/{{ thread.top.author }}" class="profile-chip comment__author">
+                      <span class="avatar">{{ thread.top.author[0]|upper }}</span>
+                      <span class="username">{{ thread.top.author }}</span>
+                    </a>
+                    <p class="comment__body">{{ thread.top.body }}</p>
+                    <p class="comment__meta muted">
+                      {{ thread.top.created_at.strftime('%Y-%m-%d %H:%M') if thread.top.created_at else '' }}
+                    </p>
+                  </article>
+
+                  {% if thread.replies %}
+                    <ul class="comment-replies">
+                      {% for reply in thread.replies %}
+                        <li class="comment comment--reply">
+                          <a href="/{{ reply.author }}" class="profile-chip comment__author">
+                            <span class="avatar">{{ reply.author[0]|upper }}</span>
+                            <span class="username">{{ reply.author }}</span>
+                          </a>
+                          <p class="comment__body">{{ reply.body }}</p>
+                          <p class="comment__meta muted">
+                            {{ reply.created_at.strftime('%Y-%m-%d %H:%M') if reply.created_at else '' }}
+                          </p>
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+
+                  {% if current_user %}
+                    <form method="post" action="/{{ owner }}/{{ repo.name }}/comments" class="comment-reply-form">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <input type="hidden" name="parent_id" value="{{ thread.top.id }}">
+                      <label for="reply-body-{{ thread.top.id }}" class="visually-hidden">Reply to {{ thread.top.author }}</label>
+                      <textarea id="reply-body-{{ thread.top.id }}" name="body" rows="2"
+                                maxlength="4000" required
+                                placeholder="Reply to {{ thread.top.author }}&hellip;"></textarea>
+                      <p class="form-actions">
+                        <button type="submit" class="primary comment-reply-form__btn">Reply</button>
+                      </p>
+                    </form>
+                  {% endif %}
                 </li>
               {% endfor %}
             </ul>
@@ -302,9 +376,6 @@
         {% if owner_display_name %}
           <p class="muted repo-sidebar__owner-name">{{ owner_display_name }}</p>
         {% endif %}
-        {# Follow button on the sidebar mirrors the header capsule but lives
-         * here for visibility to anonymous viewers (disabled) — gives
-         * logged-out visitors an obvious entry point to /login. #}
         {% if viewer_is_owner %}
           <p class="muted">That's you.</p>
         {% elif current_user %}
@@ -852,5 +923,173 @@
     }
     .repo-color-picker__form select { min-width: 220px; }
     .repo-color-picker .help { margin-top: 8px; }
+
+    /* ============================================================
+     * Likes roster — small element tile at the top of the community
+     * tab. Chips wrap on narrow viewports. BLP: square tile chrome,
+     * capsule chips (filled paper-blue per 디자인.md §7.4), hover
+     * darker tone. The avatar inside the chip is the small-element
+     * circular exception (§2.1) — the tile and chip themselves stay
+     * square.
+     * ============================================================ */
+    .likes-roster {
+      padding: 16px;
+    }
+    .likes-roster__title {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-sub);
+    }
+    .likes-roster__list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .likes-roster__chip {
+      display: inline-flex;
+      align-items: center;
+    }
+    .likes-roster__link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 28px;
+      padding: 0 12px 0 4px;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      border-radius: var(--radius-pill);
+      color: var(--text-sub);
+      font: 500 12px/1 'Pretendard', system-ui, sans-serif;
+      text-decoration: none;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .likes-roster__link:hover {
+      border-color: var(--color-main);
+      color: var(--el-active);
+      text-decoration: none;
+    }
+    .likes-roster__avatar { width: 20px; height: 20px; font-size: 10px; }
+    .likes-roster__chip--more {
+      height: 28px;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      background: var(--blp-paper-blue-2);
+      border: var(--border-el) solid var(--blp-light-dark);
+      border-radius: var(--radius-pill);
+    }
+    .likes-roster__empty { margin: 0; font-size: 13px; }
+
+    /* ============================================================
+     * Threaded comments — one level of nesting. The top-level
+     * `.comment` keeps the existing chrome; replies sit in a
+     * `.comment-replies` list indented by a left margin. The reply
+     * form is a compact version of the composer (smaller textarea,
+     * smaller button) and lives under each top-level comment for
+     * logged-in viewers. Replies to replies (depth > 2) are flattened
+     * by the route handler into the same `.comment-replies` chain.
+     * ============================================================ */
+    .comments-section__heading {
+      margin: 24px 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-sub);
+    }
+    .comments-section__heading:first-of-type { margin-top: 16px; }
+    .comment-thread {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-tile);
+    }
+    .comment-replies {
+      list-style: none;
+      margin: 0 0 0 32px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-tile);
+    }
+    .comment--reply { padding: 12px 16px; }
+    .comment-reply-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0 0 0 32px;
+      padding: 12px 16px;
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      transition: border-color var(--t-tile);
+    }
+    .comment-reply-form:hover { border-color: var(--color-main); }
+    .comment-reply-form textarea {
+      min-height: 64px;
+      border-radius: 0; /* textarea square override (디자인.md §2.1) */
+      font-size: 13px;
+    }
+    .comment-reply-form__btn {
+      height: 32px;
+      padding: 0 16px;
+      font-size: 13px;
+      align-self: flex-start;
+    }
+    /* Hide reply labels visually but keep them for screen readers. */
+    .visually-hidden {
+      position: absolute;
+      width: 1px; height: 1px;
+      padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0);
+      white-space: nowrap; border: 0;
+    }
+
+    /* ============================================================
+     * Settings tab — owner/admin only. Renders an extra-tile form
+     * below the tabs nav. Same square element-tile chrome as the
+     * other panels; the form fields reuse the global input/select/
+     * textarea styles so no override is needed.
+     * ============================================================ */
+    .settings-form {
+      max-width: 640px;
+      padding: 24px;
+    }
+    .settings-form h2 { margin: 0 0 8px; }
+    .settings-form .help { margin-top: 4px; }
+    .settings-form__read-only {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .settings-form__read-only-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      padding: 6px 10px;
+      border-radius: 0;
+      color: var(--text);
+    }
+    .settings-form textarea {
+      width: 100%;
+      min-height: 96px;
+    }
+    .settings-form__color-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .settings-form__color-row select { min-width: 240px; }
+    .settings-form .form-actions { margin-top: 24px; }
   </style>
 {% endblock %}

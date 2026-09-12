@@ -139,7 +139,12 @@
      * ============================================================ */
     .profile-layout {
       display: grid;
-      grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+      /* v0.5.x — widen the repos tile relative to the profile tile.
+       * 240px cap on the profile side keeps identity / bio readable on
+       * narrow screens while letting the repo catalog use the leftover
+       * space for 3- or 4-up card grids without horizontal scroll.
+       * Stacks to a single column under 900px. */
+      grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
       gap: var(--gap-tile);
       align-items: start;
       margin-top: 4px;

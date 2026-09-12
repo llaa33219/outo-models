@@ -35,6 +35,7 @@ from outo_models.repos.social import (
     like_count,
     like_repo,
     list_comments,
+    list_likes,
     load_repo_or_404,
     unlike_repo,
 )
@@ -97,6 +98,7 @@ class CommentRequest(BaseModel):
     """POST /api/repos/{owner}/{name}/comments body."""
 
     body: str = Field(min_length=1, max_length=4000)
+    parent_id: int | None = None
 
 
 class CommentResponse(BaseModel):
@@ -106,6 +108,7 @@ class CommentResponse(BaseModel):
     author: str
     body: str
     created_at: str
+    parent_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +387,7 @@ async def list_comments_route(
             "author": row.author.username,
             "body": row.body,
             "created_at": row.created_at.isoformat(),
+            "parent_id": row.parent_id,
         }
         for row in rows
     ]
@@ -405,7 +409,9 @@ async def add_comment_route(
     repo = await load_repo_or_404(db, owner=owner, name=name)
     if not _viewer_can_see(user, repo):
         raise NotFoundError(f"repository not found: {owner}/{name}")
-    comment = await add_comment(db, author=user, repo=repo, body=payload.body)
+    comment = await add_comment(
+        db, author=user, repo=repo, body=payload.body, parent_id=payload.parent_id
+    )
     await db.commit()
     await db.refresh(comment)
     return {
@@ -413,6 +419,7 @@ async def add_comment_route(
         "author": user.username,
         "body": comment.body,
         "created_at": comment.created_at.isoformat(),
+        "parent_id": comment.parent_id,
     }
 
 
@@ -484,3 +491,23 @@ async def list_files_route(
 
 
 __all__ = ["router"]
+
+
+@router.get("/{owner}/{name}/likes", response_model=None)
+async def list_likes_route(
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> dict[str, object]:
+    """Return the users who liked `repo` (gated by repo visibility)."""
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if not _viewer_can_see(viewer, repo):
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    users = await list_likes(db, repo=repo)
+    from outo_models.repos.social import like_count
+
+    return {
+        "count": await like_count(db, repo=repo),
+        "users": [{"username": u.username, "display_name": u.display_name} for u in users],
+    }

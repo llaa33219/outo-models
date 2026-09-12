@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Support &mdash; outo-models{% endblock %}
+{% block content %}
+  <article class="support-tile el-tile" aria-label="Support">
+    <h1>Support</h1>
+    <p class="muted">
+      Need help with the server, an account, or your repositories? Reach the
+      server operator using the contact below.
+    </p>
+
+    {% if operator_email %}
+      <h2>Contact the server operator</h2>
+      <p>
+        Email
+        <a href="mailto:{{ operator_email }}">{{ operator_email }}</a>
+        for account issues, quota bumps, bug reports, or abuse reports.
+      </p>
+    {% else %}
+      <h2>Contact the server operator</h2>
+      <p class="muted">
+        The operator has not published a contact email for this server. If you
+        are the operator, set one in the server configuration; if you are a
+        user, ask the operator (the person who runs this instance) for the
+        right address.
+      </p>
+    {% endif %}
+
+    <h2>Common topics</h2>
+    <ul class="support-tile__list">
+      <li><strong>Account / login</strong> &mdash; password resets, banned accounts, signup approval.</li>
+      <li><strong>Storage quota</strong> &mdash; raising your <code>max_bytes</code> cap so pushes stop failing with 413.</li>
+      <li><strong>git / LFS</strong> &mdash; clone URL, access tokens, large file uploads.</li>
+      <li><strong>Abuse</strong> &mdash; report a repo, a user, or content that violates the server policy.</li>
+    </ul>
+  </article>
+
+  <style>
+    /* Support tile — page-local chrome. Square element-tile per
+     * 디자인.md §1.3. BLP palette only. */
+    .support-tile {
+      padding: 24px;
+      max-width: 640px;
+    }
+    .support-tile h1 { margin: 0 0 8px; }
+    .support-tile h2 {
+      margin: 24px 0 8px;
+      font-size: 16px;
+    }
+    .support-tile__list {
+      margin: 8px 0 0;
+      padding-left: 20px;
+      color: var(--text);
+    }
+    .support-tile__list li {
+      margin: 6px 0;
+      line-height: 1.5;
+    }
+  </style>
+{% endblock %}

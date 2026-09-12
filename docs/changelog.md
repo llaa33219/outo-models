@@ -4,6 +4,27 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.1 — Settings tab, likes roster, comment replies, profile dropdown
+
+### Added
+
+- **Repo Settings tab** (`/{owner}/{name}/settings`, owner/admin):
+  visibility, description, and accent color editing in one place.
+- **Likes roster**: the community tab shows who liked the repo
+  (avatar-initial chips linking to profiles).
+- **Comment replies**: threaded comments (one nesting level) with a
+  per-comment reply form (migration 0004, `parent_id`).
+- **Profile dropdown menu** (CSS-only, CSP-safe): Profile · Usage ·
+  Access tokens · Profile settings · Support · Log out.
+- **Usage page** (`/{username}/usage`, self-only): quota max/used/free
+  with a usage bar.
+- **Support page** (`/support`): operator contact info.
+
+### Changed
+
+- Profile page: the repositories tile is wider (the profile tile no
+  longer dominates the row).
+
 ## v0.5.0 — Profiles, activity, repo colors
 
 ### Added

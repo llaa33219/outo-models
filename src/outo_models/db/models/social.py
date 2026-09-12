@@ -89,6 +89,11 @@ class RepoComment(IntIdMixin, TimestampMixin, Base):
         nullable=False,
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL = top-level comment; non-NULL = a reply to that comment id.
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("repo_comments.id", name="fk_repo_comments_parent_id_repo_comments"),
+        nullable=True,
+    )
 
     author: Mapped[User] = relationship("User", lazy="raise")
 

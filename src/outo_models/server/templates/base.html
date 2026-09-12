@@ -236,6 +236,99 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
 }
 
 /* ============================================================
+ * Navbar dropdown — pure CSS via <details>/<summary>.
+ * The <summary> inherits the profile-chip look (avatar + username +
+ * caret); the panel below is a BLP element tile (2px border, 0 radius,
+ * square chrome per 디자인.md §1.3) absolutely positioned under it.
+ * No inline JS (CSP: script-src 'self'). The default disclosure
+ * marker is suppressed — we draw our own caret to keep the chrome
+ * consistent. The panel closes on outside-click via the browser's
+ * native <details> blur behavior (no JS needed).
+ * ============================================================ */
+.nav-dropdown { position: relative; display: inline-block; }
+.nav-dropdown > summary {
+  /* The summary is a focusable, clickable button by default — we
+   * override its marker so the chip stays visually identical to the
+   * standalone profile-chip. */
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 4px;
+  background: var(--tile-bg);
+  border: var(--border-el) solid var(--color-inactive);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  transition: border-color var(--t-base), background var(--t-base);
+}
+.nav-dropdown > summary::-webkit-details-marker { display: none; }
+.nav-dropdown > summary::marker { display: none; content: ""; }
+.nav-dropdown > summary:hover { border-color: var(--color-main); }
+.nav-dropdown > summary:active,
+.nav-dropdown > summary:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue);
+  outline: none;
+}
+/* Open state — border lifts to the main color so the menu chrome
+ * mirrors the spec §3.4 permanent-selection pattern. */
+.nav-dropdown[open] > summary {
+  border-color: var(--color-main);
+  background: var(--blp-paper-blue-2);
+}
+.nav-dropdown__caret {
+  font-size: 10px;
+  line-height: 1;
+  margin-left: 2px;
+  color: var(--text-sub);
+  transform: translateY(-1px);
+  display: inline-block;
+}
+.nav-dropdown[open] .nav-dropdown__caret { transform: translateY(-1px) rotate(180deg); }
+.nav-dropdown__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 50;
+  /* element-tile base style is provided by .el-tile (2px border, 0
+   * radius, instant border hover per 디자인.md §5.1). Add a hair of
+   * shadow so the panel reads as floating over the page chrome — the
+   * shadow stays 0-blur / square-offset per §6.2 hard-shadow rules. */
+  box-shadow: 4px 4px 0 var(--color-inactive);
+}
+.nav-dropdown__panel:hover { border-color: var(--color-main); }
+.nav-dropdown__item {
+  display: block;
+  padding: 8px 12px;
+  font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+  color: var(--text);
+  border: var(--border-el) solid transparent;
+  border-radius: 0;
+  text-decoration: none;
+  transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+}
+.nav-dropdown__item:hover {
+  border-color: var(--color-main);
+  color: var(--color-main);
+  text-decoration: none;
+}
+.nav-dropdown__item:active,
+.nav-dropdown__item:focus-visible {
+  border-color: var(--el-active);
+  background: var(--blp-light-dark-blue);
+  outline: none;
+}
+.nav-dropdown__item--danger { color: var(--blp-deep-red); }
+.nav-dropdown__item--danger:hover { color: var(--blp-deep-red); border-color: var(--blp-deep-red); }
+
+/* ============================================================
  * Profile chip (avatar + username) — capsule allowed for small
  * elements per spec §0.3 / §2.1. Keeps the existing class name so
  * tests referencing `profile-chip` / `avatar` still match.
@@ -620,11 +713,27 @@ th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
       <div class="nav-section">
         {% if current_user %}
           <a href="/new" class="new-btn">New</a>
-          <a href="/{{ current_user.username }}" class="profile-chip" aria-label="My profile">
-            <span class="avatar">{{ current_user.username[0]|upper }}</span>
-            <span class="username">{{ current_user.username }}</span>
-          </a>
-          <a href="/logout" class="logout-link">Log out</a>
+          {# Profile dropdown — pure-CSS via the native <details>/<summary>
+             disclosure widget. NO inline JS (CSP: script-src 'self');
+             clicking the chip toggles the panel, the panel items are
+             regular anchors so they navigate normally. Log out lives
+             inside the dropdown so the navbar no longer carries a
+             separate Log out capsule. #}
+          <details class="nav-dropdown">
+            <summary class="profile-chip" aria-label="Account menu">
+              <span class="avatar">{{ current_user.username[0]|upper }}</span>
+              <span class="username">{{ current_user.username }}</span>
+              <span class="nav-dropdown__caret" aria-hidden="true">&#9662;</span>
+            </summary>
+            <div class="nav-dropdown__panel el-tile" role="menu">
+              <a class="nav-dropdown__item" role="menuitem" href="/{{ current_user.username }}">Profile</a>
+              <a class="nav-dropdown__item" role="menuitem" href="/{{ current_user.username }}/usage">Usage</a>
+              <a class="nav-dropdown__item" role="menuitem" href="/settings/tokens">Access tokens</a>
+              <a class="nav-dropdown__item" role="menuitem" href="/{{ current_user.username }}/edit">Profile settings</a>
+              <a class="nav-dropdown__item" role="menuitem" href="/support">Support</a>
+              <a class="nav-dropdown__item nav-dropdown__item--danger" role="menuitem" href="/logout">Log out</a>
+            </div>
+          </details>
         {% else %}
           <a href="/login" class="nav-link">Log in</a>
           <a href="/signup" class="nav-link">Sign up</a>

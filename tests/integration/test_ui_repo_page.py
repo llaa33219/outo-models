@@ -845,3 +845,366 @@ class TestRepoRouteOrdering:
         client, _, _ = app
         response = client.get("/nobody/ghost/community")
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# v0.5.x — Settings tab (owner/admin only), likes roster, threaded comments
+# ---------------------------------------------------------------------------
+
+
+class TestRepoSettingsTab:
+    """`/{owner}/{name}/settings` is owner/admin-only and writes via form POST."""
+
+    async def test_settings_tab_link_visible_for_owner(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+
+        response = client.get("/alice/sett")
+        assert response.status_code == 200
+        body = response.text
+        assert 'href="/alice/sett/settings"' in body
+        assert ">Settings</a>" in body
+
+    async def test_settings_tab_link_hidden_for_stranger(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+
+        response = client.get("/alice/sett")
+        assert response.status_code == 200
+        assert 'href="/alice/sett/settings"' not in response.text
+
+    async def test_settings_tab_link_hidden_for_anon(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/sett")
+        assert response.status_code == 200
+        assert 'href="/alice/sett/settings"' not in response.text
+
+    async def test_settings_get_owner_renders_form(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={
+                "name": "sett",
+                "kind": "model",
+                "visibility": "public",
+                "description": "Original desc",
+                "color": "#DBEDFF",
+            },
+        )
+
+        response = client.get("/alice/sett/settings")
+        assert response.status_code == 200
+        body = response.text
+        assert 'value="public" selected' in body or 'value="public"' in body
+        assert "Original desc" in body
+        assert "Renames are not supported yet" in body
+
+    async def test_settings_post_updates_visibility_description_color(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+
+        csrf = _form_csrf(client, "/alice/sett/settings")
+        response = client.post(
+            "/alice/sett/settings",
+            data={
+                "_csrf": csrf,
+                "visibility": "private",
+                "description": "Updated description.",
+                "color": "#B8E1D8",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"].endswith("/settings?saved=1")
+
+        view = client.get("/api/repos/alice/sett").json()
+        assert view["visibility"] == "private"
+        assert view["description"] == "Updated description."
+        assert view["color"] == "#b8e1d8"
+
+    async def test_settings_post_invalid_color_rerenders_with_error(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+
+        csrf = _form_csrf(client, "/alice/sett/settings")
+        response = client.post(
+            "/alice/sett/settings",
+            data={
+                "_csrf": csrf,
+                "visibility": "public",
+                "description": "ok",
+                "color": "not-a-color",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        body = response.text
+        assert 'class="errors"' in body
+        assert "RRGGBB" in body or "color" in body.lower()
+
+    async def test_settings_post_stranger_returns_403(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+        response = client.post(
+            "/alice/sett/settings",
+            data={"_csrf": "x", "visibility": "private", "description": "no", "color": ""},
+        )
+        assert response.status_code == 403
+
+    async def test_settings_post_without_csrf_is_403(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+        response = client.post(
+            "/alice/sett/settings",
+            data={"visibility": "private", "description": "no", "color": ""},
+        )
+        assert response.status_code == 403
+
+    async def test_settings_anon_redirects_to_login(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sett", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+        response = client.get("/alice/sett/settings", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/login")
+
+
+class TestLikesRoster:
+    """The community tab renders a server-side roster of likers (with chips)."""
+
+    async def test_likes_roster_renders_chips_for_each_liker(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        await seed_approved_user(username="carol")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "liked", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+        client.post("/api/repos/alice/liked/like")
+        client.post("/api/auth/logout")
+        _login(client, "carol")
+        client.post("/api/repos/alice/liked/like")
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/liked/community")
+        assert response.status_code == 200
+        body = response.text
+        assert "likes-roster" in body
+        assert 'href="/bob"' in body
+        assert 'href="/carol"' in body
+        assert "likes-roster__avatar" in body
+
+    async def test_likes_roster_empty_state_for_no_likers(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "no-likes", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/no-likes/community")
+        assert response.status_code == 200
+        body = response.text
+        assert "likes-roster" in body
+        assert "No likes yet" in body
+
+
+class TestThreadedComments:
+    """The community tab threads comments with one level of nesting."""
+
+    async def test_posting_reply_creates_nested_comment(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "thread", "kind": "model", "visibility": "public"},
+        )
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "Top-level comment"},
+        )
+        comments = client.get("/api/repos/alice/thread/comments").json()
+        assert len(comments) == 1
+        top_id = comments[0]["id"]
+        client.post("/api/auth/logout")
+
+        _login(client, "bob")
+        csrf = _form_csrf(client, "/alice/thread/community")
+        response = client.post(
+            "/alice/thread/comments",
+            data={"_csrf": csrf, "body": "First reply", "parent_id": str(top_id)},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+
+        listed = client.get("/alice/thread/community")
+        assert listed.status_code == 200
+        body = listed.text
+        assert "Top-level comment" in body
+        assert "First reply" in body
+        assert "comment--reply" in body
+        assert 'href="/bob"' in body
+
+    async def test_reply_form_renders_for_logged_in_user(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "thread", "kind": "model", "visibility": "public"},
+        )
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "Top-level"},
+        )
+        client.post("/api/auth/logout")
+
+        _login(client, "bob")
+        response = client.get("/alice/thread/community")
+        assert response.status_code == 200
+        body = response.text
+        assert "comment-reply-form" in body
+        assert 'name="parent_id"' in body
+        assert 'value="1"' in body  # the first comment is id=1
+
+    async def test_reply_form_absent_for_anon(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "thread", "kind": "model", "visibility": "public"},
+        )
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "Top-level"},
+        )
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/thread/community")
+        assert response.status_code == 200
+        body = response.text
+        assert '<form class="comment-reply-form"' not in body
+        assert 'name="parent_id"' not in body
+
+    async def test_reply_to_reply_flattens_into_same_chain(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "thread", "kind": "model", "visibility": "public"},
+        )
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "Top-level"},
+        )
+        comments = client.get("/api/repos/alice/thread/comments").json()
+        top_id = comments[0]["id"]
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "First reply", "parent_id": top_id},
+        )
+        comments = client.get("/api/repos/alice/thread/comments").json()
+        first_reply_id = next(c["id"] for c in comments if c["parent_id"] == top_id)
+        client.post(
+            "/api/repos/alice/thread/comments",
+            json={"body": "Reply to reply", "parent_id": first_reply_id},
+        )
+
+        response = client.get("/alice/thread/community")
+        assert response.status_code == 200
+        body = response.text
+        assert body.count('class="comment comment--reply"') == 2
+        assert "comment-reply-form" in body
+        assert "Reply to reply" in body

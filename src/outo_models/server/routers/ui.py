@@ -54,7 +54,7 @@ from outo_models.auth import (
 from outo_models.auth.permissions import Scope
 from outo_models.auth.sessions import SESSION_COOKIE_NAME
 from outo_models.config import Settings, get_settings
-from outo_models.db import AuditLog, Repo, RepoLike, User
+from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, User
 from outo_models.exceptions import (
     ConflictError,
     NotFoundError,
@@ -65,6 +65,7 @@ from outo_models.repos.card import read_card
 from outo_models.repos.create import create_repo
 from outo_models.repos.files import list_files
 from outo_models.repos.models import RepoKind, Visibility
+from outo_models.repos.quota import ensure_quota_rows
 from outo_models.repos.social import (
     add_comment,
     follow_user,
@@ -74,6 +75,7 @@ from outo_models.repos.social import (
     like_count,
     like_repo,
     list_comments,
+    list_likes,
     load_repo_or_404,
     load_user_or_404,
     recent_activity,
@@ -266,6 +268,27 @@ def _validate_palette_color(raw: str | None) -> str | None:
     if _HEX_COLOR_RE.match(cleaned):
         return cleaned.lower()
     raise ValidationFailedError("color must be empty or in the form #RRGGBB (6 hex digits)")
+
+
+def _human_bytes(n: int) -> str:
+    """Render a byte count as a human-readable string for the usage page.
+
+    Uses binary (1024-based) units and one decimal of precision, capped
+    at tebibytes — anything larger is shown as `XX.X TiB` so the label
+    stays one line. Zero / negative inputs render as `0 B` so the
+    template never has to special-case the empty-account state.
+    """
+    if n <= 0:
+        return "0 B"
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    value = float(n)
+    idx = 0
+    while value >= 1024.0 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} B"
+    return f"{value:.1f} {units[idx]}"
 
 
 def _relative_time(at: datetime) -> str:
@@ -496,11 +519,11 @@ async def _render_repo_page(
 ) -> Response:
     """Render the HF-style repo page for `<owner>/<name>` at `tab`.
 
-    `tab` is one of `"card"`, `"files"`, `"community"`. The helper
-    loads the repo + tab-specific data once and lets the Jinja template
-    pick the right panel. 404s on missing repos, private repos the
-    viewer cannot see, and invalid slugs (same contract as the
-    previous single-route handler).
+    `tab` is one of `"card"`, `"files"`, `"community"`, `"settings"`.
+    The helper loads the repo + tab-specific data once and lets the
+    Jinja template pick the right panel. 404s on missing repos, private
+    repos the viewer cannot see, and invalid slugs (same contract as
+    the previous single-route handler).
 
     The response is rendered through `_form_page` so the CSRF cookie is
     minted on the first GET, matching the convention every other
@@ -572,18 +595,61 @@ async def _render_repo_page(
             files_entries = []
             files_empty = True
 
-    comments: list[dict[str, object]] = []
+    threads: list[dict[str, object]] = []
+    likes_users: list[dict[str, object]] = []
+    likes_overflow_count = 0
     if tab == "community":
         comment_rows = await list_comments(db, repo=repo, limit=200)
-        comments = [
+        rows_by_id: dict[int, RepoComment] = {row.id: row for row in comment_rows}
+        top_level = [row for row in comment_rows if row.parent_id is None]
+        replies_by_root: dict[int, list[RepoComment]] = {}
+        for row in comment_rows:
+            if row.parent_id is None:
+                continue
+            # Walk the parent chain to find the top-level ancestor so
+            # replies-to-replies flatten into the same chain (the
+            # `len(rows_by_id)` bound defends against a pathological
+            # self-referencing parent_id cycle).
+            root_id = row.parent_id
+            for _ in range(len(rows_by_id)):
+                parent = rows_by_id.get(root_id)
+                if parent is None or parent.parent_id is None:
+                    break
+                root_id = parent.parent_id
+            replies_by_root.setdefault(root_id, []).append(row)
+        for reply_list in replies_by_root.values():
+            reply_list.sort(key=lambda r: (r.created_at, r.id))
+        threads = [
             {
-                "id": row.id,
-                "author": row.author.username,
-                "body": row.body,
-                "created_at": row.created_at,
+                "top": {
+                    "id": top.id,
+                    "author": top.author.username,
+                    "body": top.body,
+                    "created_at": top.created_at,
+                },
+                "replies": [
+                    {
+                        "id": reply.id,
+                        "author": reply.author.username,
+                        "body": reply.body,
+                        "created_at": reply.created_at,
+                    }
+                    for reply in replies_by_root.get(top.id, [])
+                ],
             }
-            for row in comment_rows
+            for top in top_level
         ]
+        liker_rows = await list_likes(db, repo=repo, limit=100)
+        likes_users = [
+            {
+                "username": user.username,
+                "display_name": user.display_name,
+            }
+            for user in liker_rows
+        ]
+        like_total = await like_count(db, repo=repo)
+        if like_total > len(likes_users):
+            likes_overflow_count = like_total - len(likes_users)
 
     # --- Like / follow state for the header ---------------------------
     like_total = await like_count(db, repo=repo)
@@ -650,6 +716,7 @@ async def _render_repo_page(
         "tab_card_active": tab == "card",
         "tab_files_active": tab == "files",
         "tab_community_active": tab == "community",
+        "tab_settings_active": tab == "settings",
         "tab_sidebar_label": _kind_sidebar_label(repo.kind),
         # Card tab:
         "card_metadata": card_metadata,
@@ -660,7 +727,9 @@ async def _render_repo_page(
         "files_path": files_dir,
         "files_parent": ("/".join(files_dir.rsplit("/", 1)[:-1]) if "/" in files_dir else ""),
         # Community tab:
-        "comments": comments,
+        "threads": threads,
+        "likes_users": likes_users,
+        "likes_overflow_count": likes_overflow_count,
         # Social state for the header:
         "like_count_value": like_total,
         "viewer_liked": viewer_liked,
@@ -1055,6 +1124,31 @@ async def settings_tokens_delete(
     )
 
 
+@router.get("/support", response_class=HTMLResponse)
+async def support_page(
+    request: Request,
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the support contact page.
+
+    The operator email is read from `Settings.support_email` when set;
+    absent that, the page renders a generic "ask the operator" note so
+    no visitor sees a stray placeholder address. The page is public so
+    unauthenticated visitors can still reach the operator — but the
+    navbar is identical to every other public page (login / signup for
+    anonymous viewers).
+    """
+    settings = get_settings()
+    operator_email = getattr(settings, "support_email", None) or None
+    return await _render(
+        request,
+        "support.html",
+        user=user,
+        active_nav=None,
+        context={"operator_email": operator_email},
+    )
+
+
 @router.get("/{username}", response_class=HTMLResponse)
 async def user_profile_page(
     request: Request,
@@ -1310,6 +1404,80 @@ async def profile_edit_form(
     )
 
 
+@router.get("/{username}/usage", response_class=HTMLResponse)
+async def user_usage_page(
+    request: Request,
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the per-user storage usage page (self-only).
+
+    The page is gated to the owner of the profile — anyone else gets a
+    403 (the navbar and the existing profile surface both still link
+    here, but a non-self visitor receives a clear "this is for you
+    only" error instead of leaking the quota numbers of someone else).
+    Redirects anonymous viewers to `/login?next=...` so the deep link
+    survives a sign-in round-trip.
+    """
+    if viewer is None:
+        return RedirectResponse(
+            url=f"/login?next=/{username}/usage",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        validate_slug(username)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    profile = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    if profile is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if viewer.username != profile.username:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "you can only view your own usage"},
+        )
+    quota_row, usage_row = await ensure_quota_rows(db, profile)
+    used_bytes = int(usage_row.used_bytes)
+    max_bytes = int(quota_row.max_bytes)
+    free_bytes = max(0, max_bytes - used_bytes)
+    used_fraction = used_bytes / max_bytes if max_bytes > 0 else 0.0
+    used_pct = used_fraction * 100.0
+    used_pct_rounded = round(used_pct)
+    used_pct_capped = max(0, min(100, used_pct))
+    if used_pct >= 100.0:
+        usage_band = "over"
+    elif used_pct >= 80.0:
+        usage_band = "warn"
+    else:
+        usage_band = "ok"
+    return _form_page(
+        request,
+        "users/usage.html",
+        user=viewer,
+        active_nav=None,
+        context={
+            "profile": profile,
+            "used_bytes": used_bytes,
+            "max_bytes": max_bytes,
+            "free_bytes": free_bytes,
+            "used_human": _human_bytes(used_bytes),
+            "quota_human": _human_bytes(max_bytes),
+            "free_human": _human_bytes(free_bytes),
+            "used_fraction": used_fraction,
+            "used_pct_rounded": used_pct_rounded,
+            "used_pct_capped": used_pct_capped,
+            "usage_band": usage_band,
+        },
+    )
+
+
 @router.get("/{owner}/{name}", response_class=HTMLResponse)
 async def repo_card_page(
     request: Request,
@@ -1352,6 +1520,184 @@ async def repo_community_page(
 ) -> Response:
     """Render the repo page with the *community* tab selected."""
     return await _render_repo_page(request, db, viewer, owner=owner, name=name, tab="community")
+
+
+@router.get("/{owner}/{name}/settings", response_class=HTMLResponse)
+async def repo_settings_page(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the repo settings tab (owner/admin only).
+
+    The tab nav entry is hidden for non-owner / non-admin viewers, so
+    a hand-crafted GET must still fail cleanly with 403 / 404 instead
+    of leaking the form. The repo lookup reuses the same visibility
+    gate as the other repo GETs so a private repo a non-owner could
+    not see on the card tab stays invisible here too.
+    """
+    if viewer is None:
+        return RedirectResponse(
+            url=f"/login?next=/{owner}/{name}/settings",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        validate_slug(owner)
+        validate_slug(name)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if repo.visibility != "public" and (viewer.id != repo.owner_id and viewer.role != "admin"):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if viewer.id != repo.owner_id and viewer.role != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "forbidden",
+                "message": "only the owner or an admin may edit settings",
+            },
+        )
+    return _form_page(
+        request,
+        "repos/settings.html",
+        user=viewer,
+        active_nav=_kind_to_nav(repo.kind),
+        context={
+            "repo": repo,
+            "owner": owner,
+            "name": name,
+            "form_visibility": repo.visibility,
+            "form_description": repo.description or "",
+            "form_color": repo.color or "",
+            "color_palette": REPO_COLOR_PALETTE,
+            "error": None,
+            "saved": request.query_params.get("saved") == "1",
+        },
+    )
+
+
+@router.post("/{owner}/{name}/settings")
+async def repo_settings_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    visibility: Annotated[str, Form()] = "public",
+    description: Annotated[str, Form()] = "",
+    color: Annotated[str, Form()] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Save repo settings (owner/admin only, CSRF-protected).
+
+    Writes through the domain layer (`repo.visibility / description /
+    color`) so the same validation rules as the JSON PATCH endpoint
+    apply — a single source of truth for what counts as a legal value.
+    The color is normalized via the shared `_validate_palette_color`
+    helper so a hand-crafted POST with a bogus value fails the same
+    way the header picker does. Renames are intentionally not wired:
+    the template renders the name as read-only with a "not supported
+    yet" note because they would invalidate every clone URL pointing
+    at the old name.
+    """
+    if viewer is None:
+        return RedirectResponse(
+            url=f"/login?next=/{owner}/{name}/settings",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    verify_csrf(request, form_token=csrf)
+    try:
+        validate_slug(owner)
+        validate_slug(name)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if repo.visibility != "public" and (viewer.id != repo.owner_id and viewer.role != "admin"):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if viewer.id != repo.owner_id and viewer.role != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "forbidden",
+                "message": "only the owner or an admin may edit settings",
+            },
+        )
+
+    try:
+        normalized_visibility = Visibility(visibility.lower())
+    except ValueError:
+        normalized_visibility = None
+    try:
+        normalized_color = _validate_palette_color(color)
+    except ValidationFailedError as exc:
+        return _form_page(
+            request,
+            "repos/settings.html",
+            user=viewer,
+            active_nav=_kind_to_nav(repo.kind),
+            context={
+                "repo": repo,
+                "owner": owner,
+                "name": name,
+                "form_visibility": repo.visibility,
+                "form_description": description,
+                "form_color": color,
+                "color_palette": REPO_COLOR_PALETTE,
+                "error": str(exc),
+                "saved": False,
+            },
+        )
+
+    description_clean = description.strip() or None
+    if normalized_visibility is None:
+        return _form_page(
+            request,
+            "repos/settings.html",
+            user=viewer,
+            active_nav=_kind_to_nav(repo.kind),
+            context={
+                "repo": repo,
+                "owner": owner,
+                "name": name,
+                "form_visibility": repo.visibility,
+                "form_description": description_clean or "",
+                "form_color": color,
+                "color_palette": REPO_COLOR_PALETTE,
+                "error": f"Unknown visibility: {visibility!r}.",
+                "saved": False,
+            },
+        )
+
+    repo.visibility = normalized_visibility.value
+    repo.description = description_clean
+    repo.color = normalized_color
+    db.add(
+        AuditLog(
+            actor_id=viewer.id,
+            action="repo.settings_update",
+            target_type="repo",
+            target_id=str(repo.id),
+        )
+    )
+    await db.commit()
+    return RedirectResponse(
+        url=f"/{owner}/{name}/settings?saved=1",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.post("/{owner}/{name}/like")
@@ -1457,16 +1803,20 @@ async def repo_comments_form(
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User | None, Depends(get_current_user_optional)],
     body: Annotated[str, Form()] = "",
+    parent_id: Annotated[str | None, Form()] = None,
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
 ) -> Response:
-    """Post a comment on `/{owner}/{name}` (login + CSRF required).
+    """Post a comment or reply on `/{owner}/{name}` (login + CSRF required).
 
-    Successful POSTs redirect back to the community tab so the new
-    comment appears in the rendered list; the redirect respects the
-    `Referer` header when present (so a comment posted from inside
-    the `/files` tab still ends up on `/community` if the user came
-    from there — but the form button lives on `/community`, so the
-    default target is the community tab).
+    Accepts an optional `parent_id` form field — when present, the
+    new row is attached as a reply to that top-level comment
+    (replies-to-replies are flattened onto the same top-level chain
+    by the template). Successful POSTs redirect back to the community
+    tab so the new comment appears in the rendered list; the redirect
+    respects the `Referer` header when present (so a comment posted
+    from inside the `/files` tab still ends up on `/community` if the
+    user came from there — but the form button lives on `/community`,
+    so the default target is the community tab).
     """
     if viewer is None:
         return RedirectResponse(
@@ -1476,8 +1826,14 @@ async def repo_comments_form(
     verify_csrf(request, form_token=csrf)
     repo = await load_repo_or_404(db, owner=owner, name=name)
     clean = body.strip()
+    parsed_parent_id: int | None = None
+    if parent_id is not None and parent_id.strip():
+        try:
+            parsed_parent_id = int(parent_id)
+        except ValueError:
+            parsed_parent_id = None
     if clean:
-        await add_comment(db, author=viewer, repo=repo, body=clean)
+        await add_comment(db, author=viewer, repo=repo, body=clean, parent_id=parsed_parent_id)
         await db.commit()
     target = _safe_redirect_target(request, owner=owner, name=name, default_tab="/community")
     return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Usage &mdash; {{ profile.username }} &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs">
+    <a href="/{{ profile.username }}">{{ profile.username }}</a> &rarr; Usage
+  </p>
+
+  <article class="usage-tile el-tile" aria-label="Storage usage">
+    <h1>Storage usage</h1>
+    <p class="muted">
+      Storage consumed by all of your repositories, plus the operator-set quota
+      cap. The reconcile job refreshes the used figure every hour, so the
+      number may briefly lag behind a fresh push.
+    </p>
+
+    <dl class="usage-tile__metrics">
+      <div class="usage-tile__row">
+        <dt>Used</dt>
+        <dd><strong>{{ used_human }}</strong></dd>
+      </div>
+      <div class="usage-tile__row">
+        <dt>Quota</dt>
+        <dd>{{ quota_human }}</dd>
+      </div>
+      <div class="usage-tile__row">
+        <dt>Free</dt>
+        <dd>{{ free_human }}</dd>
+      </div>
+    </dl>
+
+    {# Usage bar — single colored capsule (BLP filled element §3.4):
+       width is set inline based on `used_fraction`. Color shifts to
+       `--blp-deep-yellow` at 80%+ and `--blp-red` at 100%+ so the
+       user gets a clear visual cue before pushes start failing. #}
+    <div class="usage-bar" role="progressbar"
+         aria-valuemin="0" aria-valuemax="100"
+         aria-valuenow="{{ used_pct_rounded }}"
+         aria-label="Storage used: {{ used_pct_rounded }}% of quota">
+      <div class="usage-bar__fill usage-bar__fill--{{ usage_band }}"
+           style="width: {{ used_pct_capped }}%;"></div>
+      <span class="usage-bar__label">{{ used_pct_rounded }}%</span>
+    </div>
+
+    <p class="help">
+      Need more space? Ask the server operator to raise your cap with
+      <code>outo-models admin quota set {{ profile.username }} 50GiB</code>.
+    </p>
+  </article>
+
+  <style>
+    /* Usage tile — page-local chrome. Square 2px-bordered element
+     * tile per 디자인.md §1.3, capsule usage bar (filled element
+     * §3.4). */
+    .usage-tile {
+      padding: 24px;
+      max-width: 640px;
+    }
+    .usage-tile h1 { margin: 0 0 8px; }
+    .usage-tile__metrics {
+      margin: 16px 0;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 16px;
+      row-gap: 6px;
+    }
+    .usage-tile__row {
+      display: contents;
+    }
+    .usage-tile__row dt {
+      color: var(--text-sub);
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .usage-tile__row dd {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    /* Usage bar — single filled capsule. The bar fill is the filled
+     * element (§3.4); the bar track is the empty container. Both are
+     * square per §1.3 — only inner chips/avatars/badges are allowed
+     * to round. The fill width is set inline by the template. */
+    .usage-bar {
+      position: relative;
+      height: 22px;
+      background: var(--blp-paper-blue-2);
+      border: var(--border-el) solid var(--blp-light-blue);
+      border-radius: var(--radius-pill);
+      overflow: hidden;
+      margin: 16px 0 8px;
+    }
+    .usage-bar__fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      background: var(--color-main);
+      transition: background var(--t-base);
+    }
+    .usage-bar__fill--warn { background: var(--blp-deep-yellow); }
+    .usage-bar__fill--over { background: var(--blp-red); }
+    .usage-bar__label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font: 600 12px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      mix-blend-mode: multiply;
+    }
+  </style>
+{% endblock %}

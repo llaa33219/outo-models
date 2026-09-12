@@ -212,6 +212,7 @@ async def add_comment(
     author: User,
     repo: Repo,
     body: str,
+    parent_id: int | None = None,
 ) -> RepoComment:
     """Insert a comment authored by `author` on `repo`.
 
@@ -224,7 +225,17 @@ async def add_comment(
         raise ValidationFailedError("comment body must not be blank")
     if len(body) > _COMMENT_BODY_MAX:
         raise ValidationFailedError(f"comment body must be at most {_COMMENT_BODY_MAX} characters")
-    comment = RepoComment(repo_id=repo.id, author_id=author.id, body=body)
+    if parent_id is not None:
+        parent = (
+            await session.execute(
+                select(RepoComment.id).where(
+                    RepoComment.id == parent_id, RepoComment.repo_id == repo.id
+                )
+            )
+        ).scalar_one_or_none()
+        if parent is None:
+            raise NotFoundError(f"parent comment {parent_id} not found in this repo")
+    comment = RepoComment(repo_id=repo.id, author_id=author.id, body=body, parent_id=parent_id)
     session.add(comment)
     _append_audit(
         session,
@@ -386,3 +397,15 @@ async def recent_activity(
     ]
     items.sort(key=lambda i: i.at, reverse=True)
     return items[:limit]
+
+
+async def list_likes(session: AsyncSession, *, repo: Repo, limit: int = 100) -> list[User]:
+    """Return users who liked `repo`, newest-like-first (for the UI)."""
+    stmt = (
+        select(User)
+        .join(RepoLike, RepoLike.user_id == User.id)
+        .where(RepoLike.repo_id == repo.id)
+        .order_by(RepoLike.created_at.desc())
+        .limit(max(1, min(int(limit), 500)))
+    )
+    return list((await session.execute(stmt)).scalars().all())

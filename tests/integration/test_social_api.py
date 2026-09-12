@@ -319,3 +319,72 @@ class TestFiles:
         )
         response = client.get("/api/repos/alice/filed2/files", params={"path": "../etc"})
         assert response.status_code == 404
+
+
+class TestCommentRepliesAndLikes:
+    """Replies (parent_id) + the likes roster."""
+
+    async def test_reply_round_trip(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="ria")
+        client.post(
+            "/api/auth/login",
+            json={"username": "ria", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos", json={"name": "threaded", "kind": "model", "visibility": "public"}
+        )
+        parent = client.post("/api/repos/ria/threaded/comments", json={"body": "top-level"}).json()
+        reply = client.post(
+            "/api/repos/ria/threaded/comments",
+            json={"body": "a reply", "parent_id": parent["id"]},
+        )
+        assert reply.status_code == 201, reply.text
+        assert reply.json()["parent_id"] == parent["id"]
+        rows = client.get("/api/repos/ria/threaded/comments").json()
+        by_id = {r["id"]: r for r in rows}
+        assert by_id[reply.json()["id"]]["parent_id"] == parent["id"]
+        assert by_id[parent["id"]]["parent_id"] is None
+
+    async def test_reply_to_foreign_repo_comment_rejected(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="sol")
+        await seed_approved_user(username="vil")
+        client.post(
+            "/api/auth/login",
+            json={"username": "sol", "password": "correct horse battery staple"},
+        )
+        client.post("/api/repos", json={"name": "mine", "kind": "model", "visibility": "public"})
+        client.post("/api/repos", json={})  # vil creates none; use big id
+        resp = client.post(
+            "/api/repos/sol/mine/comments",
+            json={"body": "bad parent", "parent_id": 999999},
+        )
+        assert resp.status_code == 404
+
+    async def test_likes_roster(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="tai")
+        await seed_approved_user(username="ush")
+        client.post(
+            "/api/auth/login",
+            json={"username": "tai", "password": "correct horse battery staple"},
+        )
+        client.post("/api/repos", json={"name": "liked", "kind": "model", "visibility": "public"})
+        client.post("/api/repos/tai/liked/like")
+        client.post("/api/auth/logout")
+        client.post(
+            "/api/auth/login",
+            json={"username": "ush", "password": "correct horse battery staple"},
+        )
+        client.post("/api/repos/tai/liked/like")
+        roster = client.get("/api/repos/tai/liked/likes").json()
+        assert roster["count"] == 2
+        names = {u["username"] for u in roster["users"]}
+        assert names == {"tai", "ush"}
