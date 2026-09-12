@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.2 — Wider profile tile, LFS-aware usage, card badges
+
+### Fixed
+
+- Profile tile no longer collapses — repos column widened to 2.5fr.
+- Quota reconcile now counts the LFS object store (`data/lfs`), so a
+  300 GiB LFS upload no longer reports as ~10 MiB used. Single-user
+  servers are exact; multi-user servers get a fair upper bound until a
+  per-owner object index lands.
+
+### Added
+
+- Catalog cards show downloads / likes / size badges (like counts
+  batched in one query, no N+1).
+
 ## v0.5.1 — Settings tab, likes roster, comment replies, profile dropdown
 
 ### Added

@@ -268,3 +268,28 @@ class TestReconcileUser:
             await session.commit()
             assert drift == 0
         assert (await _usage(session_factory, owner.id)).used_bytes == 0
+
+
+class TestReconcileIncludesLfs:
+    """LFS objects live outside the bare repos; reconcile must count them
+    (field failure: a 300 GiB LFS upload showed as 10 MiB used)."""
+
+    async def test_lfs_dir_counted(
+        self, tmp_data_dir: Path, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        from outo_models.repos.quota import reconcile_user
+
+        seeded = await _seed_user(session_factory, "lfs-user")
+        user_id = seeded.id
+        lfs = tmp_data_dir / "lfs" / "ab" / "cd"
+        lfs.mkdir(parents=True)
+        (lfs / ("ab" * 32)).write_bytes(b"x" * 1024)
+        async with session_factory() as session:
+            user = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+            await reconcile_user(session, user)
+            await session.commit()
+        async with session_factory() as session:
+            usage = (
+                await session.execute(select(UserUsage).where(UserUsage.user_id == user_id))
+            ).scalar_one()
+            assert usage.used_bytes >= 1024

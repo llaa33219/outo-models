@@ -416,6 +416,19 @@ async def _render_kind_list(
 
     repos = (await db.execute(stmt)).scalars().all()
 
+    # Batch the like counts in one query (no per-repo N+1) so cards can
+    # show downloads / likes / size badges.
+    like_counts: dict[int, int] = {}
+    if repos:
+        rows_ = (
+            await db.execute(
+                select(RepoLike.repo_id, func.count())
+                .where(RepoLike.repo_id.in_([r.id for r in repos]))
+                .group_by(RepoLike.repo_id)
+            )
+        ).all()
+        like_counts = {rid: int(cnt) for rid, cnt in rows_}
+
     headings = {
         RepoKind.MODEL: "Models",
         RepoKind.DATASET: "Datasets",
@@ -435,6 +448,7 @@ async def _render_kind_list(
             "filter_q": q or "",
             "filter_owner": owner_filter or "",
             "filter_sort": sort_value,
+            "like_counts": like_counts,
         },
     )
 

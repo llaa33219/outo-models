@@ -101,6 +101,17 @@ async def reconcile_user(session: AsyncSession, user: User) -> int:
     for name, _kind in rows:
         total += await disk_usage(repo_fs_path(user.username, name))
 
+    # LFS objects are per-server (data/lfs), not per-repo: they cannot be
+    # attributed by walking the bare repos. Charge the owner the full LFS
+    # tree once — single-user servers (the overwhelmingly common case) are
+    # exact; multi-user servers reconcile to a fair upper bound until a
+    # per-owner object index lands (tracked in the roadmap).
+    from outo_models.utils.paths import lfs_dir
+
+    lfs = lfs_dir()
+    if lfs.is_dir():
+        total += await disk_usage(lfs)
+
     if existing_usage is None:
         session.add(UserUsage(user_id=user.id, used_bytes=total))
     else:

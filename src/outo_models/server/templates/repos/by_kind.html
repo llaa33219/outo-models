@@ -55,7 +55,15 @@
                 <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
               </div>
               <p class="desc">{{ repo.description or "" }}</p>
-              <p class="meta">Updated {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else 'recently' }}</p>
+              <p class="meta">
+                Updated {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else 'recently' }}
+                <span class="pill stat">&#8595; {{ repo.downloads_count or 0 }}</span>
+                <span class="pill stat">&#9825; {{ like_counts.get(repo.id, 0) if like_counts is defined else 0 }}</span>
+                {% if repo.size_bytes %}
+                {% set sb = repo.size_bytes %}
+                <span class="pill stat">{% if sb < 1024 %}{{ sb }} B{% elif sb < 1048576 %}{{ (sb / 1024) | round(1) }} KB{% elif sb < 1073741824 %}{{ (sb / 1048576) | round(1) }} MB{% else %}{{ (sb / 1073741824) | round(1) }} GB{% endif %}</span>
+                {% endif %}
+              </p>
             </article>
           {% endfor %}
         </div>

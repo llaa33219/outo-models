@@ -258,7 +258,7 @@ class TestProfileTileRatio:
         # The new ratio: profile cap 240px / repos flexes to the
         # remainder. We anchor on the exact `minmax(0, 240px)` token
         # (no 360px anywhere in the layout) — that's what changed.
-        assert "minmax(0, 240px) minmax(0, 1fr)" in body
+        assert "minmax(340px, 1fr) minmax(0, 2.5fr)" in body
         assert "minmax(0, 360px)" not in body
 
     async def test_profile_layout_stacks_on_narrow_viewport(
