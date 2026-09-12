@@ -392,8 +392,11 @@ class TestProfilePage:
         assert ">A<" in body or "avatar" in body
         assert "alice/alpha" in body
         assert "alice/beta" in body
-        # Private repos are visible to anonymous? No — only public are listed.
-        assert "alice/gamma" not in body
+        # Private repos are filtered from the catalog card grid; the
+        # recent-activity tile does surface the owner's creations, so
+        # anchor the check on the catalog grid section only.
+        cards_grid = body.split('<section class="profile-repos"', 1)[1]
+        assert "alice/gamma" not in cards_grid
         # Tab labels.
         for label in ("Models", "Datasets", "Spaces"):
             assert label in body

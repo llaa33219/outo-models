@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.0 — Profiles, activity, repo colors
+
+### Added
+
+- **Profile page rework**: two-tile layout — left profile tile (avatar,
+  display name, @username, bio, AI/ML interest chips, external links,
+  recent activity timeline) beside the repositories tile.
+- **Profile editing** (`/{username}/edit`, owner-only): display name,
+  bio, up to 12 interest tags, up to 8 http(s) links. Backed by
+  `POST /api/users/me/profile` (migration 0003).
+- **Repo accent colors**: owners pick a palette color at creation or
+  from the repo page; cards and the repo header render a soft tint.
+  `PATCH /api/repos/{owner}/{name}` accepts `color` (#RRGGBB or "").
+- `recent_activity` helper (repo creations + pushes, newest first).
+
 ## v0.4.7 — Fix repeated-upload DivergedBranches + real LFS sizes in listings
 
 ### Fixed

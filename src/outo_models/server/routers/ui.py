@@ -23,8 +23,11 @@ so the navbar context (current user, active section) is uniform.
 from __future__ import annotations
 
 import contextlib
+import json
+import re
 import secrets
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -51,7 +54,7 @@ from outo_models.auth import (
 from outo_models.auth.permissions import Scope
 from outo_models.auth.sessions import SESSION_COOKIE_NAME
 from outo_models.config import Settings, get_settings
-from outo_models.db import Repo, RepoLike, User
+from outo_models.db import AuditLog, Repo, RepoLike, User
 from outo_models.exceptions import (
     ConflictError,
     NotFoundError,
@@ -73,6 +76,7 @@ from outo_models.repos.social import (
     list_comments,
     load_repo_or_404,
     load_user_or_404,
+    recent_activity,
     unfollow_user,
     unlike_repo,
 )
@@ -95,6 +99,12 @@ from outo_models.server.routers.auth import (
 )
 from outo_models.server.routers.auth import (
     parse_scopes,
+)
+from outo_models.server.routers.users import (
+    _validate_interests as _api_validate_interests,
+)
+from outo_models.server.routers.users import (
+    _validate_links as _api_validate_links,
 )
 from outo_models.spaces import (
     SpaceRuntimeManager,
@@ -202,6 +212,111 @@ def _kind_label(repo_kind: RepoKind) -> str:
 def _kind_to_nav(repo_kind: str) -> str | None:
     """Translate `Repo.kind` → the nav-bar `active_nav` key, or `None`."""
     return {"model": "models", "dataset": "datasets", "space": "spaces"}.get(repo_kind)
+
+
+# ---------------------------------------------------------------------------
+# Repo accent color palette (UI chrome — pick from a curated, BLP-friendly
+# set so the catalog never gets garish). The same list is reused by the
+# profile-page edit form (no JS color picker) and the repo header picker.
+# The hex values come from the 디자인.md auxiliary palette (§3.2).
+# ---------------------------------------------------------------------------
+
+
+REPO_COLOR_PALETTE: list[dict[str, str]] = [
+    {"value": "", "label": "None", "hex": ""},
+    {"value": "#DBEDFF", "label": "Sky", "hex": "#DBEDFF"},
+    {"value": "#D4DCE8", "label": "Mist", "hex": "#D4DCE8"},
+    {"value": "#DBE3FF", "label": "Periwinkle", "hex": "#DBE3FF"},
+    {"value": "#EEF5FC", "label": "Paper", "hex": "#EEF5FC"},
+    {"value": "#7FBCFF", "label": "Soft blue", "hex": "#7FBCFF"},
+    {"value": "#B8E1D8", "label": "Mint", "hex": "#B8E1D8"},
+    {"value": "#F2F6ED", "label": "Lime", "hex": "#F2F6ED"},
+    {"value": "#FCF5EE", "label": "Apricot", "hex": "#FCF5EE"},
+    {"value": "#D67FFF", "label": "Lilac", "hex": "#D67FFF"},
+]
+_REPO_COLOR_HEX_VALUES: set[str] = {entry["hex"] for entry in REPO_COLOR_PALETTE if entry["hex"]}
+
+
+def _is_valid_palette_color(color: str | None) -> bool:
+    """`True` if `color` is `None` or one of the palette hexes."""
+    if color is None or color == "":
+        return True
+    return color.lower() in {hex_val.lower() for hex_val in _REPO_COLOR_HEX_VALUES}
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _validate_palette_color(raw: str | None) -> str | None:
+    """Normalize a form-submitted color value.
+
+    The picker is a `<select>` with the curated palette as the only
+    legal values, but a hand-crafted POST could send anything; accept
+    `None` / empty (cleared), the palette entries, or any `#RRGGBB` so
+    the JSON PATCH endpoint at `/api/repos/{owner}/{name}` stays
+    reachable. Anything else raises `ValidationFailedError`.
+    """
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if cleaned.lower() in {hex_val.lower() for hex_val in _REPO_COLOR_HEX_VALUES}:
+        return cleaned.lower()
+    if _HEX_COLOR_RE.match(cleaned):
+        return cleaned.lower()
+    raise ValidationFailedError("color must be empty or in the form #RRGGBB (6 hex digits)")
+
+
+def _relative_time(at: datetime) -> str:
+    """Render a coarse 'relative-ish' label for the recent-activity tile.
+
+    The site is server-rendered with no JS clock; the timestamp itself is
+    kept available to the template via `activity_at_iso` so the user can
+    inspect the exact moment. The visible label is the rounded duration
+    in seconds/minutes/hours/days/years — coarse on purpose.
+    """
+    if at is None:
+        return ""
+    now = datetime.now(tz=UTC)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    delta = now - at
+    seconds = int(delta.total_seconds())
+    if seconds < 0:
+        return "just now"
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days < 30:
+        return f"{days}d ago"
+    months = days // 30
+    if months < 12:
+        return f"{months}mo ago"
+    years = days // 365
+    return f"{years}y ago"
+
+
+def _decode_json_field(raw: str | None) -> list[Any]:
+    """Parse a JSON list column (interests/links) into a Python list.
+
+    Returns an empty list on missing / malformed JSON so the template can
+    iterate without an `is None` check; mirrors the JSON API's behavior
+    in `routers/users.get_profile`.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 async def _require_login_user(
@@ -556,6 +671,9 @@ async def _render_repo_page(
         # Sidebar:
         "sidebar_info_rows": sidebar_info_rows,
         "has_readme": card_metadata is not None,
+        # Color picker (header — owner only).
+        "color_palette": REPO_COLOR_PALETTE,
+        "color_error": request.query_params.get("color_error"),
         # Spaces runtime tile (None for non-space repos; populated by
         # the dispatcher above for kind="space").
         "space_runtime": space_runtime,
@@ -706,6 +824,8 @@ async def new_repo_page(
             "form_name": "",
             "form_visibility": "private",
             "form_description": "",
+            "form_color": "",
+            "color_palette": REPO_COLOR_PALETTE,
             "error": None,
         },
     )
@@ -944,9 +1064,11 @@ async def user_profile_page(
 ) -> Response:
     """Render the Hugging Face-style profile page.
 
-    Shows the user's avatar (initial), name, joined date, and a tabbed
-    list of their Models / Datasets / Spaces. 404s when the username
-    has no matching row.
+    Shows the user's avatar (initial), display name, bio, interests,
+    external links, recent activity, and a tabbed list of their
+    Models / Datasets / Spaces — split into a left profile tile + a
+    right repos tile per the v0.5 layout. 404s when the username has
+    no matching row.
     """
     try:
         validate_slug(username)
@@ -983,6 +1105,13 @@ async def user_profile_page(
             continue
         grouped.setdefault(repo.kind, []).append(repo)
 
+    interests = _decode_json_field(profile.interests)
+    raw_links = _decode_json_field(profile.links)
+    links: list[dict[str, str]] = [
+        item for item in raw_links if isinstance(item, dict) and "label" in item and "url" in item
+    ]
+    activity = await recent_activity(db, user=profile, limit=10)
+
     return await _render(
         request,
         "users/profile.html",
@@ -993,6 +1122,190 @@ async def user_profile_page(
             "grouped": grouped,
             "is_self": is_self,
             "viewer_is_admin": viewer_is_admin,
+            "interests": interests,
+            "links": links,
+            "activity": activity,
+        },
+    )
+
+
+@router.get("/{username}/edit", response_class=HTMLResponse)
+async def profile_edit_page(
+    request: Request,
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the edit-profile form (owner only)."""
+    if user is None:
+        return RedirectResponse(
+            url=f"/login?next=/{username}/edit",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    try:
+        validate_slug(username)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if user.username != username:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "you can only edit your own profile"},
+        )
+    profile = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    if profile is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    interests = _decode_json_field(profile.interests)
+    raw_links = _decode_json_field(profile.links)
+    initial_links: list[dict[str, str]] = []
+    for item in raw_links:
+        if isinstance(item, dict) and "label" in item and "url" in item:
+            label = str(item.get("label", ""))
+            url = str(item.get("url", ""))
+            initial_links.append({"label": label, "url": url})
+    # Pad to 8 link rows so the form has a stable shape even when fewer are saved.
+    while len(initial_links) < 8:
+        initial_links.append({"label": "", "url": ""})
+
+    return _form_page(
+        request,
+        "users/profile_edit.html",
+        user=user,
+        active_nav=None,
+        context={
+            "profile": profile,
+            "form_display_name": profile.display_name or "",
+            "form_bio": profile.bio or "",
+            "form_interests_csv": ", ".join(interests),
+            "form_links": initial_links,
+            "error": None,
+            "error_field": None,
+        },
+    )
+
+
+@router.post("/{username}/edit")
+async def profile_edit_form(
+    request: Request,
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(_require_login_user)],
+    display_name: Annotated[str, Form()] = "",
+    bio: Annotated[str, Form()] = "",
+    interests_csv: Annotated[str, Form(alias="interests")] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Save the form-submitted profile fields (owner only, CSRF-protected).
+
+    Re-renders the form on validation failure so the user fixes the bad
+    field in-place; success redirects back to `/{username}`.
+    """
+    verify_csrf(request, form_token=csrf)
+    try:
+        validate_slug(username)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if user.username != username:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "you can only edit your own profile"},
+        )
+    profile = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    if profile is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+
+    # Parse + validate the form inputs using the same rules as the JSON
+    # API (single-sourced via `_api_validate_*` from `routers/users.py`).
+    raw_form = dict(await request.form())
+    labels: list[str] = []
+    urls: list[str] = []
+    for idx in range(8):
+        labels.append(str(raw_form.get(f"link_label_{idx}", "") or "").strip())
+        urls.append(str(raw_form.get(f"link_url_{idx}", "") or "").strip())
+
+    cleaned_links = [
+        {"label": label, "url": url}
+        for label, url in zip(labels, urls, strict=False)
+        if label or url
+    ]
+
+    interests_list = [raw.strip() for raw in interests_csv.split(",") if raw.strip()]
+
+    error: str | None = None
+    error_field: str | None = None
+    cleaned_display_name: str | None = display_name.strip() or None
+    cleaned_bio: str | None = bio.strip() or None
+
+    if cleaned_display_name is not None and len(cleaned_display_name) > 80:
+        error = "Display name must be 80 characters or fewer."
+        error_field = "display_name"
+    elif cleaned_bio is not None and len(cleaned_bio) > 2000:
+        error = "Bio must be 2000 characters or fewer."
+        error_field = "bio"
+    else:
+        try:
+            cleaned_interests = _api_validate_interests(interests_list) if interests_list else []
+        except ValidationFailedError as exc:
+            error = str(exc)
+            error_field = "interests"
+        else:
+            try:
+                cleaned_links_list = _api_validate_links(cleaned_links) if cleaned_links else []
+            except ValidationFailedError as exc:
+                error = str(exc)
+                error_field = "links"
+
+    if error is None:
+        profile.display_name = cleaned_display_name
+        profile.bio = cleaned_bio
+        if cleaned_links:
+            profile.links = json.dumps(cleaned_links_list)
+        else:
+            profile.links = None
+        if interests_list:
+            profile.interests = json.dumps(cleaned_interests)
+        else:
+            profile.interests = None
+        db.add(
+            AuditLog(
+                actor_id=user.id,
+                action="user.profile_update",
+                target_type="user",
+                target_id=str(profile.id),
+            )
+        )
+        await db.commit()
+        return RedirectResponse(url=f"/{username}", status_code=status.HTTP_303_SEE_OTHER)
+
+    # Re-render the form with the typed values + error inline.
+    initial_links = [{"label": label, "url": url} for label, url in zip(labels, urls, strict=False)]
+    while len(initial_links) < 8:
+        initial_links.append({"label": "", "url": ""})
+
+    return _form_page(
+        request,
+        "users/profile_edit.html",
+        user=user,
+        active_nav=None,
+        context={
+            "profile": profile,
+            "form_display_name": display_name,
+            "form_bio": bio,
+            "form_interests_csv": interests_csv,
+            "form_links": initial_links,
+            "error": error,
+            "error_field": error_field,
         },
     )
 
@@ -1070,6 +1383,67 @@ async def repo_like_form(
         await unlike_repo(db, user=viewer, repo=repo)
     else:
         await like_repo(db, user=viewer, repo=repo)
+    await db.commit()
+    target = _safe_redirect_target(request, owner=owner, name=name, default_tab="")
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{owner}/{name}/color")
+async def repo_color_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+    color: Annotated[str, Form()] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Update the repo accent color from the header picker (owner only).
+
+    Mirrors the JSON PATCH at `/api/repos/{owner}/{name}` for the
+    `color` field but writes through `repo.color` directly so the form
+    path does not need an extra HTTP round-trip. The same `#RRGGBB`
+    validation applies (`""` / palette-only / hex).
+    """
+    if user is None:
+        target = _safe_redirect_target(request, owner=owner, name=name, default_tab="")
+        return RedirectResponse(
+            url=f"/login?next={target}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    verify_csrf(request, form_token=csrf)
+    try:
+        validate_slug(owner)
+        validate_slug(name)
+    except ValidationFailedError:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    repo = await load_repo_or_404(db, owner=owner, name=name)
+    if repo.owner_id != user.id and user.role != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "only the owner may change the color"},
+        )
+    try:
+        new_color = _validate_palette_color(color)
+    except ValidationFailedError as exc:
+        target = _safe_redirect_target(request, owner=owner, name=name, default_tab="")
+        sep = "&" if "?" in target else "?"
+        return RedirectResponse(
+            url=f"{target}{sep}color_error={exc}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    repo.color = new_color
+    db.add(
+        AuditLog(
+            actor_id=user.id,
+            action="repo.color_update",
+            target_type="repo",
+            target_id=str(repo.id),
+        )
+    )
     await db.commit()
     target = _safe_redirect_target(request, owner=owner, name=name, default_tab="")
     return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
@@ -1225,6 +1599,7 @@ async def new_repo_form(
     name: Annotated[str, Form()],
     visibility: Annotated[str, Form()],
     description: Annotated[str, Form()] = "",
+    color: Annotated[str, Form()] = "",
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
 ) -> Response:
     """Create a new model / dataset / space; redirect to its repo page."""
@@ -1241,6 +1616,8 @@ async def new_repo_form(
                 "form_name": name,
                 "form_visibility": visibility,
                 "form_description": description,
+                "form_color": color or "",
+                "color_palette": REPO_COLOR_PALETTE,
                 "error": error_message,
             },
         )
@@ -1258,6 +1635,11 @@ async def new_repo_form(
     except ValidationFailedError as exc:
         return _re_render(str(exc))
 
+    try:
+        normalized_color = _validate_palette_color(color)
+    except ValidationFailedError as exc:
+        return _re_render(str(exc))
+
     description_clean = description.strip() or None
     try:
         if repo_kind == RepoKind.SPACE:
@@ -1268,6 +1650,7 @@ async def new_repo_form(
                 sdk="static",
                 visibility=visibility_enum,
                 description=description_clean,
+                color=normalized_color,
             )
         else:
             created = await create_repo(
@@ -1277,6 +1660,7 @@ async def new_repo_form(
                 kind=repo_kind,
                 visibility=visibility_enum,
                 description=description_clean,
+                color=normalized_color,
             )
     except (ConflictError, ValidationFailedError, NotFoundError) as exc:
         # Rollback any partial writes from the failed create, then refresh

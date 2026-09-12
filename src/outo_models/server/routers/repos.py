@@ -71,6 +71,7 @@ class RepoSummary(BaseModel):
     owner: str
     clone_url: str
     created_at: str
+    color: str | None = None
 
 
 class RepoDetail(RepoSummary):
@@ -85,6 +86,11 @@ class PatchRepoRequest(BaseModel):
 
     visibility: Visibility | None = None
     description: str | None = Field(default=None, max_length=500)
+    color: str | None = Field(
+        default=None,
+        pattern=r"^$|^#[0-9a-fA-F]{6}$",
+        description="Accent color #RRGGBB; empty string clears it.",
+    )
 
 
 class CommentRequest(BaseModel):
@@ -119,6 +125,7 @@ def _summary(row: Repo) -> RepoSummary:
         owner=row.owner.username if row.owner is not None else "",
         clone_url=clone_url(row.owner.username, row.name) if row.owner else "",
         created_at=row.created_at.isoformat(),
+        color=row.color,
     )
 
 
@@ -230,6 +237,7 @@ async def get_repo(
         owner=repo.owner.username if repo.owner else owner,
         clone_url=clone_url(repo.owner.username, repo.name) if repo.owner else "",
         created_at=repo.created_at.isoformat(),
+        color=repo.color,
         default_branch=repo.default_branch,
         recent_revisions=[
             {
@@ -259,6 +267,8 @@ async def patch_repo(
         repo.visibility = body.visibility.value
     if body.description is not None:
         repo.description = body.description
+    if body.color is not None:
+        repo.color = body.color or None
     await db.commit()
     await db.refresh(repo)
     return _summary(repo)

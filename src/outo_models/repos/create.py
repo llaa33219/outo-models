@@ -9,6 +9,7 @@ transaction.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 
 from dulwich import porcelain
@@ -16,11 +17,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outo_models.db import AuditLog, Repo, User
-from outo_models.exceptions import ConflictError
+from outo_models.exceptions import ConflictError, ValidationFailedError
 from outo_models.repos.models import RepoKind, Visibility
 from outo_models.repos.quota import ensure_quota_rows
 from outo_models.repos.storage import REPO_LOCKS, repo_fs_path
 from outo_models.utils import repos_dir, validate_slug
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _normalize_color(color: str | None) -> str | None:
+    """Normalize + validate the optional accent color.
+
+    Accepts `None`, empty string (cleared), or `#RRGGBB`. Anything else
+    raises `ValidationFailedError` so callers can surface a 422 / form
+    error without inspecting the regex themselves.
+    """
+    if color is None:
+        return None
+    cleaned = color.strip()
+    if not cleaned:
+        return None
+    if not _HEX_COLOR_RE.match(cleaned):
+        raise ValidationFailedError("color must be empty or in the form #RRGGBB (6 hex digits)")
+    return cleaned.lower()
 
 
 async def create_repo(
@@ -31,6 +51,7 @@ async def create_repo(
     kind: RepoKind,
     visibility: Visibility = Visibility.PRIVATE,
     description: str | None = None,
+    color: str | None = None,
 ) -> Repo:
     """Create a bare repo on disk and a matching `Repo` row.
 
@@ -93,6 +114,7 @@ async def create_repo(
                 default_branch="main",
                 size_bytes=0,
                 path=relative_path,
+                color=_normalize_color(color),
             )
             session.add(repo)
 

@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, User, UserFollow
+from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, Revision, User, UserFollow
 from outo_models.exceptions import ForbiddenError, NotFoundError, ValidationFailedError
 
 _COMMENT_BODY_MAX = 4000
@@ -311,3 +313,76 @@ __all__ = [
     "unfollow_user",
     "unlike_repo",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Recent activity (profile page)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityItem:
+    """One row in the profile's recent-activity tile."""
+
+    type: str  # "repo" | "push"
+    repo_owner: str
+    repo_name: str
+    kind: str
+    text: str
+    at: datetime
+
+
+async def recent_activity(
+    session: AsyncSession, *, user: User, limit: int = 10
+) -> list[ActivityItem]:
+    """Return the user's recent repo creations and pushes, newest first.
+
+    Repos the user created are read from `Repo.created_at`; pushes are
+    read from `Revision` rows the user authored. Both are mixed and
+    re-sorted so the profile shows one coherent timeline.
+    """
+    repos = (
+        (
+            await session.execute(
+                select(Repo)
+                .where(Repo.owner_id == user.id)
+                .order_by(Repo.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    revisions = (
+        await session.execute(
+            select(Revision, Repo)
+            .join(Repo, Revision.repo_id == Repo.id)
+            .where(Revision.author_id == user.id)
+            .order_by(Revision.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    items: list[ActivityItem] = [
+        ActivityItem(
+            type="repo",
+            repo_owner=user.username,
+            repo_name=r.name,
+            kind=r.kind,
+            text=f"created {r.kind} {r.name}",
+            at=r.created_at,
+        )
+        for r in repos
+    ]
+    items += [
+        ActivityItem(
+            type="push",
+            repo_owner=r.owner.username if r.owner else user.username,
+            repo_name=r.name,
+            kind=r.kind,
+            text=f"pushed {rev.commit_sha[:7]}",
+            at=rev.created_at,
+        )
+        for rev, r in revisions
+    ]
+    items.sort(key=lambda i: i.at, reverse=True)
+    return items[:limit]

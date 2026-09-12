@@ -35,6 +35,9 @@ class Repo(IntIdMixin, TimestampWithUpdateMixin, Base):
         String(16), nullable=False, default="private", server_default="private"
     )
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Optional accent color (#RRGGBB) chosen by the owner; rendered as a
+    # soft background tint on cards and the repo page header.
+    color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     default_branch: Mapped[str] = mapped_column(
         String(64), nullable=False, default="main", server_default="main"
     )

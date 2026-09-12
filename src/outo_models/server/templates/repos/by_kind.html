@@ -46,7 +46,7 @@
       {% if repos %}
         <div class="repo-grid">
           {% for repo in repos %}
-            <article class="card">
+            <article class="card" {% if repo.color %}style="background-color: {{ repo.color }}"{% endif %}>
               <h2>
                 <a href="/{{ repo.owner.username }}/{{ repo.name }}">{{ repo.owner.username }}/{{ repo.name }}</a>
               </h2>

@@ -47,6 +47,12 @@ class User(IntIdMixin, TimestampWithUpdateMixin, Base):
     )
 
     display_name: Mapped[str | None] = mapped_column(nullable=True)
+    # Profile surface (shown on the public profile page): short bio,
+    # JSON list of AI/ML interest tags, and JSON list of external links
+    # ({label, url}). Stored as JSON text for simple forward-compat.
+    bio: Mapped[str | None] = mapped_column(nullable=True)
+    interests: Mapped[str | None] = mapped_column(nullable=True)
+    links: Mapped[str | None] = mapped_column(nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", use_alter=True, name="fk_users_approved_by_id_users"),

@@ -1,56 +1,309 @@
 {% extends "base.html" %}
-{% block title %}{{ profile.username }} &mdash; outo-models{% endblock %}
+{% block title %}{{ profile.display_name or profile.username }} &mdash; outo-models{% endblock %}
 {% block content %}
-  <section class="profile-card">
-    <span class="avatar lg">{{ profile.username[0]|upper }}</span>
-    <div>
-      <h1>{{ profile.username }}</h1>
-      <div class="meta">
-        {{ profile.display_name or '' }}
-        {% if profile.display_name %}&middot;{% endif %}
-        Joined {{ profile.created_at.strftime('%B %Y') }}
-      </div>
-    </div>
-    {% if is_self or viewer_is_admin %}
-      <div style="margin-left:auto;display:flex;gap:var(--gap-tile);align-items:center">
-        <a href="/new" class="new-btn">New</a>
+  <div class="profile-layout">
+    {# --------------------------------------------------------------------
+     * Left tile — identity, bio, interests, links, recent activity.
+     * BLP: square 2px border, no radius, instant border hover. Avatar is
+     * a larger circular element inside the square tile (the tile itself
+     * is the chrome, the avatar is the "small element" §2.1 exception).
+     * -------------------------------------------------------------------- #}
+    <aside class="profile-tile" aria-label="Profile">
+      <div class="profile-tile__header">
+        <span class="avatar lg" aria-hidden="true">{{ profile.username[0]|upper }}</span>
+        <div class="profile-tile__id">
+          <h1 class="profile-tile__display-name">
+            {{ profile.display_name or profile.username }}
+          </h1>
+          <div class="profile-tile__handle muted">
+            <a href="/{{ profile.username }}">@{{ profile.username }}</a>
+          </div>
+          <div class="profile-tile__joined muted">
+            Joined {{ profile.created_at.strftime('%B %Y') if profile.created_at else '' }}
+          </div>
+        </div>
         {% if is_self %}
-          <a href="/settings/tokens" class="nav-link">Access tokens</a>
+          <a href="/{{ profile.username }}/edit" class="profile-tile__edit nav-link">Edit profile</a>
         {% endif %}
       </div>
-    {% endif %}
-  </section>
 
-  <nav class="tabs" aria-label="Repository sections">
-    <a href="#models" class="active" data-kind="model">Models <span class="muted">({{ grouped.model|length }})</span></a>
-    <a href="#datasets" data-kind="dataset">Datasets <span class="muted">({{ grouped.dataset|length }})</span></a>
-    <a href="#spaces" data-kind="space">Spaces <span class="muted">({{ grouped.space|length }})</span></a>
-  </nav>
+      {% if profile.bio %}
+        <p class="profile-tile__bio">{{ profile.bio }}</p>
+      {% else %}
+        <p class="profile-tile__bio profile-tile__bio--empty muted">
+          {% if is_self %}
+            <a href="/{{ profile.username }}/edit">Add a short bio</a> so visitors know who you are.
+          {% else %}
+            {{ profile.username }} hasn't written a bio yet.
+          {% endif %}
+        </p>
+      {% endif %}
 
-  {% macro section(kind, items, heading) %}
-    <section id="{{ kind }}s">
-      <h2>{{ heading }}</h2>
-      {% if items %}
-        <div class="repo-grid">
-          {% for repo in items %}
-            <article class="card">
-              <h2><a href="/{{ profile.username }}/{{ repo.name }}">{{ repo.name }}</a></h2>
-              <div>
-                <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
-                <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
-              </div>
-              <p class="desc">{{ repo.description or "" }}</p>
-              <p class="meta">Created {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else '' }}</p>
-            </article>
+      {% if interests %}
+        <div class="profile-tile__interests" aria-label="Interests">
+          {% for tag in interests %}
+            <span class="pill">{{ tag }}</span>
           {% endfor %}
         </div>
-      {% else %}
-        <p class="muted">No {{ heading|lower }} yet.</p>
       {% endif %}
-    </section>
-  {% endmacro %}
 
-  {{ section('model', grouped.model, 'Models') }}
-  {{ section('dataset', grouped.dataset, 'Datasets') }}
-  {{ section('space', grouped.space, 'Spaces') }}
+      {% if links %}
+        <ul class="profile-tile__links" aria-label="Links">
+          {% for link in links %}
+            <li class="profile-tile__link">
+              <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+              <span class="profile-tile__link-url muted">{{ link.url }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      <section class="profile-tile__activity" aria-label="Recent activity">
+        <h2 class="profile-tile__activity-title">Recent activity</h2>
+        {% if activity %}
+          <ul class="profile-tile__activity-list">
+            {% for item in activity %}
+              <li class="profile-tile__activity-row">
+                <span class="pill profile-tile__activity-chip profile-tile__activity-chip--{{ item.type }}">
+                  {% if item.type == 'push' %}pushed{% else %}created{% endif %}
+                </span>
+                <a class="profile-tile__activity-link"
+                   href="/{{ item.repo_owner }}/{{ item.repo_name }}">{{ item.repo_owner }}/{{ item.repo_name }}</a>
+                <time class="profile-tile__activity-time muted" datetime="{{ item.at.isoformat() }}">
+                  {{ item.at.strftime('%Y-%m-%d') if item.at else '' }}
+                </time>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="profile-tile__activity-empty muted">
+            {% if is_self %}
+              Your first repo or push will appear here.
+            {% else %}
+              {{ profile.username }} hasn't created any repos or pushed any commits yet.
+            {% endif %}
+          </p>
+        {% endif %}
+      </section>
+    </aside>
+
+    {# --------------------------------------------------------------------
+     * Right tile — repos grouped by kind. Three sub-sections stacked;
+     * each section header doubles as the kind anchor for tab-style nav
+     * via in-page links. BLP: same square tile chrome.
+     * -------------------------------------------------------------------- #}
+    <section class="profile-repos" aria-label="Repositories">
+      <nav class="profile-repos__tabs tabs" aria-label="Repository sections">
+        <a href="#models" class="profile-repos__tab">Models <span class="muted">({{ grouped.model|length }})</span></a>
+        <a href="#datasets" class="profile-repos__tab">Datasets <span class="muted">({{ grouped.dataset|length }})</span></a>
+        <a href="#spaces" class="profile-repos__tab">Spaces <span class="muted">({{ grouped.space|length }})</span></a>
+      </nav>
+
+      {% macro section(kind, items, heading) %}
+        <section id="{{ kind }}s" class="profile-repos__section">
+          <h2 class="profile-repos__heading">{{ heading }}</h2>
+          {% if items %}
+            <div class="repo-grid">
+              {% for repo in items %}
+                <article class="card"
+                         {% if repo.color %}style="background-color: {{ repo.color }}"{% endif %}>
+                  <h2><a href="/{{ profile.username }}/{{ repo.name }}">{{ repo.name }}</a></h2>
+                  <div>
+                    <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+                    <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+                  </div>
+                  <p class="desc">{{ repo.description or "" }}</p>
+                  <p class="meta">Created {{ repo.created_at.strftime('%Y-%m-%d') if repo.created_at else '' }}</p>
+                </article>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted profile-repos__empty">No {{ heading|lower }} yet.</p>
+          {% endif %}
+        </section>
+      {% endmacro %}
+
+      {{ section('model', grouped.model, 'Models') }}
+      {{ section('dataset', grouped.dataset, 'Datasets') }}
+      {{ section('space', grouped.space, 'Spaces') }}
+    </section>
+  </div>
+
+  <style>
+    /* ============================================================
+     * Profile layout — two big element tiles side by side (the
+     * catalog split, 디자인.md §8). Stacks under 900px. Tiles are
+     * square 2px-bordered element tiles (instant border hover per
+     * §5.1). Content inside is plain BLP — capsule chips / pills,
+     * square textareas on the edit form.
+     * ============================================================ */
+    .profile-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+      gap: var(--gap-tile);
+      align-items: start;
+      margin-top: 4px;
+    }
+    @media (max-width: 900px) {
+      .profile-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .profile-tile,
+    .profile-repos {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 20px;
+      transition: border-color var(--t-tile);
+    }
+    .profile-tile:hover,
+    .profile-repos:hover { border-color: var(--color-main); }
+
+    /* Identity row — avatar + name + edit button. The avatar sits
+     * flush-left; the name+handle wrap below it on narrow tiles. */
+    .profile-tile__header {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .profile-tile__id { flex: 1; min-width: 0; }
+    .profile-tile__display-name {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      word-wrap: break-word;
+    }
+    .profile-tile__handle { font-size: 14px; margin-top: 2px; }
+    .profile-tile__handle a { color: var(--text-sub); }
+    .profile-tile__handle a:hover { color: var(--color-main); text-decoration: none; }
+    .profile-tile__joined { font-size: 13px; margin-top: 4px; }
+
+    .profile-tile__edit {
+      flex-shrink: 0;
+      align-self: center;
+    }
+
+    .profile-tile__bio {
+      margin: 16px 0 0;
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .profile-tile__bio--empty { font-style: italic; }
+
+    .profile-tile__interests {
+      margin: 16px 0 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .profile-tile__links {
+      list-style: none;
+      margin: 16px 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .profile-tile__link {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      border-bottom: var(--border-el) dashed var(--color-inactive);
+    }
+    .profile-tile__link:last-child { border-bottom: 0; }
+    .profile-tile__link a {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .profile-tile__link a:hover { color: var(--color-main); text-decoration: none; }
+    .profile-tile__link-url {
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .profile-tile__activity { margin-top: 20px; padding-top: 16px; border-top: var(--border-el) solid var(--color-inactive); }
+    .profile-tile__activity-title {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-sub);
+    }
+    .profile-tile__activity-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .profile-tile__activity-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 6px 0;
+      font-size: 14px;
+    }
+    .profile-tile__activity-chip {
+      flex-shrink: 0;
+      min-width: 64px;
+      justify-content: center;
+    }
+    .profile-tile__activity-chip--repo {
+      background: var(--blp-paper-blue);
+      border-color: var(--blp-light-blue);
+      color: var(--text);
+    }
+    .profile-tile__activity-chip--push {
+      background: var(--blp-paper-lime);
+      border-color: var(--blp-paper-green);
+      color: var(--blp-deep-dark);
+    }
+    .profile-tile__activity-link {
+      flex: 1;
+      min-width: 0;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .profile-tile__activity-link:hover { color: var(--color-main); text-decoration: none; }
+    .profile-tile__activity-time { font-size: 12px; }
+
+    /* Right tile — repos. Tab row mirrors the catalog; each section
+     * stacks below with its own heading and grid. */
+    .profile-repos__tabs {
+      margin: 0 0 16px;
+    }
+    .profile-repos__tab {
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 14px;
+      font: 500 14px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .profile-repos__tab:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+    .profile-repos__section { margin-top: 12px; }
+    .profile-repos__heading {
+      margin: 16px 0 8px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .profile-repos__empty { margin: 12px 0; }
+
+    /* Activity row anchors — used by the in-page nav. */
+    .profile-repos__section:first-of-type .profile-repos__heading { margin-top: 0; }
+  </style>
 {% endblock %}

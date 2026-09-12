@@ -3,7 +3,7 @@
 {% block content %}
   <p class="breadcrumbs"><a href="/{{ current_user.username }}">{{ current_user.username }}</a> &rarr; New</p>
   <h1>Create a new repository</h1>
-  <p class="muted">Pick a kind, name it, choose visibility, and add an optional description.</p>
+  <p class="muted">Pick a kind, name it, choose visibility, add an optional description, and pick an accent color.</p>
 
   {% if error %}<div class="errors">{{ error }}</div>{% endif %}
 
@@ -32,6 +32,18 @@
 
     <label for="description-input">Description (optional)</label>
     <textarea id="description-input" name="description" rows="3" maxlength="500">{{ form_description or '' }}</textarea>
+
+    <label for="color-select">Accent color (optional)</label>
+    <select id="color-select" name="color">
+      {% for entry in color_palette %}
+        <option value="{{ entry.value }}"
+                {% if (form_color or '') == entry.value %}selected{% endif %}
+                {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
+          {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <p class="help">Soft tint shown on catalog cards and the repo header. Pick <em>None</em> for no tint.</p>
 
     <p style="margin-top:16px"><button type="submit" class="primary">Create</button></p>
   </form>

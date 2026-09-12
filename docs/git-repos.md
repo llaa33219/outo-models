@@ -92,15 +92,23 @@ confirmation tile (`GET /logout`) and CSRF-protected
 
 The web UI exposes `GET /new` (login-gated) which renders a form
 with a kind dropdown (Model / Dataset / Space), a name field
-(slug-validated), a visibility selector (private / public), and an
-optional description. Submitting the form POSTs
-`POST /new` with the same `_csrf` double-submit cookie contract
-every other UI form uses. On success the user is redirected (303)
-to the new repo's overview page; on a name conflict or validation
-failure the form re-renders with the error in-page and the typed
-values preserved. The `space` kind delegates to
-`spaces.registry.create_space` with the default `static` SDK; the
-other kinds delegate to `repos.create.create_repo`.
+(slug-validated), a visibility selector (private / public), an
+optional description, and an accent-color select. Submitting the
+form POSTs `POST /new` with the same `_csrf` double-submit cookie
+contract every other UI form uses. On success the user is
+redirected (303) to the new repo's overview page; on a name
+conflict or validation failure the form re-renders with the error
+in-page and the typed values preserved. The `space` kind delegates
+to `spaces.registry.create_space` with the default `static` SDK;
+the other kinds delegate to `repos.create.create_repo`.
+
+The accent-color select picks from a curated palette of soft,
+BLP-friendly values (paper-blue / mint / apricot / lilac and a few
+auxiliary tones from the 디자인.md §3.2 palette). Owners can
+change or clear the color at any time from the repo page header
+via `POST /{owner}/{name}/color` (CSRF-protected, owner-only); the
+picker renders below the header tile for owners and is hidden for
+everyone else.
 
 The generated token is PASETO v4 local and expires 90 days after issuance
 by default. See [security.md](security.md#personal-access-token-pat) for

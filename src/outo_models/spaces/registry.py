@@ -138,6 +138,7 @@ async def create_space(
     sdk: str = DEFAULT_SDK,
     visibility: Visibility = Visibility.PRIVATE,
     description: str | None = None,
+    color: str | None = None,
 ) -> Repo:
     """Create a Space and its on-disk sidecar.
 
@@ -164,6 +165,7 @@ async def create_space(
         kind=RepoKind.SPACE,
         visibility=visibility,
         description=description,
+        color=color,
     )
 
     # On-disk sidecar last so the DB-side rollback path (a flush error

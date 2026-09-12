@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Edit profile &mdash; {{ profile.username }} &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs">
+    <a href="/{{ profile.username }}">{{ profile.username }}</a> &rarr; Edit profile
+  </p>
+
+  {% if error %}
+    <div class="errors" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/{{ profile.username }}/edit" class="form-card profile-edit">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="profile-display-name">Display name</label>
+    <input id="profile-display-name" type="text" name="display_name"
+           value="{{ form_display_name }}" maxlength="80" autocomplete="name">
+    <p class="help">Shown on your profile next to your username. Up to 80 characters.</p>
+
+    <label for="profile-bio">Bio</label>
+    <textarea id="profile-bio" name="bio" rows="4" maxlength="2000"
+              placeholder="A few sentences about you and your work&hellip;">{{ form_bio }}</textarea>
+    <p class="help">Up to 2000 characters. Plain text; line breaks are preserved.</p>
+
+    <label for="profile-interests">Interests</label>
+    <input id="profile-interests" type="text" name="interests"
+           value="{{ form_interests_csv }}" maxlength="400"
+           placeholder="nlp, vision, robotics">
+    <p class="help">Comma-separated tags (letters, digits, dash, underscore; up to 24 chars each; max 12 tags).</p>
+
+    <fieldset class="profile-edit__links">
+      <legend>Links</legend>
+      <p class="help">Up to 8 links. Leave both fields blank to skip a row. URLs must start with <code>http://</code> or <code>https://</code>.</p>
+      {% for entry in form_links %}
+        <div class="profile-edit__link-row">
+          <input type="text" name="link_label_{{ loop.index0 }}" value="{{ entry.label }}"
+                 maxlength="40" placeholder="Label (e.g. Website)" autocomplete="off">
+          <input type="url" name="link_url_{{ loop.index0 }}" value="{{ entry.url }}"
+                 maxlength="500" placeholder="https://..." autocomplete="off">
+        </div>
+      {% endfor %}
+    </fieldset>
+
+    <p class="form-actions">
+      <button type="submit" class="primary">Save profile</button>
+      <a class="nav-link" href="/{{ profile.username }}">Cancel</a>
+    </p>
+  </form>
+
+  <style>
+    /* Edit profile form — single column under 480px, two-column
+     * label/rows layout above. Square tiles throughout (디자인.md
+     * §1.3); the textarea inside is square per §2.1. */
+    .profile-edit { max-width: 640px; }
+    .profile-edit textarea {
+      min-height: 120px;
+      border-radius: 0; /* textarea square override (§2.1) */
+    }
+    .profile-edit__links {
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 12px 16px;
+      margin: 24px 0 0;
+      transition: border-color var(--t-tile);
+    }
+    .profile-edit__links:hover { border-color: var(--color-main); }
+    .profile-edit__links legend {
+      padding: 0 8px;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .profile-edit__link-row {
+      display: grid;
+      grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+    @media (max-width: 600px) {
+      .profile-edit__link-row { grid-template-columns: minmax(0, 1fr); }
+    }
+  </style>
+{% endblock %}

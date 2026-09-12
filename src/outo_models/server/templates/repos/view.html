@@ -6,7 +6,8 @@
    * BLP: square 2px tiles, capsule buttons (pill radius), no gradients.
    * Tabs are separate URLs so the active state is encoded in the path.
    * ------------------------------------------------------------------------ #}
-  <section class="repo-header">
+  <section class="repo-header"
+           {% if repo.color %}style="background-color: {{ repo.color }}"{% endif %}>
     <div class="repo-header__title">
       <h1>
         <a href="/{{ owner }}" class="repo-header__owner">{{ owner }}</a><span class="repo-header__slash">/</span><span class="repo-header__name">{{ repo.name }}</span>
@@ -57,6 +58,33 @@
       {% endif %}
     </div>
   </section>
+
+  {# Owner-only color picker — capsule form below the header so the
+   * tint can be tweaked without an extra page. Hidden for non-owners
+   * and anonymous viewers; submits to POST /{owner}/{name}/color. #}
+  {% if viewer_is_owner %}
+    <section class="repo-color-picker el-tile" aria-label="Repo accent color">
+      <h3>Accent color</h3>
+      {% if color_error %}
+        <div class="errors">{{ color_error }}</div>
+      {% endif %}
+      <form method="post" action="/{{ owner }}/{{ repo.name }}/color" class="repo-color-picker__form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label for="repo-color-select" class="muted">Tint</label>
+        <select id="repo-color-select" name="color">
+          {% for entry in color_palette %}
+            <option value="{{ entry.value }}"
+                    {% if (repo.color or '') == entry.value %}selected{% endif %}
+                    {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
+              {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="primary">Apply</button>
+      </form>
+      <p class="help">Tints catalog cards and this header. Leave on <em>None</em> for the default.</p>
+    </section>
+  {% endif %}
 
   {# ------------------------------------------------------------------------
    * Tabs — three capsules; the active one uses the permanent-selection
@@ -800,5 +828,29 @@
 
     /* Relative-positioning helper for the hidden clone-url source. */
     .repo-header { position: relative; }
+
+    /* Owner-only color picker — a small element tile below the header
+     * so the tint can be changed without a dedicated page. BLP: square
+     * tile chrome, capsule inputs/buttons. */
+    .repo-color-picker {
+      margin-top: 16px;
+      padding: 16px;
+    }
+    .repo-color-picker h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--text-sub);
+    }
+    .repo-color-picker__form {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .repo-color-picker__form select { min-width: 220px; }
+    .repo-color-picker .help { margin-top: 8px; }
   </style>
 {% endblock %}

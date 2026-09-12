@@ -6,14 +6,16 @@ public repos only; the profile owner and any admin sees private repos too.
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outo_models.db import Repo, User
-from outo_models.exceptions import NotFoundError
+from outo_models.db import AuditLog, Repo, User
+from outo_models.exceptions import NotFoundError, ValidationFailedError
 from outo_models.repos.models import Visibility
 from outo_models.repos.social import (
     follow_user,
@@ -70,9 +72,26 @@ async def get_profile(
             )
         )
     ).scalar_one()
+    links: list[dict[str, str]] = []
+    try:
+        parsed = json.loads(user.links or "[]")
+        if isinstance(parsed, list):
+            links = [x for x in parsed if isinstance(x, dict)]
+    except json.JSONDecodeError:
+        links = []
+    interests: list[str] = []
+    try:
+        parsed_i = json.loads(user.interests or "[]")
+        if isinstance(parsed_i, list):
+            interests = [str(x) for x in parsed_i]
+    except json.JSONDecodeError:
+        interests = []
     return {
         "username": user.username,
         "display_name": user.display_name,
+        "bio": user.bio,
+        "interests": interests,
+        "links": links,
         "created_at": user.created_at.isoformat(),
         "public_repo_count": int(repo_count or 0),
     }
@@ -169,3 +188,73 @@ async def get_follow_state_route(
 
 
 __all__ = ["router"]
+
+
+class UpdateProfileRequest(BaseModel):
+    """POST /api/users/me/profile body — all fields optional."""
+
+    display_name: str | None = Field(default=None, max_length=80)
+    bio: str | None = Field(default=None, max_length=2000)
+    interests: list[str] | None = None
+    links: list[dict[str, str]] | None = None
+
+
+def _validate_links(links: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Normalize + validate external links (http/https only)."""
+    if len(links) > 8:
+        raise ValidationFailedError("at most 8 links allowed")
+    cleaned: list[dict[str, str]] = []
+    for item in links:
+        label = str(item.get("label", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if not label or len(label) > 40:
+            raise ValidationFailedError("each link needs a label of 1-40 chars")
+        if not url.startswith(("http://", "https://")):
+            raise ValidationFailedError(f"link {label!r} must start with http:// or https://")
+        if len(url) > 500:
+            raise ValidationFailedError("link URL too long")
+        cleaned.append({"label": label, "url": url})
+    return cleaned
+
+
+def _validate_interests(interests: list[str]) -> list[str]:
+    if len(interests) > 12:
+        raise ValidationFailedError("at most 12 interests allowed")
+    cleaned: list[str] = []
+    for raw in interests:
+        tag = str(raw).strip().lower()
+        if not tag or len(tag) > 24 or not all(c.isalnum() or c in "-_" for c in tag):
+            raise ValidationFailedError(
+                f"invalid interest tag {raw!r} (letters/digits/-/_ up to 24 chars)"
+            )
+        cleaned.append(tag)
+    return cleaned
+
+
+@router.post("/me/profile", response_model=None)
+async def update_own_profile(
+    body: UpdateProfileRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    """Update the caller's public profile surface (display_name, bio,
+    AI/ML interest tags, external links). Route sits before /{username} so
+    `me` is never mistaken for a username."""
+    if body.display_name is not None:
+        user.display_name = body.display_name.strip() or None
+    if body.bio is not None:
+        user.bio = body.bio.strip() or None
+    if body.interests is not None:
+        user.interests = json.dumps(_validate_interests(body.interests)) if body.interests else None
+    if body.links is not None:
+        user.links = json.dumps(_validate_links(body.links)) if body.links else None
+    db.add(
+        AuditLog(
+            actor_id=user.id,
+            action="user.profile_update",
+            target_type="user",
+            target_id=str(user.id),
+        )
+    )
+    await db.commit()
+    return {"ok": True}
