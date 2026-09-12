@@ -106,7 +106,7 @@
             <div class="repo-grid">
               {% for repo in items %}
                 <article class="card"
-                         {% if repo.color %}style="background-color: {{ repo.color }}"{% endif %}>
+                         {% if repo.color %}style="background-color: color-mix(in srgb, {{ repo.color }} 14%, var(--tile-bg))"{% endif %}>
                   <h2><a href="/{{ profile.username }}/{{ repo.name }}">{{ repo.name }}</a></h2>
                   <div>
                     <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>

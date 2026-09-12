@@ -4,6 +4,17 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.3 — Settings tab matches the repo page; colors render as true tints
+
+### Fixed
+
+- Repo accent colors render as a **14% tint** (`color-mix` over the tile
+  background) on the repo header and catalog/profile cards — they
+  previously painted the full-strength hex, which garished deeper
+  palette entries.
+- The Settings tab now renders with the same header + tab strip +
+  panel layout as the other repo tabs instead of a detached form page.
+
 ## v0.5.2 — Wider profile tile, LFS-aware usage, card badges
 
 ### Fixed

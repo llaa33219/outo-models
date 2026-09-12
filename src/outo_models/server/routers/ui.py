@@ -1591,6 +1591,7 @@ async def repo_settings_page(
             "form_visibility": repo.visibility,
             "form_description": repo.description or "",
             "form_color": repo.color or "",
+            "tab_card_label": _kind_tab_label(repo.kind),
             "color_palette": REPO_COLOR_PALETTE,
             "error": None,
             "saved": request.query_params.get("saved") == "1",

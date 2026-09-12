@@ -1,70 +1,86 @@
 {% extends "base.html" %}
 {% block title %}Settings &mdash; {{ owner }}/{{ repo.name }} &mdash; outo-models{% endblock %}
 {% block content %}
-  <p class="breadcrumbs">
-    <a href="/{{ owner }}/{{ repo.name }}">{{ owner }}/{{ repo.name }}</a> &rarr; Settings
-  </p>
+  {# Same header + tab strip as the other repo tabs, so the Settings page
+     reads as "one of the tabs" instead of a detached form page. The
+     active tab is Settings; the others link back. #}
+  <section class="repo-header"
+           {% if repo.color %}style="background-color: color-mix(in srgb, {{ repo.color }} 14%, var(--tile-bg))"{% endif %}>
+    <div class="repo-header__title">
+      <h1>
+        <a href="/{{ owner }}" class="repo-header__owner">{{ owner }}</a><span class="repo-header__slash">/</span><span class="repo-header__name">{{ repo.name }}</span>
+      </h1>
+      <span class="pill {{ repo.kind }}">{{ repo.kind }}</span>
+      <span class="pill {{ repo.visibility }}">{{ repo.visibility }}</span>
+    </div>
+  </section>
 
-  <article class="settings-form el-tile" aria-label="Repository settings">
-    <h2>Repository settings</h2>
-    <p class="muted">
-      Change the visibility, description, and accent color. Renames are not
-      supported yet because they would invalidate the clone URL and every
-      downstream consumer pointing at the old name.
-    </p>
+  <nav class="repo-tabs" aria-label="Repository sections">
+    <a href="/{{ owner }}/{{ repo.name }}" class="tabs__link">{{ tab_card_label }}</a>
+    <a href="/{{ owner }}/{{ repo.name }}/files" class="tabs__link">Files</a>
+    <a href="/{{ owner }}/{{ repo.name }}/community" class="tabs__link">Community</a>
+    <a href="/{{ owner }}/{{ repo.name }}/settings" class="tabs__link tabs__link--active">Settings</a>
+  </nav>
 
-    {% if error %}<div class="errors" role="alert">{{ error }}</div>{% endif %}
-    {% if saved %}
-      <div class="settings-form__success" role="status">Settings saved.</div>
-    {% endif %}
+  <div class="repo-layout">
+    <div class="repo-layout__main">
+      <article class="repo-card settings-form" aria-label="Repository settings">
+        <h2>Settings</h2>
+        <p class="muted">
+          Visibility, description, and accent color. Renames are not supported
+          because they would invalidate the clone URL and every downstream
+          consumer pointing at the old name.
+        </p>
 
-    <form method="post" action="/{{ owner }}/{{ repo.name }}/settings">
-      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        {% if error %}<div class="errors" role="alert">{{ error }}</div>{% endif %}
+        {% if saved %}
+          <div class="settings-form__success" role="status">Settings saved.</div>
+        {% endif %}
 
-      <label for="settings-name">Name</label>
-      <div class="settings-form__read-only">
-        <span class="settings-form__read-only-code">{{ repo.name }}</span>
-        <span class="muted">Renames are not supported yet.</span>
-      </div>
+        <form method="post" action="/{{ owner }}/{{ repo.name }}/settings">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
-      <label for="settings-visibility">Visibility</label>
-      <select id="settings-visibility" name="visibility" required>
-        <option value="public" {% if form_visibility == 'public' %}selected{% endif %}>Public (everyone)</option>
-        <option value="private" {% if form_visibility == 'private' %}selected{% endif %}>Private (only you)</option>
-      </select>
-      <p class="help">Public repos appear in the catalog and can be cloned anonymously. Private repos require authentication and are invisible to non-owners.</p>
+          <label for="settings-name">Name</label>
+          <div class="settings-form__read-only">
+            <span class="settings-form__read-only-code">{{ repo.name }}</span>
+            <span class="muted">Renames are not supported yet.</span>
+          </div>
 
-      <label for="settings-description">Description</label>
-      <textarea id="settings-description" name="description" rows="4"
-                maxlength="500"
-                placeholder="A short summary of what this {{ repo.kind }} contains&hellip;">{{ form_description }}</textarea>
-      <p class="help">Up to 500 characters. Plain text; line breaks are preserved.</p>
+          <label for="settings-visibility">Visibility</label>
+          <select id="settings-visibility" name="visibility" required>
+            <option value="public" {% if form_visibility == 'public' %}selected{% endif %}>Public (everyone)</option>
+            <option value="private" {% if form_visibility == 'private' %}selected{% endif %}>Private (only you)</option>
+          </select>
+          <p class="help">Public repos appear in the catalog and can be cloned anonymously. Private repos require authentication and are invisible to non-owners.</p>
 
-      <label for="settings-color">Accent color</label>
-      <div class="settings-form__color-row">
-        <select id="settings-color" name="color">
-          {% for entry in color_palette %}
-            <option value="{{ entry.value }}"
-                    {% if (form_color or '') == entry.value %}selected{% endif %}
-                    {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
-              {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-      <p class="help">Soft tint shown on catalog cards and the repo header. Pick <em>None</em> to clear it.</p>
+          <label for="settings-description">Description</label>
+          <textarea id="settings-description" name="description" rows="4"
+                    maxlength="500"
+                    placeholder="A short summary of what this {{ repo.kind }} contains&hellip;">{{ form_description }}</textarea>
+          <p class="help">Up to 500 characters. Plain text; line breaks are preserved.</p>
 
-      <p class="form-actions">
-        <button type="submit" class="primary">Save changes</button>
-        <a class="nav-link" href="/{{ owner }}/{{ repo.name }}">Cancel</a>
-      </p>
-    </form>
-  </article>
+          <label for="settings-color">Accent color</label>
+          <select id="settings-color" name="color">
+            {% for entry in color_palette %}
+              <option value="{{ entry.value }}"
+                      {% if (form_color or '') == entry.value %}selected{% endif %}
+                      {% if entry.hex %}style="background-color: {{ entry.hex }}"{% endif %}>
+                {{ entry.label }}{% if entry.hex %} ({{ entry.hex }}){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <p class="help">Soft tint shown on catalog cards and the repo header. Pick <em>None</em> to clear it.</p>
+
+          <p class="form-actions">
+            <button type="submit" class="primary">Save changes</button>
+            <a class="nav-link" href="/{{ owner }}/{{ repo.name }}">Cancel</a>
+          </p>
+        </form>
+      </article>
+    </div>
+  </div>
 
   <style>
-    /* Success chip after a successful POST — same paper-blue capsule
-     * pattern as the other inline notifications. Square tile chrome
-     * per 디자인.md §1.3. */
     .settings-form__success {
       margin: 16px 0;
       padding: 12px 16px;
@@ -74,5 +90,20 @@
       border-radius: 0;
       font-size: 13px;
     }
+    .settings-form__read-only {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 4px 0 16px;
+    }
+    .settings-form__read-only-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      padding: 4px 10px;
+    }
+    .settings-form label { display: block; font-weight: 600; margin-top: 16px; }
+    .settings-form .help { margin-top: 4px; }
   </style>
 {% endblock %}

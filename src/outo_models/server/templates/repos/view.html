@@ -7,7 +7,7 @@
    * Tabs are separate URLs so the active state is encoded in the path.
    * ------------------------------------------------------------------------ #}
   <section class="repo-header"
-           {% if repo.color %}style="background-color: {{ repo.color }}"{% endif %}>
+           {% if repo.color %}style="background-color: color-mix(in srgb, {{ repo.color }} 14%, var(--tile-bg))"{% endif %}>
     <div class="repo-header__title">
       <h1>
         <a href="/{{ owner }}" class="repo-header__owner">{{ owner }}</a><span class="repo-header__slash">/</span><span class="repo-header__name">{{ repo.name }}</span>
