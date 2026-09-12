@@ -453,7 +453,7 @@ class TestRepoColorTint:
         header_block = view.text.split('<section class="repo-header"', 1)[1].split("</section>", 1)[
             0
         ]
-        assert "background-color: #dbedff" in header_block.lower()
+        assert "color-mix(in srgb, #dbedff 14%, var(--tile-bg))" in header_block.lower()
 
         # Catalog card carries the tint too.
         models = client.get("/models")
