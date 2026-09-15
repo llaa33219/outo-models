@@ -88,11 +88,28 @@
     </aside>
 
     {# --------------------------------------------------------------------
-     * Right tile — repos grouped by kind. Three sub-sections stacked;
-     * each section header doubles as the kind anchor for tab-style nav
-     * via in-page links. BLP: same square tile chrome.
+     * Right tile — repos grouped by kind. The profile README (from the
+     * `<username>/<username>` repo) renders first as a BLP square tile
+     * sharing the model-card chrome — same shape as the catalog card
+     * below, just above the kind tabs. It is optional: when the repo or
+     * its README is missing the tile is suppressed entirely (no empty
+     * state, no error).
      * -------------------------------------------------------------------- #}
     <section class="profile-repos" aria-label="Repositories">
+      {% if profile_readme and profile_readme_repo_name %}
+        <article class="profile-readme" aria-label="Profile README">
+          {% if profile_readme.body_html %}
+            {{ profile_readme.body_html | safe }}
+          {% else %}
+            <p class="muted">README is empty.</p>
+          {% endif %}
+          {% if profile_readme_repo_name and profile_readme_repo_name != profile.username %}
+            <p class="muted profile-readme__source">
+              Source: <a href="/{{ profile.username }}/{{ profile_readme_repo_name }}">{{ profile.username }}/{{ profile_readme_repo_name }}</a>
+            </p>
+          {% endif %}
+        </article>
+      {% endif %}
       <nav class="profile-repos__tabs tabs" aria-label="Repository sections">
         <a href="#models" class="profile-repos__tab">Models <span class="muted">({{ grouped.model|length }})</span></a>
         <a href="#datasets" class="profile-repos__tab">Datasets <span class="muted">({{ grouped.dataset|length }})</span></a>
@@ -307,6 +324,32 @@
       font-weight: 600;
     }
     .profile-repos__empty { margin: 12px 0; }
+
+    /* Profile README — same BLP square tile chrome as .repo-card so the
+     * visual rhythm matches the model card tab on the repo page. */
+    .profile-readme {
+      margin: 0 0 16px;
+    }
+    .profile-readme h1,
+    .profile-readme h2,
+    .profile-readme h3 {
+      letter-spacing: -0.01em;
+      margin: 16px 0 8px;
+    }
+    .profile-readme h1:first-child,
+    .profile-readme h2:first-child { margin-top: 0; }
+    .profile-readme p { margin: 8px 0; }
+    .profile-readme code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: var(--blp-paper-blue);
+      border: var(--border-el) solid var(--blp-light-blue);
+      padding: 1px 6px;
+      border-radius: 0;
+    }
+    .profile-readme pre code { background: none; border: none; padding: 0; }
+    .profile-readme pre { margin: 12px 0; }
+    .profile-readme__source { margin-top: 16px; font-size: 12px; }
 
     /* Activity row anchors — used by the in-page nav. */
     .profile-repos__section:first-of-type .profile-repos__heading { margin-top: 0; }

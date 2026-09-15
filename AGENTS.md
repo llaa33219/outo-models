@@ -78,10 +78,14 @@ working in this repository **must** follow.
    [`runtime_manager.py`](src/outo_models/spaces/runtime_manager.py), and
    [`build.py`](src/outo_models/spaces/build.py), and runs over a Podman
    REST client.
-   - It is **disabled by default** (`OUTO_SPACES_RUNTIME_ENABLED=false`).
-     Operators must opt in explicitly. Once enabled, the container must be
-     able to reach the Podman API socket (`OUTO_PODMAN_SOCKET`, default
-     `/run/podman/podman.sock`).
+   - It is **enabled by default** (`OUTO_SPACES_RUNTIME_ENABLED=true`).
+     The runtime dispatcher falls back to a `failed` status (and the Space
+     page surfaces the operator hint) when the Podman API socket is
+     unreachable, so the default-on posture does not break installs without
+     Podman mounted. Operators can opt out explicitly with
+     `OUTO_SPACES_RUNTIME_ENABLED=false`. The container must be able to
+     reach the Podman API socket (`OUTO_PODMAN_SOCKET`, default
+     `/run/podman/podman.sock`) for runtime calls to actually work.
    - The container runs **non-root** (uid 1000), so mount the Podman socket
      from the host (e.g.
      `-v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro`).

@@ -25,9 +25,14 @@ spin a fresh `FastAPI` per test against a tmpdir SQLite DB.
 from __future__ import annotations
 
 import re
+import shutil
+from pathlib import Path
 
+from dulwich import porcelain
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from outo_models.repos.storage import repo_fs_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,6 +63,42 @@ async def _seed_repo_with_upload(client: TestClient, *, name: str = "colored") -
         files={"files": ("hello.txt", b"hello", "text/plain")},
     )
     assert upload.status_code == 200, upload.text
+
+
+def _seed_bare_repo(
+    tmp_data_dir: Path,
+    *,
+    owner: str,
+    name: str,
+    files: dict[str, str],
+) -> None:
+    """Build a bare repo with the supplied files (committed to `main`).
+
+    Mirror of the helper used by `test_ui_repo_page`: the bare slot
+    created by the create-repo API is replaced with a fresh clone of a
+    temp worktree so the page reads exactly what's on disk.
+    """
+    work = tmp_data_dir / "src-repo"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir()
+    for rel_path, content in files.items():
+        target = work / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    porcelain.init(str(work))
+    porcelain.add(str(work), paths=list(files.keys()))
+    porcelain.commit(
+        str(work),
+        message=b"init",
+        author=b"alice <a@example.com>",
+        committer=b"alice <a@example.com>",
+    )
+    bare = repo_fs_path(owner, name)
+    bare.parent.mkdir(parents=True, exist_ok=True)
+    if bare.exists():
+        shutil.rmtree(bare)
+    porcelain.clone(str(work), str(bare), bare=True)
 
 
 # ---------------------------------------------------------------------------
@@ -691,9 +732,213 @@ class TestNewFormPalette:
             assert hex_value in body
 
 
+# ---------------------------------------------------------------------------
+# v0.5.6 — Profile README (`<username>/<username>` repo acts as the README).
+# ---------------------------------------------------------------------------
+
+
+class TestProfileReadme:
+    """The `<username>/<username>` repo renders as the profile README.
+
+    Renders only when:
+        - the `<username>/<username>` repo exists for that user,
+        - the repo's default branch has a README.md at the root,
+        - the repo is visible to the viewer (public, or owned by self/admin).
+
+    Otherwise the profile page renders no README tile (no error).
+    """
+
+    async def test_profile_readme_renders_when_username_username_has_readme(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        # Create the `<username>/<username>` repo via the API.
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos",
+            json={"name": "alice", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo(
+            tmp_data_dir,
+            owner="alice",
+            name="alice",
+            files={
+                "README.md": "# Hello\n\nThis is **alice**'s profile readme.\n",
+            },
+        )
+
+        response = client.get("/alice")
+        assert response.status_code == 200
+        body = response.text
+        # The README tile renders inside `article.profile-readme`. The
+        # BLP tile chrome lives in profile.html's page-local CSS, so
+        # the class name is profile-local (not the repo card class).
+        assert 'class="profile-readme' in body
+        # Body is sanitized + rendered as HTML through the same card
+        # pipeline the model card tab uses.
+        assert "Hello" in body
+        assert "<strong>alice</strong>" in body or "<b>alice</b>" in body
+
+    async def test_profile_readme_absent_when_no_username_repo(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        # No `<username>/<username>` repo created — profile renders without the tile.
+        response = client.get("/alice")
+        assert response.status_code == 200
+        body = response.text
+        # No `article.profile-readme` element rendered. We anchor on the
+        # class-with-tag combination so the test does not match the CSS
+        # selectors inside the inline `<style>` block.
+        assert 'class="profile-readme' not in body
+        # The right repos tile is still present (Models / Datasets / Spaces).
+        assert 'class="profile-repos"' in body
+
+    async def test_profile_readme_absent_when_readme_missing(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos",
+            json={"name": "alice", "kind": "model", "visibility": "public"},
+        )
+        # Repo exists, but no README.md at the root.
+        _seed_bare_repo(
+            tmp_data_dir,
+            owner="alice",
+            name="alice",
+            files={"other.txt": "no readme here"},
+        )
+
+        response = client.get("/alice")
+        body = response.text
+        assert 'class="profile-readme' not in body
+
+    async def test_profile_readme_sanitizes_script_tags(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos",
+            json={"name": "alice", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo(
+            tmp_data_dir,
+            owner="alice",
+            name="alice",
+            files={
+                # README.md with a script injection attempt — the sanitizer
+                # from `repos.card` MUST strip the <script> tag.
+                "README.md": "# Title\n<script>alert('xss')</script>\n",
+            },
+        )
+
+        response = client.get("/alice")
+        body = response.text
+        assert 'class="profile-readme' in body
+        assert "<script>alert" not in body
+        # The benign text still renders.
+        assert "Title" in body
+
+    async def test_profile_readme_hidden_for_stranger_when_private(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos",
+            json={"name": "alice", "kind": "model", "visibility": "private"},
+        )
+        _seed_bare_repo(
+            tmp_data_dir,
+            owner="alice",
+            name="alice",
+            files={"README.md": "# Private bio\n"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+
+        response = client.get("/alice")
+        body = response.text
+        # Private profile-README repo → tile is hidden for strangers
+        # (no error, no leaked existence).
+        assert 'class="profile-readme' not in body
+
+    async def test_profile_readme_visible_for_owner_when_private(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/repos",
+            json={"name": "alice", "kind": "model", "visibility": "private"},
+        )
+        _seed_bare_repo(
+            tmp_data_dir,
+            owner="alice",
+            name="alice",
+            files={"README.md": "# Owner-only bio\n"},
+        )
+
+        response = client.get("/alice")
+        body = response.text
+        # Owner sees their own private README.
+        assert 'class="profile-readme' in body
+        assert "Owner-only bio" in body
+
+
+def _login(client: TestClient, username: str) -> None:
+    """Log `username` in via the JSON API."""
+    response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": "correct horse battery staple"},
+    )
+    assert response.status_code == 200, response.text
+
+
 __all__ = [
     "TestNewFormPalette",
     "TestProfileEditPage",
     "TestProfilePageLayout",
+    "TestProfileReadme",
     "TestRepoColorTint",
 ]

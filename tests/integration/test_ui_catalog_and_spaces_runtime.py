@@ -295,16 +295,49 @@ class TestSpaceRuntimeTile:
         client.post("/api/auth/logout")
         return client
 
-    async def test_runtime_tile_renders_when_runtime_disabled(
+    async def test_runtime_tile_renders_when_runtime_unreachable(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
-        # Default settings: spaces_runtime_enabled=False.
+        # v0.5.6: settings.spaces_runtime_enabled defaults True; in CI
+        # the Podman socket is not mounted, so the dispatcher reports
+        # `failed` with the runtime manager hint. No iframe, no start /
+        # stop capsules (owner can't start without Podman).
         client = await self._seed_anon_space(app, seed_approved_user)
         response = client.get("/alice/demo-space")
         assert response.status_code == 200
         body = response.text
         assert "repo-sidebar__tile--runtime" in body
-        # State chip shows "disabled" and the message is the admin hint.
+        # State chip shows "failed" (or "stopped" when the dispatcher
+        # reports the runtime is enabled but no container is running).
+        assert (
+            "repo-sidebar__runtime-chip--failed" in body
+            or "repo-sidebar__runtime-chip--stopped" in body
+        )
+        # Without a running container: no iframe, no "Open the Space" link.
+        assert "<iframe" not in body
+        assert "Open the Space" not in body
+
+    async def test_runtime_tile_renders_when_runtime_explicitly_disabled(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        monkeypatch,
+    ) -> None:
+        # The "disabled" branch now fires only when an operator sets
+        # OUTO_SPACES_RUNTIME_ENABLED=false explicitly (the default is
+        # ON). Verify the chip + admin hint still appear in that path.
+        client, app_obj, _ = app  # type: ignore[misc]
+        from copy import deepcopy
+
+        live_settings = deepcopy(app_obj.state.settings)
+        live_settings.spaces_runtime_enabled = False
+        app_obj.state.settings = live_settings
+
+        client = await self._seed_anon_space(app, seed_approved_user)
+        response = client.get("/alice/demo-space")
+        assert response.status_code == 200
+        body = response.text
+        assert "repo-sidebar__tile--runtime" in body
         assert "repo-sidebar__runtime-chip--disabled" in body
         assert "disabled" in body
         # The disabled branch shows the OUTO_SPACES_RUNTIME_ENABLED hint,

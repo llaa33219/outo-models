@@ -4,6 +4,28 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.6 — Profile README, Files tab actions, clone-command copy, Spaces runtime default-on
+
+### Added
+
+- **Profile README**: a `<username>/<username>` repo's README.md renders
+  as a tile above the repos section on the profile page (sanitized
+  through the same renderer as model cards). Absent repo/README renders
+  nothing.
+- **Files tab actions**: per-file View (inline text viewer with raw URL
+  + copy button), Edit (textarea → commit through the git backend,
+  owner/admin only), Upload (file picker → commit, owner/admin only),
+  and Raw URL copy via the shared clipboard module.
+- **Clone command copy**: the repo header button copies the full
+  `git clone https://…/<owner>/<name>.git` command, not just the URL.
+
+### Changed
+
+- `spaces_runtime_enabled` now defaults to **True**; installs without a
+  reachable Podman socket fall back to a `failed` state with the
+  operator hint on the Space page. Opt out with
+  `OUTO_SPACES_RUNTIME_ENABLED=false`.
+
 ## v0.5.5 — Settings tab unified into the repo page renderer
 
 ### Changed

@@ -134,12 +134,32 @@ active state is encoded in the path — the URL is shareable as-is.
 | Community | `/{owner}/{name}/community` | Comment thread + composer for logged-in users. |
 
 The header row exposes the same `owner/name` title used on HF, a
-**Copy clone URL** button, and two capsule buttons: a Like button
-with the live like count, and a Follow button that targets the
-repo's OWNER (not the repo itself). Both buttons render disabled
-for anonymous viewers with a `title="Log in to like"` /
-`title="Log in to follow"` hint; the Follow button is hidden when
-the viewer IS the owner.
+**Copy clone command** button (one click pastes the full
+`git clone <url>` line, not just the URL), and two capsule
+buttons: a Like button with the live like count, and a Follow
+button that targets the repo's OWNER (not the repo itself). Both
+buttons render disabled for anonymous viewers with a
+`title="Log in to like"` / `title="Log in to follow"` hint; the
+Follow button is hidden when the viewer IS the owner.
+
+### Files tab — View / Edit / Upload
+
+The Files tab surfaces per-file **View**, **Raw URL**, and
+**Edit** actions, plus a header **Upload** form for the owner
+and admins:
+
+| Action | Form target | Notes |
+| --- | --- | --- |
+| View file | `GET /{owner}/{name}/files/view?path=<p>` | Renders the file inline in a `<pre>` panel when the path has a text-like content type and the blob is ≤ 1 MiB; otherwise shows metadata + a download link to the raw URL. Public; visibility follows the repo rule. |
+| Raw URL | `GET /{owner}/{name}/raw/{revision}/{path}` | Alias of the `/resolve/` endpoint under a more discoverable prefix. Serves the raw bytes (with `Range` support + ETag + LFS-pointer redirect). |
+| Edit file | `POST /{owner}/{name}/files/edit` | Owner / admin only. Body fields: `path`, `content`, optional `message`. Rejected above 1 MiB; non-owners get 403. Lands as one commit on the default branch via `repos.commit.commit_files`; audit `repo.file_edit`. |
+| Upload | `POST /{owner}/{name}/files/upload` | Owner / admin only. Same multipart shape as the JSON `/api/repos/{owner}/{name}/upload` endpoint (one or more `files[]` parts, optional `message` + `path` directory prefix). 403 for strangers / 422 on empty / 413 on per-file > 100 MiB / 413 on quota overflow. Lands through `commit_files`; audit `repo.file_upload`. |
+
+Each row's **Raw URL** button copies the absolute
+`/{owner}/{name}/raw/{revision}/{path}` URL to the clipboard via
+the shared `/static/clipboard.js` helper. Each edit / upload
+form posts with the `_csrf` double-submit cookie; missing or
+mismatched tokens return 403.
 
 ### Form POST mutations
 

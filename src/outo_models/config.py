@@ -55,10 +55,11 @@ class Settings(BaseSettings):
     s3_prefix: str = "lfs"
     s3_presign_ttl_seconds: int = 3600
 
-    # Spaces runtime (v2). Disabled by default; requires a reachable
-    # Podman API socket (e.g. /run/podman/podman.sock mounted into the
-    # container, or the host user socket when running uncontainerized).
-    spaces_runtime_enabled: bool = False
+    # Spaces runtime (v2). Enabled by default; the dispatcher falls back to
+    # a "failed" runtime status (and surfaces the operator hint on the Space
+    # page) when the Podman API socket is unreachable, so the default-on
+    # posture does not break installs without Podman mounted.
+    spaces_runtime_enabled: bool = True
     podman_socket: str = "/run/podman/podman.sock"
     spaces_runtime_port_range_start: int = 20000
     spaces_runtime_port_range_end: int = 21000

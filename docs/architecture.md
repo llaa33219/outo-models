@@ -548,7 +548,7 @@ The chrome follows the spec verbatim:
 | --- | --- | --- | --- |
 | `/` | GET | open | Public repos catalog |
 | `/models`, `/datasets`, `/spaces` | GET | open | Public repos filtered by `Repo.kind` |
-| `/{username}` | GET | open; 404 on missing | Profile page (avatar + joined date + repos grouped by kind) |
+| `/{username}` | GET | open; 404 on missing | Profile page (avatar + joined date + repos grouped by kind). The `<username>/<username>` repo (any kind), if present and visible to the viewer, renders its `README.md` as a tile above the repos section. |
 | `/{owner}/{name}` | GET | open for public; owner/admin for private | Repo overview, clone command, recent revisions |
 | `/new` | GET | login required | Repo-creation form |
 | `/new` | POST | login required + CSRF | Creates model/dataset/space, redirects to the repo page |

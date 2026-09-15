@@ -405,8 +405,8 @@ The response from `POST /api/spaces/<owner>/<name>/start` (or `/stop`,
   "message": "Runtime is disabled. Ask the administrator to set OUTO_SPACES_RUNTIME_ENABLED=true and retry." }
 ```
 
-Cause: the container is running with `OUTO_SPACES_RUNTIME_ENABLED=false`
-(the default).
+Cause: the container is running with `OUTO_SPACES_RUNTIME_ENABLED=false`.
+Set it to `true` (the default) and restart, or fix the operator's intent.
 
 Resolution:
 

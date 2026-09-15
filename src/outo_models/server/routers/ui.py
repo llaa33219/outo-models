@@ -22,6 +22,7 @@ so the navbar context (current user, active section) is uniform.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
@@ -31,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Form, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -54,18 +55,21 @@ from outo_models.auth import (
 from outo_models.auth.permissions import Scope
 from outo_models.auth.sessions import SESSION_COOKIE_NAME
 from outo_models.config import Settings, get_settings
-from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, User
+from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, Revision, User
 from outo_models.exceptions import (
     ConflictError,
+    ForbiddenError,
     NotFoundError,
+    QuotaExceededError,
     UnauthorizedError,
     ValidationFailedError,
 )
-from outo_models.repos.card import read_card
+from outo_models.repos.card import CardMetadata, read_card
+from outo_models.repos.commit import commit_files
 from outo_models.repos.create import create_repo
 from outo_models.repos.files import list_files
 from outo_models.repos.models import RepoKind, Visibility
-from outo_models.repos.quota import ensure_quota_rows
+from outo_models.repos.quota import add_usage, check_push_allowed, ensure_quota_rows
 from outo_models.repos.social import (
     add_comment,
     follow_user,
@@ -82,13 +86,25 @@ from outo_models.repos.social import (
     unfollow_user,
     unlike_repo,
 )
+from outo_models.repos.storage import disk_usage, repo_fs_path
 from outo_models.server.deps import get_current_user_optional, get_db
+from outo_models.server.routers._resolve_helpers import (
+    content_type_for,
+    is_text_extension,
+    read_blob_text,
+    resolve_blob,
+)
 from outo_models.server.routers._ui_helpers import (
     CSRF_COOKIE,
     ensure_csrf,
     form_csrf_token,
     set_csrf_cookie,
     verify_csrf,
+)
+from outo_models.server.routers._upload_helpers import (
+    MAX_FILE_BYTES,
+    validate_filename,
+    validate_path,
 )
 from outo_models.server.routers.auth import (
     delete_personal_access_token as delete_pat,
@@ -530,6 +546,7 @@ async def _render_repo_page(
     name: str,
     tab: str,
     files_path: str = "",
+    extra_context: Mapping[str, Any] | None = None,
 ) -> Response:
     """Render the HF-style repo page for `<owner>/<name>` at `tab`.
 
@@ -725,6 +742,7 @@ async def _render_repo_page(
         "owner": owner,
         "name": name,
         "clone_url": clone_url(owner, name),
+        "clone_command": f"git clone {clone_url(owner, name)}",
         "tab": tab,
         "tab_card_label": _kind_tab_label(repo.kind),
         "tab_card_active": tab == "card",
@@ -766,7 +784,19 @@ async def _render_repo_page(
         "form_color": repo.color or "",
         "settings_error": request.query_params.get("settings_error"),
         "settings_saved": request.query_params.get("saved") == "1",
+        # Files tab extra context (viewer / editor / upload error / ok hint).
+        "files_viewer": {},
+        "files_viewer_path": "",
+        "files_upload_error": request.query_params.get("upload_error"),
+        "files_uploaded_sha": request.query_params.get("uploaded"),
+        "files_edit_error": request.query_params.get("edit_error"),
+        "files_edited_path": request.query_params.get("edited"),
+        "files_editor_path": "",
+        "files_editor_content": "",
     }
+
+    if extra_context:
+        context.update(extra_context)
 
     return _form_page(
         request,
@@ -1226,6 +1256,35 @@ async def user_profile_page(
     ]
     activity = await recent_activity(db, user=profile, limit=10)
 
+    # Profile README — the `<username>/<username>` repo (any kind) acts as
+    # the user's profile README. The lookup is best-effort: a missing
+    # repo, missing README, or any read failure collapses to `None` so
+    # the template renders nothing (no error state). Visibility mirrors
+    # the same rules as the JSON API — private profile README repos are
+    # only rendered to the owner / admin.
+    profile_readme: CardMetadata | None = None
+    profile_readme_repo_name: str | None = None
+    profile_readme_repo: Repo | None = (
+        await db.execute(
+            select(Repo)
+            .where(Repo.name == username)
+            .options(selectinload(Repo.owner))
+            .join(Repo.owner)
+            .where(User.username == username)
+        )
+    ).scalar_one_or_none()
+    if profile_readme_repo is not None and (
+        profile_readme_repo.visibility == Visibility.PUBLIC.value or is_self or viewer_is_admin
+    ):
+        try:
+            profile_readme = await read_card(
+                username, username, default_branch=profile_readme_repo.default_branch
+            )
+            if profile_readme is not None:
+                profile_readme_repo_name = profile_readme_repo.name
+        except Exception:
+            profile_readme = None
+
     return await _render(
         request,
         "users/profile.html",
@@ -1239,6 +1298,8 @@ async def user_profile_page(
             "interests": interests,
             "links": links,
             "activity": activity,
+            "profile_readme": profile_readme,
+            "profile_readme_repo_name": profile_readme_repo_name,
         },
     )
 
@@ -2141,6 +2202,411 @@ async def space_stop_form(
         )
     target = _space_runtime_redirect_target(request, owner, name)
     return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ---------------------------------------------------------------------------
+# Files tab — View / Edit / Upload actions.
+#
+# The Files tab now surfaces three new owner-controlled actions per file
+# row: View (inline viewer / metadata + raw link), Edit (textarea editor
+# for text files), and an Upload form in the Files tab header (one or
+# more files committed through the same `commit_files` path the JSON
+# upload endpoint uses). The route shapes are:
+#
+#   GET  /{owner}/{name}/files?view=<path>   — files tab with inline viewer
+#   POST /{owner}/{name}/files/upload       — owner-only multipart commit
+#   POST /{owner}/{name}/files/edit         — owner-only text-file edit
+#
+# Edit / Upload both go through `repos.commit.commit_files`, so the
+# audit / quota / revision / usage bookkeeping is identical to
+# `POST /api/repos/{owner}/{name}/upload`.
+# ---------------------------------------------------------------------------
+
+_FILES_EDIT_MAX_BYTES = 1 * 1024 * 1024
+
+
+def _files_tab_redirect(request: Request, *, owner: str, name: str, files_path: str = "") -> str:
+    """Redirect back to the Files tab, preserving the active path."""
+    target = f"/{owner}/{name}/files"
+    if files_path:
+        sep = "&" if "?" in target else "?"
+        target = f"{target}{sep}path={files_path}"
+    return target
+
+
+async def _load_repo_or_404_visible(
+    db: AsyncSession,
+    *,
+    owner: str,
+    name: str,
+    viewer: User | None,
+) -> Repo | None:
+    """Load a repo, enforce visibility, and return the row or `None`.
+
+    Mirrors the JSON API rule: 404 (not 403) when the viewer cannot see
+    the repo, so private-repo existence is not leaked.
+    """
+    try:
+        validate_slug(owner)
+        validate_slug(name)
+    except ValidationFailedError:
+        return None
+    repo = (
+        await db.execute(
+            select(Repo)
+            .where(Repo.name == name)
+            .options(selectinload(Repo.owner))
+            .join(Repo.owner)
+            .where(User.username == owner)
+        )
+    ).scalar_one_or_none()
+    if repo is None:
+        return None
+    if repo.visibility != Visibility.PUBLIC.value and (
+        viewer is None or (viewer.id != repo.owner_id and viewer.role != "admin")
+    ):
+        return None
+    return repo
+
+
+async def _resolve_owner_or_403(
+    db: AsyncSession,
+    *,
+    owner: str,
+    name: str,
+    viewer: User | None,
+) -> Repo:
+    """Owner-or-admin gate for write paths; raises Forbidden / NotFound."""
+    repo = await _load_repo_or_404_visible(db, owner=owner, name=name, viewer=viewer)
+    if repo is None:
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    if viewer is None or (viewer.id != repo.owner_id and viewer.role != "admin"):
+        raise ForbiddenError("only the owner or an admin may modify this repo")
+    return repo
+
+
+async def _build_viewer_context(
+    db: AsyncSession,
+    *,
+    owner: str,
+    name: str,
+    repo: Repo,
+    view_path: str,
+) -> dict[str, object]:
+    """Resolve `view_path` to a viewer-context dict for the Files tab.
+
+    Returns a dict that always carries the requested path + raw URL so
+    the template renders an empty viewer panel when the blob is
+    missing. When the blob is a text file ≤ 1 MiB the dict also carries
+    the decoded text so the template can render it inline; otherwise the
+    metadata + raw-link template branch fires.
+    """
+    revision = repo.default_branch
+    raw_url = f"/{owner}/{name}/raw/{revision}/{view_path}"
+    content_type = content_type_for(view_path)
+    ctx: dict[str, object] = {
+        "view_path": view_path,
+        "view_revision": revision,
+        "view_raw_url": raw_url,
+        "view_content_type": content_type,
+        "view_size_bytes": None,
+        "view_text": None,
+        "view_truncated": False,
+        "view_exists": False,
+        "view_is_text": False,
+        "view_binary": True,
+    }
+    try:
+        blob_sha, blob_size = await resolve_blob(
+            owner, name, revision, view_path, repo.default_branch
+        )
+    except NotFoundError:
+        return ctx
+    ctx["view_exists"] = True
+    ctx["view_size_bytes"] = blob_size
+    ctx["view_blob_sha"] = blob_sha.decode("ascii", errors="replace")
+    if not is_text_extension(view_path):
+        return ctx
+    text = await asyncio.to_thread(
+        read_blob_text,
+        str(repo_fs_path(owner, name)),
+        blob_sha,
+        size=blob_size,
+        max_bytes=_FILES_EDIT_MAX_BYTES,
+    )
+    if text is None:
+        return ctx
+    ctx["view_text"] = text
+    ctx["view_is_text"] = True
+    ctx["view_binary"] = False
+    if blob_size > _FILES_EDIT_MAX_BYTES:
+        ctx["view_truncated"] = True
+    return ctx
+
+
+@router.post("/{owner}/{name}/files/upload")
+async def files_upload_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    files: Annotated[list[UploadFile] | None, File()] = None,
+    message: Annotated[str, Form()] = "",
+    path: Annotated[str, Form()] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Commit one or more files into the repo (owner / admin only).
+
+    Mirrors the JSON `POST /api/repos/{owner}/{name}/upload` endpoint but
+    accepts the simpler multipart shape the Files tab form uses: a
+    `files[]` list, an optional `message`, and an optional directory
+    prefix `path`. Quota / per-file size / path-traversal validation is
+    identical — the same `commit_files` call lands the bytes, then a
+    `Revision` row + an `AuditLog(action="repo.file_upload")` entry are
+    written before the redirect.
+    """
+    verify_csrf(request, form_token=csrf)
+    repo = await _resolve_owner_or_403(db, owner=owner, name=name, viewer=viewer)
+    if files is None:
+        files = []
+    if not files:
+        target = _files_tab_redirect(request, owner=owner, name=name)
+        return RedirectResponse(
+            url=f"{target}?upload_error=Pick+at+least+one+file",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    prefix_segments = validate_path(path)
+    collected: dict[str, bytes] = {}
+    incoming_bytes = 0
+    for part in files:
+        cleaned = validate_filename(part.filename)
+        joined_segments = prefix_segments + cleaned.split("/")
+        if any(seg in (".", "..") or not seg for seg in joined_segments):
+            target = _files_tab_redirect(request, owner=owner, name=name)
+            return RedirectResponse(
+                url=f"{target}?upload_error=Invalid+filename",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        content = await part.read()
+        if len(content) > MAX_FILE_BYTES:
+            target = _files_tab_redirect(request, owner=owner, name=name)
+            return RedirectResponse(
+                url=f"{target}?upload_error=File+exceeds+100+MiB+per-file+cap",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        collected[cleaned] = content
+        incoming_bytes += len(content)
+
+    owner_user = (await db.execute(select(User).where(User.id == repo.owner_id))).scalar_one()
+    try:
+        await check_push_allowed(db, owner_user, incoming_bytes)
+        await db.commit()
+    except QuotaExceededError:
+        target = _files_tab_redirect(request, owner=owner, name=name)
+        return RedirectResponse(
+            url=f"{target}?upload_error=Quota+exceeded",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    fs_path = repo_fs_path(owner, name)
+    try:
+        result = await commit_files(
+            owner=owner,
+            name=name,
+            default_branch=repo.default_branch,
+            actor_username=owner_user.username,
+            actor_email=owner_user.email,
+            files=collected,
+            prefix=path,
+            message=message,
+        )
+    except FileNotFoundError:
+        target = _files_tab_redirect(request, owner=owner, name=name)
+        return RedirectResponse(
+            url=f"{target}?upload_error=Repository+not+found",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    fs_size = await disk_usage(fs_path)
+    size_delta = fs_size - repo.size_bytes
+    repo.size_bytes = fs_size
+
+    db.add(
+        Revision(
+            repo_id=repo.id,
+            commit_sha=result.commit_sha,
+            branch=repo.default_branch,
+            author_id=owner_user.id,
+            message=message or f"upload: {len(result.paths)} file(s)",
+            size_bytes=incoming_bytes,
+        )
+    )
+    db.add(
+        AuditLog(
+            actor_id=owner_user.id,
+            action="repo.file_upload",
+            target_type="repo",
+            target_id=str(repo.id),
+            detail=json.dumps(
+                {
+                    "repo": f"{owner}/{name}",
+                    "commit_sha": result.commit_sha,
+                    "files": result.paths,
+                    "bytes": incoming_bytes,
+                    "source": "files_tab",
+                }
+            ),
+        )
+    )
+    await add_usage(db, owner_user, size_delta)
+    await db.commit()
+
+    target = _files_tab_redirect(request, owner=owner, name=name, files_path=path)
+    sep = "&" if "?" in target else "?"
+    return RedirectResponse(
+        url=f"{target}{sep}uploaded={result.commit_sha[:7]}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/{owner}/{name}/files/edit")
+async def files_edit_form(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    file_path: Annotated[str, Form(alias="path")] = "",
+    content: Annotated[str, Form()] = "",
+    message: Annotated[str, Form()] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Commit an edited text file (owner / admin only).
+
+    The editor is only rendered for text-like files ≤ 1 MiB; the route
+    enforces the same cap on the submitted content length so a hand-
+    crafted POST cannot bypass it. The bytes go through `commit_files`
+    with the editor as the author; an `AuditLog(action="repo.file_edit")`
+    entry records the change before the redirect back to the Files tab.
+    """
+    verify_csrf(request, form_token=csrf)
+    repo = await _resolve_owner_or_403(db, owner=owner, name=name, viewer=viewer)
+    cleaned_path = (file_path or "").strip()
+    if not cleaned_path:
+        target = _files_tab_redirect(request, owner=owner, name=name)
+        return RedirectResponse(
+            url=f"{target}?edit_error=Missing+path",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    content_bytes = content.encode("utf-8")
+    if len(content_bytes) > _FILES_EDIT_MAX_BYTES:
+        target = _files_tab_redirect(request, owner=owner, name=name, files_path=cleaned_path)
+        sep = "&" if "?" in target else "?"
+        return RedirectResponse(
+            url=f"{target}{sep}edit_error=File+exceeds+1+MiB+editor+cap",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    owner_user = (await db.execute(select(User).where(User.id == repo.owner_id))).scalar_one()
+    files_map: dict[str, bytes] = {cleaned_path: content_bytes}
+    try:
+        result = await commit_files(
+            owner=owner,
+            name=name,
+            default_branch=repo.default_branch,
+            actor_username=owner_user.username,
+            actor_email=owner_user.email,
+            files=files_map,
+            prefix="",
+            message=message or f"edit {cleaned_path}",
+        )
+    except FileNotFoundError:
+        target = _files_tab_redirect(request, owner=owner, name=name)
+        return RedirectResponse(
+            url=f"{target}?edit_error=Repository+not+found",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    db.add(
+        Revision(
+            repo_id=repo.id,
+            commit_sha=result.commit_sha,
+            branch=repo.default_branch,
+            author_id=owner_user.id,
+            message=message or f"edit {cleaned_path}",
+            size_bytes=len(content_bytes),
+        )
+    )
+    db.add(
+        AuditLog(
+            actor_id=owner_user.id,
+            action="repo.file_edit",
+            target_type="repo",
+            target_id=str(repo.id),
+            detail=json.dumps(
+                {
+                    "repo": f"{owner}/{name}",
+                    "commit_sha": result.commit_sha,
+                    "path": cleaned_path,
+                    "bytes": len(content_bytes),
+                }
+            ),
+        )
+    )
+    await db.commit()
+
+    files_dir = "/".join(cleaned_path.split("/")[:-1])
+    target = _files_tab_redirect(request, owner=owner, name=name, files_path=files_dir)
+    sep = "&" if "?" in target else "?"
+    return RedirectResponse(
+        url=f"{target}{sep}edited={cleaned_path}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.get("/{owner}/{name}/files/view", include_in_schema=False)
+async def files_view_route(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    path: Annotated[str, Query()] = "",
+) -> Response:
+    """Render the Files tab with the inline viewer panel for `path`.
+
+    Public: any viewer who can see the repo can view file contents;
+    the raw URL is the same one `GET /{owner}/{name}/raw/<ref>/<path>`
+    serves, so the visibility check rides on the existing rule.
+    """
+    repo = await _load_repo_or_404_visible(db, owner=owner, name=name, viewer=viewer)
+    if repo is None:
+        raise NotFoundError(f"repository not found: {owner}/{name}")
+    viewer_ctx = await _build_viewer_context(
+        db,
+        owner=owner,
+        name=name,
+        repo=repo,
+        view_path=path,
+    )
+    extra: dict[str, Any] = {
+        "files_viewer": viewer_ctx,
+        "files_viewer_path": path,
+        "files_editor_path": path if viewer_ctx.get("view_is_text") else "",
+        "files_editor_content": viewer_ctx.get("view_text") or "",
+    }
+    return await _render_repo_page(
+        request,
+        db,
+        viewer,
+        owner=owner,
+        name=name,
+        tab="files",
+        files_path=request.query_params.get("dir", ""),
+        extra_context=extra,
+    )
 
 
 __all__ = ["router", "templates"]

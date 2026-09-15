@@ -47,18 +47,92 @@ _LFS_POINTER_PREFIX = b"version https://git-lfs"
 # `application/octet-stream`.
 _CONTENT_TYPES: dict[str, str] = {
     ".md": "text/markdown; charset=utf-8",
+    ".markdown": "text/markdown; charset=utf-8",
     ".txt": "text/plain; charset=utf-8",
     ".json": "application/json",
     ".csv": "text/csv; charset=utf-8",
     ".html": "text/html; charset=utf-8",
+    ".htm": "text/html; charset=utf-8",
     ".py": "text/x-python; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".ts": "application/typescript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".scss": "text/css; charset=utf-8",
+    ".xml": "application/xml; charset=utf-8",
+    ".svg": "image/svg+xml; charset=utf-8",
+    ".yml": "text/yaml; charset=utf-8",
+    ".yaml": "text/yaml; charset=utf-8",
+    ".toml": "text/plain; charset=utf-8",
+    ".ini": "text/plain; charset=utf-8",
+    ".cfg": "text/plain; charset=utf-8",
+    ".sh": "text/x-shellscript; charset=utf-8",
+    ".bash": "text/x-shellscript; charset=utf-8",
+    ".zsh": "text/x-shellscript; charset=utf-8",
+    ".rb": "text/x-ruby; charset=utf-8",
+    ".rs": "text/x-rust; charset=utf-8",
+    ".go": "text/x-go; charset=utf-8",
+    ".java": "text/x-java; charset=utf-8",
+    ".kt": "text/x-kotlin; charset=utf-8",
+    ".c": "text/x-c; charset=utf-8",
+    ".h": "text/x-c; charset=utf-8",
+    ".cpp": "text/x-c++; charset=utf-8",
+    ".hpp": "text/x-c++; charset=utf-8",
+    ".cs": "text/x-csharp; charset=utf-8",
+    ".php": "text/x-php; charset=utf-8",
+    ".pl": "text/x-perl; charset=utf-8",
+    ".sql": "text/plain; charset=utf-8",
+    ".diff": "text/x-diff; charset=utf-8",
+    ".patch": "text/x-diff; charset=utf-8",
+    ".log": "text/plain; charset=utf-8",
+    ".gitignore": "text/plain; charset=utf-8",
+    ".dockerignore": "text/plain; charset=utf-8",
+    ".editorconfig": "text/plain; charset=utf-8",
 }
+
+_TEXT_EXTENSIONS = frozenset(_CONTENT_TYPES.keys())
 
 
 def content_type_for(path: str) -> str:
     """Return the response `Content-Type` for `path`; default is octet-stream."""
     _, ext = os.path.splitext(path.lower())
     return _CONTENT_TYPES.get(ext, "application/octet-stream")
+
+
+def is_text_extension(path: str) -> bool:
+    """Return True when `path`'s extension has a text-like content type.
+
+    Used by the file viewer / editor UI to decide whether the blob can
+    be displayed inline (and whether the textarea editor can be used).
+    Anything we don't explicitly map is treated as binary.
+    """
+    _, ext = os.path.splitext(path.lower())
+    return ext in _TEXT_EXTENSIONS
+
+
+def read_blob_text(repo_path: str, blob_sha: ObjectID, *, size: int, max_bytes: int) -> str | None:
+    """Decode a blob as utf-8 text; return None if it's not valid UTF-8.
+
+    Used by the file viewer panel to render text blobs inline. `max_bytes`
+    caps the read so a 100 MB blob is not materialised into a Python
+    string just to fail the utf-8 check.
+    """
+    if size <= 0 or size > max_bytes:
+        return None
+    repo = _DulwichRepo(repo_path)
+    try:
+        try:
+            obj = repo.object_store[blob_sha]
+        except (KeyError, NotGitRepository):
+            return None
+        if not isinstance(obj, Blob):
+            return None
+        try:
+            return obj.data[:max_bytes].decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    finally:
+        repo.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,10 +495,12 @@ __all__ = [
     "HttpRange",
     "LfsPointer",
     "content_type_for",
+    "is_text_extension",
     "iter_blob_window",
     "maybe_lfs_pointer",
     "parse_range",
     "peek_blob_head",
+    "read_blob_text",
     "resolve_blob",
     "resolve_commit_sha",
 ]

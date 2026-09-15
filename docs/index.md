@@ -86,7 +86,7 @@ definition of every `OUTO_*` variable, see the [CLI reference](cli.md#environmen
 | `OUTO_S3_ENDPOINT` / `OUTO_S3_BUCKET` / `OUTO_S3_REGION` | S3 backend endpoint, bucket, region | (none / none / `us-east-1`) |
 | `OUTO_S3_ACCESS_KEY` / `OUTO_S3_SECRET_KEY` | S3 credentials — inject via env vars only | (none) |
 | `OUTO_S3_PREFIX` / `OUTO_S3_PRESIGN_TTL_SECONDS` | S3 object-key prefix, presign TTL | `lfs` / `3600` |
-| `OUTO_SPACES_RUNTIME_ENABLED` | Spaces container runtime on/off | `false` |
+| `OUTO_SPACES_RUNTIME_ENABLED` | Spaces container runtime on/off | `true` |
 | `OUTO_PODMAN_SOCKET` | Podman REST API Unix socket | `/run/podman/podman.sock` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` / `_END` | Space container host-port range | `20000` / `21000` |
 | `OUTO_CONFIG` | YAML config path (used by CLI host side) | `/etc/outo-models/config.yaml` |

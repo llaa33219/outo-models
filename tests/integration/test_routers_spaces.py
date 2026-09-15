@@ -52,9 +52,14 @@ class TestCreateSpace:
 class TestGetSpace:
     """`GET /api/spaces/{owner}/{name}` includes the runtime block."""
 
-    async def test_runtime_block_reports_disabled_state_by_default(
+    async def test_runtime_block_reports_failed_state_when_podman_unreachable(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
+        # v0.5.6: the runtime defaults ON; when the Podman socket is not
+        # reachable (the dev / CI environment), the dispatcher falls
+        # back to `failed` with the operator hint in `message`. The
+        # previous "disabled" state only fires when an operator sets
+        # `OUTO_SPACES_RUNTIME_ENABLED=false` explicitly.
         client, _, _ = app
         await seed_approved_user(username="carol")
         client.post(
@@ -68,9 +73,10 @@ class TestGetSpace:
         response = client.get("/api/spaces/carol/showcase")
         assert response.status_code == 200
         runtime = response.json()["runtime"]
-        assert runtime["state"] == "disabled"
+        # No Podman socket mounted in CI → dispatcher reports `failed`
+        # rather than 500; the message hints at the runtime manager.
+        assert runtime["state"] == "failed"
         assert runtime["url"] is None
-        assert "disabled" in runtime["message"].lower()
 
 
 class TestListSpaces:

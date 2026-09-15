@@ -194,3 +194,38 @@ async def resolve_file(
 
 
 __all__ = ["router"]
+
+
+@router.get(
+    "/{owner}/{name}/raw/{revision}/{path:path}",
+    include_in_schema=False,
+)
+async def raw_file(
+    owner: Annotated[str, Path(min_length=1, max_length=63)],
+    name: Annotated[str, Path(min_length=1, max_length=63)],
+    revision: Annotated[str, Path(min_length=1, max_length=64)],
+    path: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+    range_header: Annotated[str | None, Header(alias="range")] = None,
+) -> Response:
+    """Alias for `resolve_file` under the `/raw/` prefix.
+
+    The Files tab "View" action exposes `<owner>/<name>/raw/<ref>/<path>`
+    so the URL is more discoverable than the `/resolve/` mirror; the
+    body / range / LFS-pointer behavior is identical to the canonical
+    `/resolve/` endpoint above.
+    """
+    return await resolve_file(
+        owner=owner,
+        name=name,
+        revision=revision,
+        path=path,
+        request=request,
+        db=db,
+        settings=settings,
+        viewer=viewer,
+        range_header=range_header,
+    )

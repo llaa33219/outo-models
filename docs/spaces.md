@@ -249,7 +249,7 @@ Permissions / quota / LFS policies are identical to
 
 | Environment variable | Meaning | Default |
 | --- | --- | --- |
-| `OUTO_SPACES_RUNTIME_ENABLED` | Enable the runtime | `false` |
+| `OUTO_SPACES_RUNTIME_ENABLED` | Enable the runtime | `true` |
 | `OUTO_PODMAN_SOCKET` | Podman REST API Unix socket path | `/run/podman/podman.sock` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | Start of host port range | `20000` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | End of host port range | `21000` |

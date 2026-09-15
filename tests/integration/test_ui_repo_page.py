@@ -117,10 +117,13 @@ class TestRepoHeader:
         assert response.status_code == 200
         body = response.text
         assert "/alice/header-repo" in body or "alice/header-repo" in body
-        # Copy button exists and points at the clone-url element.
+        # Copy button exists and points at the clone-command element.
         assert 'class="copy-btn' in body
-        assert 'data-copy-target="clone-url-value"' in body
-        assert 'id="clone-url-value"' in body
+        assert 'data-copy-target="clone-command-value"' in body
+        assert 'id="clone-command-value"' in body
+        # The hidden source carries the FULL `git clone <url>` command,
+        # not just the URL — one-click pastes the whole line.
+        assert "git clone http" in body
 
     async def test_like_button_renders_count_and_disabled_for_anon(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
@@ -1212,3 +1215,423 @@ class TestThreadedComments:
         assert body.count('class="comment comment--reply"') == 2
         assert "comment-reply-form" in body
         assert "Reply to reply" in body
+
+
+# ---------------------------------------------------------------------------
+# v0.5.6 — Files-tab View / Edit / Upload actions + clone-command copy.
+# ---------------------------------------------------------------------------
+
+
+class TestRepoCloneCommand:
+    """The header copy button pastes the FULL `git clone <url>` line."""
+
+    async def test_clone_command_copy_button_has_full_git_clone(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "clone-copy", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/clone-copy")
+        assert response.status_code == 200
+        body = response.text
+        # The hidden source the copy button reads MUST carry the full
+        # command so one click pastes a copy-pasteable line.
+        assert 'id="clone-command-value"' in body
+        clone_block = body.split('id="clone-command-value"', 1)[1].split("</pre>", 1)[0]
+        assert "git clone " in clone_block
+        assert ".git" in clone_block
+        # The clipboard handler (`/static/clipboard.js`) reads
+        # `textContent` of the target element — the source MUST NOT be
+        # wrapped in <code>/<span> tags that would inject extra chars.
+        assert "<code" not in clone_block
+        assert "<span" not in clone_block
+
+    async def test_clone_command_copy_button_target_id_present(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "cc-id", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+
+        response = client.get("/alice/cc-id")
+        body = response.text
+        # `data-copy-target` on the button MUST point at the element id
+        # that holds the full command.
+        assert 'data-copy-target="clone-command-value"' in body
+        assert "Copy clone command" in body
+
+
+class TestFilesTabActions:
+    """Owner-only View / Edit / Upload actions surface on the Files tab."""
+
+    async def test_files_tab_renders_action_buttons_for_owner(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-actions", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-actions",
+            files={
+                "README.md": "x",
+                "config.json": '{"k": 1}',
+                "weights.bin": "\x00\x01\x02 binary",
+            },
+        )
+
+        response = client.get("/alice/f-actions/files")
+        assert response.status_code == 200
+        body = response.text
+        # Owner sees View + Edit + Raw URL actions + the upload tile.
+        assert "files-upload" in body
+        assert 'action="/alice/f-actions/files/upload"' in body
+        # Per-file action buttons render for files (not directories).
+        assert body.count("View</a>") >= 2
+        assert body.count("Edit</button>") >= 2
+        assert body.count("Raw URL</button>") >= 2
+        # Each file row carries its own raw-url source element so the
+        # copy button can resolve it without a shared global id.
+        assert 'id="raw-url-config.json"' in body
+        assert 'id="raw-url-weights.bin"' in body
+
+    async def test_files_tab_hides_upload_and_edit_for_stranger(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-stranger", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-stranger",
+            files={"README.md": "x", "config.json": "{}"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+
+        response = client.get("/alice/f-stranger/files")
+        body = response.text
+        # No upload tile, no Edit button (View + Raw URL still show).
+        assert 'action="/alice/f-stranger/files/upload"' not in body
+        assert 'class="files-upload"' not in body
+        assert 'class="files-action files-action--edit"' not in body
+        assert body.count("View</a>") >= 2
+        assert body.count("Raw URL</button>") >= 2
+
+    async def test_files_tab_view_renders_text_file_in_pre(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-view", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-view",
+            files={
+                "README.md": "x",
+                "config.json": '{"alpha": 1, "beta": "hello"}',
+            },
+        )
+
+        response = client.get("/alice/f-view/files/view?path=config.json")
+        assert response.status_code == 200, response.text
+        body = response.text
+        # Viewer panel rendered with the file content.
+        assert "files-viewer" in body
+        assert "config.json" in body
+        # Owner sees the editor form with the JSON in the textarea.
+        # Jinja's autoescape encodes `"` as `&#34;` inside the textarea
+        # body so the JSON payload round-trips intact when the form
+        # is submitted.
+        textarea_idx = body.find('id="files-viewer-content"')
+        assert textarea_idx > 0
+        snippet = body[textarea_idx : textarea_idx + 800]
+        assert "alpha" in snippet
+        assert "&#34;" in snippet or "&quot;" in snippet
+        # Raw URL copy button on the viewer panel.
+        assert "files-viewer-raw-url" in body
+
+    async def test_files_tab_view_renders_metadata_for_binary(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-bin", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-bin",
+            files={
+                "README.md": "x",
+                "weights.bin": "\x00\x01\x02 binary",
+            },
+        )
+
+        response = client.get("/alice/f-bin/files/view?path=weights.bin")
+        assert response.status_code == 200
+        body = response.text
+        # Binary panel: no inline <pre> for the bytes, but the raw link + metadata show.
+        assert "files-viewer" in body
+        assert "weights.bin" in body
+        assert "Binary or non-text content" in body
+        assert "Download" in body
+        assert "/alice/f-bin/raw/main/weights.bin" in body
+
+    async def test_files_tab_raw_alias_route_serves_bytes(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-raw", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-raw",
+            files={"README.md": "x", "config.json": '{"k": 1}'},
+        )
+        client.post("/api/auth/logout")
+
+        # Public repo: anon can fetch the raw alias.
+        response = client.get("/alice/f-raw/raw/main/config.json")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json() == {"k": 1}
+
+    async def test_files_tab_edit_post_commits_new_content(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-edit", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-edit",
+            files={"README.md": "x", "config.json": "old"},
+        )
+
+        csrf = _form_csrf(client, "/alice/f-edit/files")
+        response = client.post(
+            "/alice/f-edit/files/edit",
+            data={
+                "_csrf": csrf,
+                "path": "config.json",
+                "content": "new",
+                "message": "edit config",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "edited=config.json" in response.headers["location"]
+
+        # Files tab shows the new bytes.
+        response = client.get("/alice/f-edit/files?path=")
+        assert response.status_code == 200
+        body = response.text
+        assert "config.json" in body
+
+        # Raw fetch reflects the edit.
+        raw = client.get("/alice/f-edit/raw/main/config.json")
+        assert raw.status_code == 200
+        assert raw.text == "new"
+
+    async def test_files_tab_edit_post_stranger_returns_403(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-noedit", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-noedit",
+            files={"README.md": "x", "config.json": "x"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+        response = client.post(
+            "/alice/f-noedit/files/edit",
+            data={"_csrf": "anything", "path": "config.json", "content": "x"},
+        )
+        assert response.status_code == 403
+
+    async def test_files_tab_edit_post_without_csrf_is_403(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-editcsrf", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-editcsrf",
+            files={"README.md": "x", "config.json": "x"},
+        )
+        response = client.post(
+            "/alice/f-editcsrf/files/edit",
+            data={"path": "config.json", "content": "y"},
+        )
+        assert response.status_code == 403
+
+    async def test_files_tab_upload_post_commits_file(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-up", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-up",
+            files={"README.md": "x"},
+        )
+
+        csrf = _form_csrf(client, "/alice/f-up/files")
+        response = client.post(
+            "/alice/f-up/files/upload",
+            data={"_csrf": csrf, "message": "files-tab upload"},
+            files={"files": ("new.txt", b"uploaded from files tab", "text/plain")},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "uploaded=" in response.headers["location"]
+
+        # New file appears in the tree.
+        response = client.get("/alice/f-up/files?path=")
+        body = response.text
+        assert "new.txt" in body
+
+        # Raw fetch returns the uploaded bytes.
+        raw = client.get("/alice/f-up/raw/main/new.txt")
+        assert raw.status_code == 200
+        assert raw.text == "uploaded from files tab"
+
+    async def test_files_tab_upload_post_stranger_returns_403(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-strangerup", "kind": "model", "visibility": "public"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+        response = client.post(
+            "/alice/f-strangerup/files/upload",
+            data={"_csrf": "anything", "message": "no"},
+            files={"files": ("x.txt", b"x", "text/plain")},
+        )
+        assert response.status_code == 403
+
+    async def test_files_tab_view_respects_repo_visibility(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        # Private repos: file viewer + raw alias are owner-only (404 for strangers).
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "f-priv", "kind": "model", "visibility": "private"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="f-priv",
+            files={"README.md": "x", "config.json": "{}"},
+        )
+        client.post("/api/auth/logout")
+        _login(client, "bob")
+        # Strangers get 404 (visibility leak prevention), not 403.
+        response = client.get("/alice/f-priv/files/view?path=config.json")
+        assert response.status_code == 404
+        response = client.get("/alice/f-priv/raw/main/config.json")
+        assert response.status_code == 404

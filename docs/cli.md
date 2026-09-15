@@ -504,7 +504,7 @@ Pydantic Settings maps every `OUTO_*` environment variable by stripping the
 | `OUTO_S3_SECRET_KEY` | `s3_secret_key` | `""` | S3 secret access key |
 | `OUTO_S3_PREFIX` | `s3_prefix` | `lfs` | Object-key prefix inside the bucket |
 | `OUTO_S3_PRESIGN_TTL_SECONDS` | `s3_presign_ttl_seconds` | `3600` | Lifetime of presigned URLs |
-| `OUTO_SPACES_RUNTIME_ENABLED` | `spaces_runtime_enabled` | `false` | Toggle the Spaces container runtime |
+| `OUTO_SPACES_RUNTIME_ENABLED` | `spaces_runtime_enabled` | `true` | Toggle the Spaces container runtime |
 | `OUTO_PODMAN_SOCKET` | `podman_socket` | `/run/podman/podman.sock` | Podman REST API Unix socket |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | `spaces_runtime_port_range_start` | `20000` | Start of Space host-port range |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | `spaces_runtime_port_range_end` | `21000` | End of Space host-port range |

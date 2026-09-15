@@ -82,8 +82,11 @@ s3_presign_ttl_seconds: 3600
 # Spaces runtime (v2)
 # -----------------------------------------------------------------------------
 
-# Whether to run Spaces as containers. Requires the Podman API socket.
-spaces_runtime_enabled: false
+# Whether to run Spaces as containers. Enabled by default; the runtime
+# dispatcher falls back to a "failed" status (and the Space page shows the
+# operator hint) when the Podman API socket is unreachable, so the
+# default-on posture does not break installs without Podman mounted.
+spaces_runtime_enabled: true
 
 # Podman API socket path. Inside the container, mount the host socket
 # (e.g. -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock).

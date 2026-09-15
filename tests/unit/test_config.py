@@ -49,6 +49,14 @@ class TestSettingsDefaults:
         s = Settings(_env_file=None)  # type: ignore[call-arg]
         assert s.default_quota_bytes == 500 * 1024**3
 
+    def test_spaces_runtime_enabled_default_is_true(self) -> None:
+        # v0.5.6: Spaces runtime defaults ON; the dispatcher degrades to
+        # "failed" with the operator hint when the Podman socket is
+        # unreachable, so default-on does not break installs without Podman.
+        get_settings.cache_clear()
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.spaces_runtime_enabled is True
+
 
 class TestResolvedDbUrl:
     """`resolved_db_url` returns the explicit `db_url` or derives a SQLite URL."""
