@@ -150,10 +150,33 @@ and admins:
 
 | Action | Form target | Notes |
 | --- | --- | --- |
-| View file | `GET /{owner}/{name}/files/view?path=<p>` | Renders the file inline in a `<pre>` panel when the path has a text-like content type and the blob is ≤ 1 MiB; otherwise shows metadata + a download link to the raw URL. Public; visibility follows the repo rule. |
+| View file | `GET /{owner}/{name}/files/view?path=<p>` | Read-only inline viewer for every viewer. Text-like extensions and blobs ≤ 1 MiB render in a `<pre>`; images (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`, `ico`, `avif`) render as `<img>` when ≤ 10 MiB; videos (`mp4`, `webm`, `ogv`, `mov`, `m4v`) render as `<video controls preload="metadata">` when ≤ 25 MiB; everything else surfaces metadata + a download link to the raw URL. The LFS pointer route is transparent: the raw URL 302s to the LFS GET endpoint, so LFS-backed images / videos preview correctly. Public; visibility follows the repo rule. |
 | Raw URL | `GET /{owner}/{name}/raw/{revision}/{path}` | Alias of the `/resolve/` endpoint under a more discoverable prefix. Serves the raw bytes (with `Range` support + ETag + LFS-pointer redirect). |
-| Edit file | `POST /{owner}/{name}/files/edit` | Owner / admin only. Body fields: `path`, `content`, optional `message`. Rejected above 1 MiB; non-owners get 403. Lands as one commit on the default branch via `repos.commit.commit_files`; audit `repo.file_edit`. |
-| Upload | `POST /{owner}/{name}/files/upload` | Owner / admin only. Same multipart shape as the JSON `/api/repos/{owner}/{name}/upload` endpoint (one or more `files[]` parts, optional `message` + `path` directory prefix). 403 for strangers / 422 on empty / 413 on per-file > 100 MiB / 413 on quota overflow. Lands through `commit_files`; audit `repo.file_upload`. |
+| Edit file | `GET .../files/view?path=<p>&edit=1` + `POST /{owner}/{name}/files/edit` | Owner / admin only. The viewer panel is read-only by default; the **Edit** link in the viewer header (and the per-row Edit link in the table) toggles the editor with `?edit=1`. The editor renders only when the viewer is owner/admin, the file has a text-like extension, and the blob is ≤ 1 MiB. POST fields: `path`, optional `new_path` (rename), `content`, optional `message`. Rejected above 1 MiB; non-owners get 403; an `edit_error=...` query string is appended on validation failure. Lands as one commit on the default branch via `repos.commit.commit_files`; audit `repo.file_edit` (with `rename_from` / `rename_to` when the path changed). |
+| Upload | `POST /{owner}/{name}/files/upload` | Owner / admin only. The upload form is hidden by default; a header **Upload** link reveals it via `?upload=1`. Same multipart shape as the JSON `/api/repos/{owner}/{name}/upload` endpoint (one or more `files[]` parts, optional `message` + `path` directory prefix). 403 for strangers / 422 on empty / 413 on per-file > 100 MiB / 413 on quota overflow. Lands through `commit_files`; audit `repo.file_upload`. |
+
+When the viewer is rendering a file (`view` query param set), the
+Files tab splits into a narrow left column (compact file tree, ~260 px
+on desktop) and a large center panel (the viewer). With no file being
+viewed the tree renders full-width as a table — the same shape it had
+before the split was introduced.
+
+#### Renaming via the editor
+
+The editor surfaces a `new_path` text input alongside the body. Submitting
+with `new_path` equal to `path` (or omitted) is the existing in-place
+edit flow. Submitting with `new_path` different from `path` is a rename:
+
+1. `new_path` is validated against the same rules as upload paths
+   (no `..`, no leading `/`, no backslashes).
+2. If the target path already exists the request is rejected with
+   `edit_error=Target path already exists` and nothing is committed.
+3. The rename lands as a **single** commit containing both halves
+   (delete-old + add-new); the route uses the new `deletions=` keyword
+   on `commit_files` and `audit_log.detail` records
+   `rename_from` / `rename_to`.
+4. The response redirects to the new path's viewer URL
+   (`/{owner}/{name}/files/view?path=<new>`).
 
 Each row's **Raw URL** button copies the absolute
 `/{owner}/{name}/raw/{revision}/{path}` URL to the clipboard via

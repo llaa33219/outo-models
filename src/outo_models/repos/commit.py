@@ -40,13 +40,12 @@ import asyncio
 import contextlib
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from dulwich import porcelain
 from dulwich.errors import NotGitRepository
-from dulwich.objects import ObjectID
 from dulwich.refs import Ref
 from dulwich.repo import Repo as _DulwichRepo
 
@@ -124,8 +123,15 @@ def _commit_files_sync_inner(
     files: Mapping[str, bytes],
     prefix: str,
     message: str,
+    deletions: Iterable[str] | None = None,
 ) -> CommitFilesResult:
     """Sync helper; runs inside `asyncio.to_thread` under the repo lock.
+
+    `deletions` is an optional iterable of repo-relative paths to remove
+    from the index (and the worktree) as part of this commit; a typical
+    use is a rename, where `files` carries the new content at the new
+    path and `deletions` carries the old path. The additions +
+    deletions land in a SINGLE commit.
 
     Raises:
         OSError: on filesystem failure inside the temp worktree.
@@ -145,31 +151,12 @@ def _commit_files_sync_inner(
         worktree = Path(tempfile.mkdtemp(prefix="wt-", dir=str(worktree_parent)))
 
         try:
-            porcelain.init(str(worktree), bare=False)
-
-            # If the bare repo already has the branch, fetch it so the
-            # new commit has a parent (otherwise `push` will create the
-            # ref from scratch).
-            with contextlib.suppress(Exception):
-                # Empty bare repo: fetch has nothing to pull; the first
-                # commit creates the branch on push.
-                porcelain.fetch(str(worktree), str(fs_path))
-
-            # Second-and-later commits: fetch does NOT create a local branch
-            # in the worktree, so point it at the bare tip ourselves — the
-            # new commit then has the previous one as its PARENT and the
-            # push is a fast-forward instead of a DivergedBranches 500
-            # (field failure: every upload after the first one failed).
-            # On an empty repo the tip is None and the commit starts the
-            # branch from scratch.
-            bare_tip = bare.refs.read_ref(Ref(f"refs/heads/{branch}".encode()))
-            wt = _DulwichRepo(str(worktree))
-            try:
-                if bare_tip is not None:
-                    wt.refs[Ref(f"refs/heads/{branch}".encode())] = ObjectID(bare_tip)
-                    porcelain.checkout(str(worktree), target=branch, force=True)
-            finally:
-                wt.close()
+            # Clone the bare repo into the temp worktree: this populates
+            # both the worktree's files and its index from the bare's
+            # current tip so an upload-after-existing-commit retains
+            # prior tree contents. An empty bare yields an empty
+            # worktree; the first commit creates the branch on push.
+            porcelain.clone(str(fs_path), str(worktree), bare=False)
 
             bytes_written = 0
             written_paths: list[str] = []
@@ -182,6 +169,23 @@ def _commit_files_sync_inner(
                 # return it to the client verbatim.
                 canonical = _join_repo_path(prefix, rel_name).as_posix()
                 written_paths.append(canonical)
+
+            # Deletions land before staging so a rename (= delete-old +
+            # add-new) yields a single commit reflecting both halves.
+            deletion_paths: list[str] = []
+            if deletions:
+                for raw in deletions:
+                    if not raw:
+                        continue
+                    normalized = raw.replace("\\", "").strip("/")
+                    if not normalized or normalized in (".", ".."):
+                        continue
+                    deletion_paths.append(Path(normalized).as_posix())
+                if deletion_paths:
+                    porcelain.remove(
+                        str(worktree),
+                        paths=deletion_paths,
+                    )
 
             # Stage everything under the worktree. Paths must include the
             # upload prefix — `files` keys are bare names.
@@ -246,6 +250,7 @@ async def commit_files(
     files: Mapping[str, bytes],
     prefix: str,
     message: str,
+    deletions: Iterable[str] | None = None,
 ) -> CommitFilesResult:
     """Land `files` in `<owner>/<name>` on `default_branch` as one commit.
 
@@ -255,6 +260,11 @@ async def commit_files(
     `actor_email` populate the commit author + committer so the new
     commit shows up correctly in `git log`. `message` is the commit
     message; empty values fall back to a deterministic placeholder.
+
+    `deletions` is an optional iterable of repo-relative paths to
+    remove from the index + worktree in the same commit (e.g. a rename
+    that pairs `files[<new_path>] = content` with
+    `deletions=[<old_path>]`).
 
     Holds `REPO_LOCKS.acquire(owner, name)` for the duration of the
     work so a concurrent push cannot interleave.
@@ -277,6 +287,7 @@ async def commit_files(
             files=files,
             prefix=prefix,
             message=message,
+            deletions=deletions,
         )
 
 

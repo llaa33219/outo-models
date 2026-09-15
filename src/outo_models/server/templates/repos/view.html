@@ -104,46 +104,57 @@
 
       {# ============== FILES TAB ============== #}
       {% elif tab_files_active %}
-        {# Upload form + ok / error banners live at the top of the tab so
-           they survive every inner state. The form is hidden for non-owners. #}
+        {# Upload form: hidden by default; owner/admin reveals it via a
+           `?upload=1` query param so the default page is uncluttered.
+           When open, the toggle is replaced by a Close link. #}
         {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
-          <section class="files-upload el-tile" aria-label="Upload files">
-            <h3 class="files-upload__title">Upload files</h3>
-            <form method="post" action="/{{ owner }}/{{ repo.name }}/files/upload"
-                  enctype="multipart/form-data" class="files-upload__form">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <input type="hidden" name="path" value="{{ files_path }}">
-              <p class="files-upload__row">
-                <label class="files-upload__label" for="files-upload-input">Choose files</label>
-                <input id="files-upload-input" type="file" name="files" multiple required
-                       class="files-upload__input">
-              </p>
-              <p class="files-upload__row">
-                <label class="files-upload__label" for="files-upload-message">Commit message</label>
-                <input id="files-upload-message" type="text" name="message" maxlength="500"
-                       placeholder="A short message for the commit&hellip;">
-              </p>
-              <p class="files-upload__actions">
-                <button type="submit" class="primary">Upload</button>
-              </p>
-            </form>
-            {% if files_upload_error %}
-              <p class="errors" role="alert">{{ files_upload_error }}</p>
-            {% endif %}
-            {% if files_uploaded_sha %}
-              <p class="files-upload__success" role="status">
-                Uploaded commit {{ files_uploaded_sha }}.
-              </p>
-            {% endif %}
-            {% if files_edit_error %}
-              <p class="errors" role="alert">{{ files_edit_error }}</p>
-            {% endif %}
-            {% if files_edited_path %}
-              <p class="files-upload__success" role="status">
-                Edited {{ files_edited_path }}.
-              </p>
-            {% endif %}
-          </section>
+          {% if files_upload_open %}
+            <section class="files-upload el-tile" aria-label="Upload files">
+              <h3 class="files-upload__title">
+                Upload files
+                <a class="files-upload__close" href="/{{ owner }}/{{ repo.name }}/files{% if files_path %}?path={{ files_path }}{% endif %}">Close</a>
+              </h3>
+              <form method="post" action="/{{ owner }}/{{ repo.name }}/files/upload"
+                    enctype="multipart/form-data" class="files-upload__form">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="path" value="{{ files_path }}">
+                <p class="files-upload__row">
+                  <label class="files-upload__label" for="files-upload-input">Choose files</label>
+                  <input id="files-upload-input" type="file" name="files" multiple required
+                         class="files-upload__input">
+                </p>
+                <p class="files-upload__row">
+                  <label class="files-upload__label" for="files-upload-message">Commit message</label>
+                  <input id="files-upload-message" type="text" name="message" maxlength="500"
+                         placeholder="A short message for the commit&hellip;">
+                </p>
+                <p class="files-upload__actions">
+                  <button type="submit" class="primary">Upload</button>
+                </p>
+              </form>
+              {% if files_upload_error %}
+                <p class="errors" role="alert">{{ files_upload_error }}</p>
+              {% endif %}
+              {% if files_uploaded_sha %}
+                <p class="files-upload__success" role="status">
+                  Uploaded commit {{ files_uploaded_sha }}.
+                </p>
+              {% endif %}
+            </section>
+          {% else %}
+            <p class="files-upload-toggle">
+              <a class="files-action"
+                 href="/{{ owner }}/{{ repo.name }}/files?upload=1{% if files_path %}&amp;path={{ files_path }}{% endif %}">Upload</a>
+            </p>
+          {% endif %}
+          {% if files_edit_error %}
+            <p class="errors" role="alert">{{ files_edit_error }}</p>
+          {% endif %}
+          {% if files_edited_path %}
+            <p class="files-upload__success" role="status">
+              Edited {{ files_edited_path }}.
+            </p>
+          {% endif %}
         {% endif %}
 
         {% if files_empty %}
@@ -153,94 +164,96 @@
               <p class="muted">Push commits to <code>{{ repo.default_branch }}</code> to populate the file tree.</p>
             {% endif %}
           </article>
-        {% else %}
-          {% if files_path %}
-            <p class="breadcrumbs">
-              <a href="/{{ owner }}/{{ repo.name }}/files">/</a>
-              {% for segment in files_path.split('/') %}
-                {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
-                / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}">{{ segment }}</a>
-              {% endfor %}
-            </p>
-          {% endif %}
-          <table class="files-table">
-            <thead>
-              <tr><th>Name</th><th class="files-size">Size</th><th class="files-actions">Actions</th></tr>
-            </thead>
-            <tbody>
-              {% for entry in files_entries %}
-                <tr class="files-row files-row--{{ entry.kind }}">
-                  <td>
+        {% elif files_viewer_path %}
+          {# Viewer mode: narrow left tree + large center viewer. The
+             table -> compact list swap is gated by `files_viewer_path`,
+             so the default Files tab still renders the full table. #}
+          <div class="files-split">
+            <aside class="files-tree-column el-tile" aria-label="File tree">
+              {% if files_path %}
+                <p class="breadcrumbs">
+                  <a href="/{{ owner }}/{{ repo.name }}/files">/</a>
+                  {% for segment in files_path.split('/') %}
+                    {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
+                    / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}{% if files_upload_open %}&amp;upload=1{% endif %}">{{ segment }}</a>
+                  {% endfor %}
+                </p>
+              {% endif %}
+              <ul class="files-tree-list">
+                {% for entry in files_entries %}
+                  <li class="files-tree-row files-tree-row--{{ entry.kind }}{% if files_viewer_path == entry.path %} files-tree-row--active{% endif %}">
                     {% if entry.kind == 'dir' %}
-                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}" class="files-link">{{ entry.name }}/</a>
+                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}"
+                         class="files-tree-link"
+                         title="Open directory">{{ entry.name }}/</a>
                     {% else %}
-                      <span class="files-name">{{ entry.name }}</span>
+                      <a href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}"
+                         class="files-tree-link"
+                         title="View file">{{ entry.name }}</a>
                     {% endif %}
-                  </td>
-                  <td class="files-size muted">
-                    {% if entry.size_bytes is none %}-{% else %}
-                      {% set size = entry.size_bytes %}
-                      {% if size < 1024 %}{{ size }} B
-                      {% elif size < 1024 * 1024 %}{{ (size / 1024) | round(1) }} KB
-                      {% elif size < 1024 * 1024 * 1024 %}{{ (size / (1024 * 1024)) | round(1) }} MB
-                      {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
-                      {% endif %}
-                      {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
-                    {% endif %}
-                  </td>
-                  <td class="files-actions">
-                    {% if entry.kind == 'file' %}
-                      <a class="files-action"
-                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
-                         title="View file">View</a>
-                      <button type="button" class="copy-btn files-action"
-                              data-copy-target="raw-url-{{ entry.path | replace('/', '_') }}"
-                              title="Copy raw URL to clipboard">Raw URL</button>
-                      <pre id="raw-url-{{ entry.path | replace('/', '_') }}" class="clone-url-source"
-                           aria-hidden="true">/{{ owner }}/{{ repo.name }}/raw/{{ repo.default_branch }}/{{ entry.path }}</pre>
-                      {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
-                        <button type="button" class="files-action files-action--edit"
-                                data-edit-target="{{ entry.path }}" title="Edit file">Edit</button>
-                      {% endif %}
-                    {% endif %}
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+                  </li>
+                {% endfor %}
+              </ul>
+            </aside>
 
-          {# File viewer panel — renders below the table when a view=path
-             query param is set. Text files render in a <pre>; binary /
-             large files surface metadata + a raw link. #}
-          {% if files_viewer_path %}
             <article class="files-viewer el-tile" aria-label="File viewer">
               <header class="files-viewer__header">
                 <h3 class="files-viewer__title">
                   {{ files_viewer_path }}
                   <span class="muted files-viewer__meta">
                     {% if files_viewer.view_exists %}
-                      {{ files_viewer.view_size_bytes }} B
-                      {% if files_viewer.view_is_text %} (text){% else %} (binary){% endif %}
+                      {% if files_viewer.view_size_bytes is not none %}{{ files_viewer.view_size_bytes }} B{% endif %}
+                      {% if files_viewer.view_is_text %} (text){% else %}{% if files_viewer.view_media_kind == 'image' %} (image){% elif files_viewer.view_media_kind == 'video' %} (video){% else %} (binary){% endif %}{% endif %}
                     {% else %}
                       (not found)
                     {% endif %}
                   </span>
                 </h3>
                 <p class="files-viewer__actions">
-                  <a class="nav-link" href="/{{ owner }}/{{ repo.name }}/files{% if files_path %}?path={{ files_path }}{% endif %}">Close</a>
-                  <a class="nav-link" href="{{ files_viewer.view_raw_url }}" target="_blank" rel="noopener noreferrer">Open raw</a>
-                  <button type="button" class="copy-btn" data-copy-target="files-viewer-raw-url"
-                          aria-label="Copy raw URL">Copy raw URL</button>
-                  <pre id="files-viewer-raw-url" class="clone-url-source" aria-hidden="true">{{ files_viewer.view_raw_url }}</pre>
+                  <a class="nav-link" href="/{{ owner }}/{{ repo.name }}/files{% if files_upload_open %}?upload=1{% endif %}{% if files_path %}&amp;path={{ files_path }}{% endif %}">Close</a>
+                  {% if files_viewer.view_exists %}
+                    {% if files_viewer.view_is_text and (viewer_is_owner or (current_user and current_user.role == 'admin')) %}
+                      <a class="nav-link"
+                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ files_viewer_path }}&amp;edit=1{% if files_upload_open %}&amp;upload=1{% endif %}">Edit</a>
+                    {% endif %}
+                    <a class="nav-link" href="{{ files_viewer.view_raw_url }}" target="_blank" rel="noopener noreferrer">Open raw</a>
+                    <button type="button" class="copy-btn" data-copy-target="files-viewer-raw-url"
+                            aria-label="Copy raw URL">Copy raw URL</button>
+                    <pre id="files-viewer-raw-url" class="clone-url-source" aria-hidden="true">{{ files_viewer.view_raw_url }}</pre>
+                  {% endif %}
                 </p>
               </header>
               {% if files_viewer.view_exists %}
-                {% if files_viewer.view_is_text %}
-                  {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
+                {# Image preview — the raw URL handles the LFS redirect. #}
+                {% if files_viewer.view_media_kind == 'image' and files_viewer.view_media_inline %}
+                  <img class="files-viewer__media" src="{{ files_viewer.view_raw_url }}" alt="{{ files_viewer_path }}">
+                {% elif files_viewer.view_media_kind == 'video' and files_viewer.view_media_inline %}
+                  <video class="files-viewer__media" controls preload="metadata" src="{{ files_viewer.view_raw_url }}"></video>
+                {% elif files_viewer.view_media_kind in ('image', 'video') %}
+                  <p class="muted files-viewer__binary">
+                    Media file over the inline preview cap (larger than {{ files_viewer.view_media_cap_bytes }} B). Download instead.
+                  </p>
+                  <p class="files-viewer__binary-link">
+                    <a class="primary files-viewer__download"
+                       href="{{ files_viewer.view_raw_url }}" download>Download</a>
+                  </p>
+                {% elif files_viewer.view_is_text %}
+                  {% if files_viewer.view_edit_mode %}
                     <form method="post" action="/{{ owner }}/{{ repo.name }}/files/edit"
                           class="files-viewer__edit">
                       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
                       <input type="hidden" name="path" value="{{ files_viewer_path }}">
+                      <p class="files-viewer__edit-row">
+                        <label class="files-upload__label" for="files-viewer-new-path">Path</label>
+                        <input id="files-viewer-new-path" type="text" name="new_path"
+                               value="{{ files_viewer_path }}" maxlength="500"
+                               class="files-viewer__path-input"
+                               spellcheck="false"
+                               aria-describedby="files-viewer-rename-hint">
+                        <span id="files-viewer-rename-hint" class="muted files-viewer__rename-hint">
+                          Change the path to rename the file. Existing files cannot be overwritten.
+                        </span>
+                      </p>
                       <label class="visually-hidden" for="files-viewer-content">Edit {{ files_viewer_path }}</label>
                       <textarea id="files-viewer-content" name="content" rows="20"
                                 class="files-viewer__textarea"
@@ -254,7 +267,6 @@
                         <button type="submit" class="primary">Save changes</button>
                         <span class="muted files-viewer__edit-hint">
                           Text files up to 1 MiB.
-                          {% if files_viewer.view_truncated %}Truncated to 1 MiB for the editor; full content stays in git.{% endif %}
                         </span>
                       </p>
                     </form>
@@ -280,7 +292,64 @@
                 <p class="empty-state">File not found at this path.</p>
               {% endif %}
             </article>
+          </div>
+        {% else %}
+          {# Default full-width tree as a table. #}
+          {% if files_path %}
+            <p class="breadcrumbs">
+              <a href="/{{ owner }}/{{ repo.name }}/files{% if files_upload_open %}?upload=1{% endif %}">/</a>
+              {% for segment in files_path.split('/') %}
+                {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
+                / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}{% if files_upload_open %}&amp;upload=1{% endif %}">{{ segment }}</a>
+              {% endfor %}
+            </p>
           {% endif %}
+          <table class="files-table">
+            <thead>
+              <tr><th>Name</th><th class="files-size">Size</th><th class="files-actions">Actions</th></tr>
+            </thead>
+            <tbody>
+              {% for entry in files_entries %}
+                <tr class="files-row files-row--{{ entry.kind }}">
+                  <td>
+                    {% if entry.kind == 'dir' %}
+                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}" class="files-link">{{ entry.name }}/</a>
+                    {% else %}
+                      <span class="files-name">{{ entry.name }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="files-size muted">
+                    {% if entry.size_bytes is none %}-{% else %}
+                      {% set size = entry.size_bytes %}
+                      {% if size < 1024 %}{{ size }} B
+                      {% elif size < 1024 * 1024 %}{{ (size / 1024) | round(1) }} KB
+                      {% elif size < 1024 * 1024 * 1024 %}{{ (size / (1024 * 1024)) | round(1) }} MB
+                      {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
+                      {% endif %}
+                      {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
+                    {% endif %}
+                  </td>
+                  <td class="files-actions">
+                    {% if entry.kind == 'file' %}
+                      <a class="files-action"
+                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
+                         title="View file">View</a>
+                      {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
+                        <a class="files-action"
+                           href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}&amp;edit=1{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
+                           title="Edit file">Edit</a>
+                      {% endif %}
+                      <button type="button" class="copy-btn files-action"
+                              data-copy-target="raw-url-{{ entry.path | replace('/', '_') }}"
+                              title="Copy raw URL to clipboard">Raw URL</button>
+                      <pre id="raw-url-{{ entry.path | replace('/', '_') }}" class="clone-url-source"
+                           aria-hidden="true">/{{ owner }}/{{ repo.name }}/raw/{{ repo.default_branch }}/{{ entry.path }}</pre>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         {% endif %}
 
       {# ============== COMMUNITY TAB ============== #}
@@ -973,6 +1042,12 @@
       line-height: 1.5;
       border-radius: 0;
     }
+    .files-viewer__path-input {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      border-radius: 0;
+    }
+    .files-viewer__rename-hint { font-size: 12px; }
     .files-viewer__edit-row {
       margin: 12px 0 0;
       display: flex;
@@ -993,6 +1068,58 @@
     }
     .files-viewer__binary-link { margin: 0; }
     .files-viewer__download { height: 32px; padding: 0 16px; }
+    /* Inline media preview — the browser fetches via the raw URL, which
+       transparently redirects LFS pointer blobs to the object store. */
+    .files-viewer__media {
+      display: block;
+      max-width: 100%;
+      max-height: 70vh;
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      background: var(--blp-paper-blue-2);
+    }
+
+    /* Split layout: narrow left tree + large center viewer. The right
+       sidebar (Downloads / Info / Owner) stays outside this grid. */
+    .files-split {
+      display: grid;
+      grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+      gap: var(--gap-tile);
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .files-split { grid-template-columns: minmax(0, 1fr); }
+    }
+    .files-tree-column { padding: 12px; }
+    .files-tree-list {
+      list-style: none;
+      margin: 8px 0 0;
+      padding: 0;
+    }
+    .files-tree-row { padding: 2px 0; }
+    .files-tree-row--active .files-tree-link { color: var(--color-main); font-weight: 700; }
+    .files-tree-link {
+      color: var(--text);
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .files-tree-link:hover { color: var(--color-main); text-decoration: underline; }
+
+    /* Upload reveal — owner-only capsule that opens ?upload=1 to
+       surface the actual upload form. */
+    .files-upload-toggle {
+      margin: 12px 0;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .files-upload__close {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--text-sub);
+      text-decoration: none;
+    }
+    .files-upload__close:hover { color: var(--color-main); text-decoration: underline; }
 
     /* Community tab. */
     .comments-list {

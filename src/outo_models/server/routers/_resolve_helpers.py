@@ -36,6 +36,53 @@ from outo_models.repos.storage import repo_fs_path
 # does not inflate into thousands of `send` calls.
 _RESOLVE_CHUNK = 64 * 1024
 
+# Inline-preview caps for the Files tab viewer. A blob at or below the
+# matching cap renders as `<img>` / `<video>` straight from the raw URL;
+# anything bigger falls back to metadata + a Download link.
+_INLINE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_INLINE_VIDEO_MAX_BYTES = 25 * 1024 * 1024
+
+
+def media_kind_for(path: str) -> str:
+    """Return `image`, `video`, or `none` based on the file extension.
+
+    Used by the Files-tab viewer to decide whether to render the blob
+    inline (`<img>` / `<video>`) vs. fall back to metadata + Download.
+    Anything outside the recognised image / video extensions returns
+    `none`, in which case the template keeps the existing text / binary
+    rendering paths.
+    """
+    _, ext = os.path.splitext(path.lower())
+    if ext in _IMAGE_EXTENSIONS:
+        return "image"
+    if ext in _VIDEO_EXTENSIONS:
+        return "video"
+    return "none"
+
+
+_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".bmp",
+        ".ico",
+        ".avif",
+    }
+)
+_VIDEO_EXTENSIONS = frozenset(
+    {
+        ".mp4",
+        ".webm",
+        ".ogv",
+        ".mov",
+        ".m4v",
+    }
+)
+
 # LFS pointer file marker. The spec says:
 # `version https://git-lfs.github.com/spec/v1`. We accept the prefix
 # verbatim; the rest of the pointer body must include `oid sha256:<hex>`
@@ -492,12 +539,15 @@ def parse_range(header: str | None, total_size: int) -> HttpRange | None:
 
 
 __all__ = [
+    "_INLINE_IMAGE_MAX_BYTES",
+    "_INLINE_VIDEO_MAX_BYTES",
     "HttpRange",
     "LfsPointer",
     "content_type_for",
     "is_text_extension",
     "iter_blob_window",
     "maybe_lfs_pointer",
+    "media_kind_for",
     "parse_range",
     "peek_blob_head",
     "read_blob_text",

@@ -89,8 +89,11 @@ from outo_models.repos.social import (
 from outo_models.repos.storage import disk_usage, repo_fs_path
 from outo_models.server.deps import get_current_user_optional, get_db
 from outo_models.server.routers._resolve_helpers import (
+    _INLINE_IMAGE_MAX_BYTES,
+    _INLINE_VIDEO_MAX_BYTES,
     content_type_for,
     is_text_extension,
+    media_kind_for,
     read_blob_text,
     resolve_blob,
 )
@@ -787,12 +790,15 @@ async def _render_repo_page(
         # Files tab extra context (viewer / editor / upload error / ok hint).
         "files_viewer": {},
         "files_viewer_path": "",
+        "files_upload_open": request.query_params.get("upload") == "1",
         "files_upload_error": request.query_params.get("upload_error"),
         "files_uploaded_sha": request.query_params.get("uploaded"),
         "files_edit_error": request.query_params.get("edit_error"),
         "files_edited_path": request.query_params.get("edited"),
         "files_editor_path": "",
         "files_editor_content": "",
+        "files_editor_can_rename": False,
+        "files_editor_new_path": "",
     }
 
     if extra_context:
@@ -2292,6 +2298,8 @@ async def _build_viewer_context(
     name: str,
     repo: Repo,
     view_path: str,
+    edit_mode: bool,
+    viewer_can_edit: bool,
 ) -> dict[str, object]:
     """Resolve `view_path` to a viewer-context dict for the Files tab.
 
@@ -2300,10 +2308,15 @@ async def _build_viewer_context(
     missing. When the blob is a text file ≤ 1 MiB the dict also carries
     the decoded text so the template can render it inline; otherwise the
     metadata + raw-link template branch fires.
+
+    `edit_mode` reflects the `?edit=1` query param; the server still
+    refuses to render the editor unless `viewer_can_edit` is True (the
+    owner / admin role check), and the blob is text + ≤ 1 MiB.
     """
     revision = repo.default_branch
     raw_url = f"/{owner}/{name}/raw/{revision}/{view_path}"
     content_type = content_type_for(view_path)
+    media_kind = media_kind_for(view_path)
     ctx: dict[str, object] = {
         "view_path": view_path,
         "view_revision": revision,
@@ -2315,6 +2328,14 @@ async def _build_viewer_context(
         "view_exists": False,
         "view_is_text": False,
         "view_binary": True,
+        "view_media_kind": media_kind,
+        "view_media_inline": False,
+        "view_media_cap_bytes": _INLINE_IMAGE_MAX_BYTES
+        if media_kind == "image"
+        else _INLINE_VIDEO_MAX_BYTES
+        if media_kind == "video"
+        else 0,
+        "view_edit_mode": False,
     }
     try:
         blob_sha, blob_size = await resolve_blob(
@@ -2325,6 +2346,12 @@ async def _build_viewer_context(
     ctx["view_exists"] = True
     ctx["view_size_bytes"] = blob_size
     ctx["view_blob_sha"] = blob_sha.decode("ascii", errors="replace")
+
+    if (media_kind == "image" and blob_size <= _INLINE_IMAGE_MAX_BYTES) or (
+        media_kind == "video" and blob_size <= _INLINE_VIDEO_MAX_BYTES
+    ):
+        ctx["view_media_inline"] = True
+
     if not is_text_extension(view_path):
         return ctx
     text = await asyncio.to_thread(
@@ -2341,6 +2368,10 @@ async def _build_viewer_context(
     ctx["view_binary"] = False
     if blob_size > _FILES_EDIT_MAX_BYTES:
         ctx["view_truncated"] = True
+    # Editor requires `?edit=1`, owner / admin role, and a fully
+    # inlined (non-truncated) text blob — the byte cap is enforced by
+    # `read_blob_text` above.
+    ctx["view_edit_mode"] = bool(edit_mode and viewer_can_edit and not ctx["view_truncated"])
     return ctx
 
 
@@ -2479,6 +2510,7 @@ async def files_edit_form(
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User | None, Depends(get_current_user_optional)],
     file_path: Annotated[str, Form(alias="path")] = "",
+    new_path: Annotated[str, Form()] = "",
     content: Annotated[str, Form()] = "",
     message: Annotated[str, Form()] = "",
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
@@ -2490,6 +2522,14 @@ async def files_edit_form(
     crafted POST cannot bypass it. The bytes go through `commit_files`
     with the editor as the author; an `AuditLog(action="repo.file_edit")`
     entry records the change before the redirect back to the Files tab.
+
+    Renaming: when `new_path` differs from `path` the request is
+    treated as a rename (delete-old + add-new in one commit). The
+    target path is validated against the same rules as upload paths
+    (`..`, leading `/`, backslashes rejected). If the target already
+    exists the request is rejected with `edit_error=...` and nothing
+    is committed. On success the response redirects to the new path's
+    viewer.
     """
     verify_csrf(request, form_token=csrf)
     repo = await _resolve_owner_or_403(db, owner=owner, name=name, viewer=viewer)
@@ -2500,6 +2540,31 @@ async def files_edit_form(
             url=f"{target}?edit_error=Missing+path",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+    target_path = (new_path or "").strip() or cleaned_path
+    rename = target_path != cleaned_path
+
+    if rename:
+        try:
+            validate_path(target_path)
+        except ValidationFailedError as exc:
+            target = _files_tab_redirect(request, owner=owner, name=name, files_path=cleaned_path)
+            sep = "&" if "?" in target else "?"
+            return RedirectResponse(
+                url=f"{target}{sep}edit_error={str(exc)[:200]}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        try:
+            await resolve_blob(owner, name, repo.default_branch, target_path, repo.default_branch)
+        except NotFoundError:
+            pass
+        else:
+            target = _files_tab_redirect(request, owner=owner, name=name, files_path=cleaned_path)
+            sep = "&" if "?" in target else "?"
+            return RedirectResponse(
+                url=f"{target}{sep}edit_error=Target+path+already+exists",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
     content_bytes = content.encode("utf-8")
     if len(content_bytes) > _FILES_EDIT_MAX_BYTES:
         target = _files_tab_redirect(request, owner=owner, name=name, files_path=cleaned_path)
@@ -2510,7 +2575,8 @@ async def files_edit_form(
         )
 
     owner_user = (await db.execute(select(User).where(User.id == repo.owner_id))).scalar_one()
-    files_map: dict[str, bytes] = {cleaned_path: content_bytes}
+    files_map: dict[str, bytes] = {target_path: content_bytes}
+    deletions: list[str] = [cleaned_path] if rename else []
     try:
         result = await commit_files(
             owner=owner,
@@ -2520,7 +2586,9 @@ async def files_edit_form(
             actor_email=owner_user.email,
             files=files_map,
             prefix="",
-            message=message or f"edit {cleaned_path}",
+            message=message
+            or (f"rename {cleaned_path} to {target_path}" if rename else f"edit {cleaned_path}"),
+            deletions=deletions,
         )
     except FileNotFoundError:
         target = _files_tab_redirect(request, owner=owner, name=name)
@@ -2529,13 +2597,24 @@ async def files_edit_form(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
+    audit_detail: dict[str, object] = {
+        "repo": f"{owner}/{name}",
+        "commit_sha": result.commit_sha,
+        "path": cleaned_path,
+        "bytes": len(content_bytes),
+    }
+    if rename:
+        audit_detail["rename_from"] = cleaned_path
+        audit_detail["rename_to"] = target_path
+
     db.add(
         Revision(
             repo_id=repo.id,
             commit_sha=result.commit_sha,
             branch=repo.default_branch,
             author_id=owner_user.id,
-            message=message or f"edit {cleaned_path}",
+            message=message
+            or (f"rename {cleaned_path} to {target_path}" if rename else f"edit {cleaned_path}"),
             size_bytes=len(content_bytes),
         )
     )
@@ -2545,23 +2624,20 @@ async def files_edit_form(
             action="repo.file_edit",
             target_type="repo",
             target_id=str(repo.id),
-            detail=json.dumps(
-                {
-                    "repo": f"{owner}/{name}",
-                    "commit_sha": result.commit_sha,
-                    "path": cleaned_path,
-                    "bytes": len(content_bytes),
-                }
-            ),
+            detail=json.dumps(audit_detail),
         )
     )
     await db.commit()
 
-    files_dir = "/".join(cleaned_path.split("/")[:-1])
-    target = _files_tab_redirect(request, owner=owner, name=name, files_path=files_dir)
-    sep = "&" if "?" in target else "?"
+    if rename:
+        target = f"/{owner}/{name}/files/view?path={target_path}"
+        sep = "&"
+    else:
+        files_dir = "/".join(target_path.split("/")[:-1])
+        target = _files_tab_redirect(request, owner=owner, name=name, files_path=files_dir)
+        sep = "&" if "?" in target else "?"
     return RedirectResponse(
-        url=f"{target}{sep}edited={cleaned_path}",
+        url=f"{target}{sep}edited={target_path}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -2574,28 +2650,40 @@ async def files_view_route(
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User | None, Depends(get_current_user_optional)],
     path: Annotated[str, Query()] = "",
+    edit: Annotated[str, Query()] = "",
 ) -> Response:
     """Render the Files tab with the inline viewer panel for `path`.
 
     Public: any viewer who can see the repo can view file contents;
     the raw URL is the same one `GET /{owner}/{name}/raw/<ref>/<path>`
     serves, so the visibility check rides on the existing rule.
+
+    `edit=1` switches the viewer into editor mode for owner / admin
+    only. The actual editor markup is gated inside
+    `_build_viewer_context` (text + ≤ 1 MiB + owner / admin role), so
+    a stranger hand-crafting `?edit=1` still gets the read-only view.
     """
     repo = await _load_repo_or_404_visible(db, owner=owner, name=name, viewer=viewer)
     if repo is None:
         raise NotFoundError(f"repository not found: {owner}/{name}")
+    edit_mode = edit == "1"
+    viewer_can_edit = viewer is not None and (viewer.id == repo.owner_id or viewer.role == "admin")
     viewer_ctx = await _build_viewer_context(
         db,
         owner=owner,
         name=name,
         repo=repo,
         view_path=path,
+        edit_mode=edit_mode,
+        viewer_can_edit=viewer_can_edit,
     )
     extra: dict[str, Any] = {
         "files_viewer": viewer_ctx,
         "files_viewer_path": path,
-        "files_editor_path": path if viewer_ctx.get("view_is_text") else "",
+        "files_editor_path": path if viewer_ctx.get("view_edit_mode") else "",
         "files_editor_content": viewer_ctx.get("view_text") or "",
+        "files_editor_can_rename": viewer_ctx.get("view_edit_mode", False),
+        "files_editor_new_path": path,
     }
     return await _render_repo_page(
         request,

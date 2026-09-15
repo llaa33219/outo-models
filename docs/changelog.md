@@ -4,6 +4,33 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.7 — Files tab overhaul: read-only view, split viewer, rename, media preview
+
+### Changed
+
+- **View is read-only for everyone** (owner included). Editing requires
+  the explicit Edit action (`?edit=1`), owner/admin only; the dead
+  `data-edit-target` button is gone.
+- **Upload form hidden by default**; an Upload button reveals it via
+  `?upload=1` (server-rendered, no JS).
+- **Split viewer layout**: opening a file moves the tree into a narrow
+  left column and renders the content in a large center panel
+  (BLP square tiles).
+- **Editor supports renaming**: a visible path input; a rename commits
+  delete-old + add-new as a SINGLE git commit, rejects existing targets
+  and traversal paths, and audit detail gains `rename_from`/`rename_to`.
+- **Inline media preview**: `image/*` renders `<img>`, `video/*` renders
+  `<video controls>` (caps: image 10 MiB, video 25 MiB; above cap →
+  Download link). LFS-backed files preview through the raw URL.
+
+### Fixed
+
+- Latent commit bug: the upload worktree was built with
+  init+fetch+checkout, which left the index empty — every commit after
+  the first silently dropped prior files. Now the worktree is a
+  `porcelain.clone` of the bare repo; regression tests assert prior
+  files survive subsequent commits.
+
 ## v0.5.6 — Profile README, Files tab actions, clone-command copy, Spaces runtime default-on
 
 ### Added
