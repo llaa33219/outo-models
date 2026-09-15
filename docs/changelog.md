@@ -4,6 +4,20 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.9 — Files tab: click-to-view, wide viewer, row actions removed
+
+### Changed
+
+- **Click a file name to open the viewer** — names are now links
+  (carrying `upload=1` / `dir` context); no separate View button.
+- **Per-row View / Edit / Raw URL buttons removed** (whole Actions
+  column). The viewer header remains the single place for Edit
+  (`?edit=1`), Open raw, and Copy raw URL — no functionality lost.
+- **Wide view mode**: opening a file widens the page container to
+  `min(1560px, 96vw)` via a `main--files-view` class hook, and the
+  split tree column widens to `minmax(360px, 480px)` — the viewer and
+  file list are no longer squeezed inside the 1000px cap.
+
 ## v0.5.8 — Files tab: one listing UI in both modes
 
 ### Changed

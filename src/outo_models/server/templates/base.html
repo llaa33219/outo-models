@@ -743,7 +743,7 @@ th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
     </nav>
   </div>
 </header>
-<main>
+<main class="{% block main_class %}{% endblock %}">
   <div class="bg-tile__inner">
     {% block content %}{% endblock %}
   </div>

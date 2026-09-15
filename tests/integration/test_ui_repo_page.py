@@ -1312,9 +1312,12 @@ class TestRepoCloneCommand:
 
 
 class TestFilesTabActions:
-    """Owner-only View / Edit / Upload actions surface on the Files tab."""
+    """The Files tab listing now uses click-to-view file names and
+    ships no per-row action buttons. Upload / Edit live in the viewer
+    header and the header Upload toggle, both owner/admin only.
+    """
 
-    async def test_files_tab_renders_action_buttons_for_owner(
+    async def test_files_tab_rows_link_to_viewer_without_action_buttons(
         self,
         app: tuple[TestClient, FastAPI, object],
         seed_approved_user,
@@ -1341,15 +1344,24 @@ class TestFilesTabActions:
         response = client.get("/alice/f-actions/files")
         assert response.status_code == 200
         body = response.text
+        # Listing columns: Name + Size only — Actions is gone.
+        assert "<th>Name</th>" in body
+        assert '<th class="files-size">Size</th>' in body
+        assert '<th class="files-actions">Actions</th>' not in body
+        # Click-to-view: every file name is itself a link to the viewer.
+        assert 'href="/alice/f-actions/files/view?path=config.json"' in body
+        assert 'href="/alice/f-actions/files/view?path=weights.bin"' in body
+        # The old per-row Raw URL button + its hidden source are gone
+        # from the listing (Raw URL is still reachable via the viewer
+        # header — covered by the viewer-header tests).
+        assert "Raw URL</button>" not in body
+        assert 'id="raw-url-config.json"' not in body
+        assert 'id="raw-url-weights.bin"' not in body
+        assert "View</a>" not in body
+        # Upload toggle (the only .files-action left in the listing) still
+        # renders for the owner — same shape, same href.
         assert "files-upload-toggle" in body
         assert 'href="/alice/f-actions/files?upload=1"' in body
-        assert body.count("View</a>") >= 2
-        assert body.count("Edit</a>") >= 2
-        assert body.count("Raw URL</button>") >= 2
-        # Each file row carries its own raw-url source element so the
-        # copy button can resolve it without a shared global id.
-        assert 'id="raw-url-config.json"' in body
-        assert 'id="raw-url-weights.bin"' in body
 
     async def test_files_tab_hides_upload_and_edit_for_stranger(
         self,
@@ -1376,13 +1388,19 @@ class TestFilesTabActions:
 
         response = client.get("/alice/f-stranger/files")
         body = response.text
-        # No upload tile, no Edit anchor (View + Raw URL still show).
+        # Stranger gets no upload form / toggle / edit affordance.
         assert 'action="/alice/f-stranger/files/upload"' not in body
         assert 'class="files-upload"' not in body
         assert 'class="files-upload-toggle"' not in body
+        # No Edit anchor anywhere on the page (the viewer header Edit
+        # link is owner-only too, and not visible without ?view=).
         assert "Edit</a>" not in body
-        assert body.count("View</a>") >= 2
-        assert body.count("Raw URL</button>") >= 2
+        # Click-to-view links ARE visible — public repo, read-only viewer
+        # is for every viewer.
+        assert 'href="/alice/f-stranger/files/view?path=config.json"' in body
+        # Listing has no per-row Raw URL button (viewer-only now).
+        assert "Raw URL</button>" not in body
+        assert 'id="raw-url-config.json"' not in body
 
     async def test_files_tab_view_renders_text_file_in_pre(
         self,
@@ -1414,7 +1432,14 @@ class TestFilesTabActions:
         assert "config.json" in body
         assert "<textarea" not in body
         assert "files-viewer__pre" in body
+        # Viewer header carries Edit / Open raw / Copy raw URL — the
+        # only path to those actions now that the per-row buttons are
+        # gone.
         assert 'href="/alice/f-view/files/view?path=config.json&amp;edit=1"' in body
+        assert ">Edit</a>" in body
+        assert ">Open raw</a>" in body
+        assert "Copy raw URL" in body
+        assert 'data-copy-target="files-viewer-raw-url"' in body
 
         response = client.get("/alice/f-view/files/view?path=config.json&edit=1")
         assert response.status_code == 200
@@ -1888,10 +1913,17 @@ class TestFilesViewerSplitLayout:
         assert '<table class="files-table' in body
         assert "<th>Name</th>" in body
         assert '<th class="files-size">Size</th>' in body
-        assert '<th class="files-actions">Actions</th>' in body
+        # Actions column was removed — only Name + Size remain.
+        assert '<th class="files-actions">Actions</th>' not in body
+        # Click-to-view: the active row's name is a link to the viewer.
         assert "/alice/split/files/view?path=config.json" in body
-        assert 'id="raw-url-config.json"' in body
+        # No per-row raw-url hidden source in the listing body.
+        assert 'id="raw-url-config.json"' not in body
         assert "files-row--active" in body
+        # Wide view-mode marker — emitted only when a file is being
+        # viewed (the tree + viewer get real horizontal room then).
+        assert "main--files-view" in body
+        assert '<main class="main--files-view">' in body
         assert "files-tree-list" not in body
         assert "files-tree-row" not in body
         assert "files-tree-link" not in body
@@ -1921,8 +1953,16 @@ class TestFilesViewerSplitLayout:
         body = response.text
         assert '<table class="files-table' in body
         assert "<th>Name</th>" in body
+        assert '<th class="files-size">Size</th>' in body
+        assert '<th class="files-actions">Actions</th>' not in body
+        # Click-to-view: file names are links even on the default tab.
+        assert 'href="/alice/no-split/files/view?path=config.json"' in body
+        # No tree column + no viewer panel = default full-width tree.
         assert '<aside class="files-tree-column' not in body
         assert '<article class="files-viewer' not in body
+        # Wide-mode marker absent — empty class hook from base.html.
+        assert '<main class="main--files-view">' not in body
+        assert "<main>" in body
 
     async def test_split_view_and_default_tab_share_the_same_listing(
         self,
@@ -1961,15 +2001,16 @@ class TestFilesViewerSplitLayout:
         for needle in (
             "<th>Name</th>",
             '<th class="files-size">Size</th>',
-            '<th class="files-actions">Actions</th>',
             'class="files-row files-row--file"',
             "/alice/sigsame/files/view?path=config.json",
-            'id="raw-url-config.json"',
         ):
             assert needle in full_body, (needle, "full")
             assert needle in split_body, (needle, "split")
 
         for forbidden in (
+            '<th class="files-actions">Actions</th>',
+            "Raw URL</button>",
+            'id="raw-url-config.json"',
             "files-tree-list",
             "files-tree-row",
             "files-tree-link",
@@ -1981,6 +2022,9 @@ class TestFilesViewerSplitLayout:
         assert '<article class="files-viewer' in split_body
         assert '<aside class="files-tree-column' not in full_body
         assert '<article class="files-viewer' not in full_body
+        # Wide-mode marker present on the split branch only.
+        assert '<main class="main--files-view">' in split_body
+        assert '<main class="main--files-view">' not in full_body
 
 
 class TestFilesEditRename:

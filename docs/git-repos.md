@@ -144,33 +144,45 @@ Follow button is hidden when the viewer IS the owner.
 
 ### Files tab — View / Edit / Upload
 
-The Files tab surfaces per-file **View**, **Raw URL**, and
-**Edit** actions, plus a header **Upload** form for the owner
-and admins:
+The Files tab listing has **Name** and **Size** columns only; clicking
+a file name opens the viewer (`GET /{owner}/{name}/files/view?path=<p>`).
+Edit, **Open raw**, and **Copy raw URL** live in the viewer header, so
+every per-row action button was redundant. Owner / admin still get the
+header **Upload** toggle, which reveals the upload form behind
+`?upload=1`:
 
 | Action | Form target | Notes |
 | --- | --- | --- |
-| View file | `GET /{owner}/{name}/files/view?path=<p>` | Read-only inline viewer for every viewer. Text-like extensions and blobs ≤ 1 MiB render in a `<pre>`; images (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`, `ico`, `avif`) render as `<img>` when ≤ 10 MiB; videos (`mp4`, `webm`, `ogv`, `mov`, `m4v`) render as `<video controls preload="metadata">` when ≤ 25 MiB; everything else surfaces metadata + a download link to the raw URL. The LFS pointer route is transparent: the raw URL 302s to the LFS GET endpoint, so LFS-backed images / videos preview correctly. Public; visibility follows the repo rule. |
-| Raw URL | `GET /{owner}/{name}/raw/{revision}/{path}` | Alias of the `/resolve/` endpoint under a more discoverable prefix. Serves the raw bytes (with `Range` support + ETag + LFS-pointer redirect). |
-| Edit file | `GET .../files/view?path=<p>&edit=1` + `POST /{owner}/{name}/files/edit` | Owner / admin only. The viewer panel is read-only by default; the **Edit** link in the viewer header (and the per-row Edit link in the table) toggles the editor with `?edit=1`. The editor renders only when the viewer is owner/admin, the file has a text-like extension, and the blob is ≤ 1 MiB. POST fields: `path`, optional `new_path` (rename), `content`, optional `message`. Rejected above 1 MiB; non-owners get 403; an `edit_error=...` query string is appended on validation failure. Lands as one commit on the default branch via `repos.commit.commit_files`; audit `repo.file_edit` (with `rename_from` / `rename_to` when the path changed). |
+| View file | `GET /{owner}/{name}/files/view?path=<p>` | Read-only inline viewer for every viewer. The file row's name itself is the link — no separate View button. Text-like extensions and blobs ≤ 1 MiB render in a `<pre>`; images (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`, `ico`, `avif`) render as `<img>` when ≤ 10 MiB; videos (`mp4`, `webm`, `ogv`, `mov`, `m4v`) render as `<video controls preload="metadata">` when ≤ 25 MiB; everything else surfaces metadata + a download link to the raw URL. The LFS pointer route is transparent: the raw URL 302s to the LFS GET endpoint, so LFS-backed images / videos preview correctly. Public; visibility follows the repo rule. |
+| Raw URL | `GET /{owner}/{name}/raw/{revision}/{path}` | Alias of the `/resolve/` endpoint under a more discoverable prefix. Serves the raw bytes (with `Range` support + ETag + LFS-pointer redirect). Reachable from the viewer header via **Open raw** (opens in a new tab) and **Copy raw URL** (copies the same absolute URL to the clipboard via `/static/clipboard.js`). |
+| Edit file | `GET .../files/view?path=<p>&edit=1` + `POST /{owner}/{name}/files/edit` | Owner / admin only. The viewer panel is read-only by default; the **Edit** link in the viewer header toggles the editor with `?edit=1`. The editor renders only when the viewer is owner/admin, the file has a text-like extension, and the blob is ≤ 1 MiB. POST fields: `path`, optional `new_path` (rename), `content`, optional `message`. Rejected above 1 MiB; non-owners get 403; an `edit_error=...` query string is appended on validation failure. Lands as one commit on the default branch via `repos.commit.commit_files`; audit `repo.file_edit` (with `rename_from` / `rename_to` when the path changed). |
 | Upload | `POST /{owner}/{name}/files/upload` | Owner / admin only. The upload form is hidden by default; a header **Upload** link reveals it via `?upload=1`. Same multipart shape as the JSON `/api/repos/{owner}/{name}/upload` endpoint (one or more `files[]` parts, optional `message` + `path` directory prefix). 403 for strangers / 422 on empty / 413 on per-file > 100 MiB / 413 on quota overflow. Lands through `commit_files`; audit `repo.file_upload`. |
 
 When the viewer is rendering a file (`view` query param set), the
-Files tab splits into a left column (~320–420 px on desktop) and a
+Files tab splits into a left column (~360–480 px on desktop) and a
 large center panel (the viewer). The left column renders the SAME
 `<table class="files-table">` listing as the default Files tab — same
-Name / Size / Actions columns, same per-row View / Raw URL / Edit
-actions, same breadcrumb — only the cell padding is tightened so the
-three columns fit inside the column without horizontal scroll. The
-viewed file's row carries an extra `files-row--active` modifier
-(2 px `--color-main` accent border on the left + `--blp-paper-blue`
-background, square corners, no radius) so its position in the tree is
-glanceable. With no file being viewed the listing renders full-width
-as the same table — the shape it had before the split was introduced.
-Both branches share one Jinja macro (`files_listing(entries,
-files_path, files_upload_open, active_path)` in
-`templates/repos/view.html`) so any future listing UI change shows up
-in both places automatically.
+Name / Size columns, same click-to-view name links, same breadcrumb —
+only the cell padding is tightened so the two columns fit inside the
+column without horizontal scroll. The viewed file's row carries an
+extra `files-row--active` modifier (2 px `--color-main` accent border
+on the left + `--blp-paper-blue` background, square corners, no radius)
+so its position in the tree is glanceable. With no file being viewed
+the listing renders full-width as the same table — the shape it had
+before the split was introduced. Both branches share one Jinja macro
+(`files_listing(entries, files_path, files_upload_open, active_path)`
+in `templates/repos/view.html`) so any future listing UI change shows
+up in both places automatically.
+
+When a file is open, view.html additionally emits the
+`main--files-view` class on the page `<main>` (via the
+`{% block main_class %}` hook in `base.html`). The CSS rule
+`main.main--files-view .bg-tile__inner { max-width: min(1560px, 96vw); }`
+lifts the default 1000 px content cap so the split layout gets real
+horizontal room — the viewer is no longer squeezed into the narrow
+card-tab width. The marker is **only** present when a file is being
+viewed; every other page (including the default full-width Files
+tab) inherits the normal 1000 px cap.
 
 #### Renaming via the editor
 
@@ -189,11 +201,8 @@ edit flow. Submitting with `new_path` different from `path` is a rename:
 4. The response redirects to the new path's viewer URL
    (`/{owner}/{name}/files/view?path=<new>`).
 
-Each row's **Raw URL** button copies the absolute
-`/{owner}/{name}/raw/{revision}/{path}` URL to the clipboard via
-the shared `/static/clipboard.js` helper. Each edit / upload
-form posts with the `_csrf` double-submit cookie; missing or
-mismatched tokens return 403.
+Each edit / upload form posts with the `_csrf` double-submit
+cookie; missing or mismatched tokens return 403.
 
 ### Form POST mutations
 

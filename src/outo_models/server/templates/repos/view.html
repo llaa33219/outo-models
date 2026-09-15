@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ owner }}/{{ repo.name }} &mdash; outo-models{% endblock %}
+{# When a file is being viewed, widen the page container beyond the
+   default 1000 px cap so the split layout (tree + viewer) gets real
+   horizontal room instead of being squeezed into the narrow card tab
+   width. Every other page inherits the empty default in base.html. #}
+{% block main_class %}{% if tab_files_active and files_viewer_path %}main--files-view{% endif %}{% endblock %}
 {% block content %}
   {# ------------------------------------------------------------------------
    * Header row: owner/name + copy button + like + follow capsules.
@@ -126,7 +131,7 @@
           {% endif %}
           <table class="files-table{% if active_path %} files-table--with-active{% endif %}">
             <thead>
-              <tr><th>Name</th><th class="files-size">Size</th><th class="files-actions">Actions</th></tr>
+              <tr><th>Name</th><th class="files-size">Size</th></tr>
             </thead>
             <tbody>
               {% for entry in entries %}
@@ -135,7 +140,9 @@
                     {% if entry.kind == 'dir' %}
                       <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}" class="files-link">{{ entry.name }}/</a>
                     {% else %}
-                      <span class="files-name">{{ entry.name }}</span>
+                      <a class="files-link files-name"
+                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
+                         title="View file">{{ entry.name }}</a>
                     {% endif %}
                   </td>
                   <td class="files-size muted">
@@ -147,23 +154,6 @@
                       {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
                       {% endif %}
                       {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
-                    {% endif %}
-                  </td>
-                  <td class="files-actions">
-                    {% if entry.kind == 'file' %}
-                      <a class="files-action"
-                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
-                         title="View file">View</a>
-                      {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
-                        <a class="files-action"
-                           href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}&amp;edit=1{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
-                           title="Edit file">Edit</a>
-                      {% endif %}
-                      <button type="button" class="copy-btn files-action"
-                              data-copy-target="raw-url-{{ entry.path | replace('/', '_') }}"
-                              title="Copy raw URL to clipboard">Raw URL</button>
-                      <pre id="raw-url-{{ entry.path | replace('/', '_') }}" class="clone-url-source"
-                           aria-hidden="true">/{{ owner }}/{{ repo.name }}/raw/{{ repo.default_branch }}/{{ entry.path }}</pre>
                     {% endif %}
                   </td>
                 </tr>
@@ -929,8 +919,6 @@
     .files-table tbody tr { transition: background var(--t-base); }
     .files-table tbody tr:hover { background: var(--blp-paper-blue-2); }
     .files-table .files-size { text-align: right; white-space: nowrap; }
-    .files-table .files-actions { white-space: nowrap; text-align: right; }
-    .files-table .files-actions .files-action { margin-left: 6px; }
     .files-link {
       font-weight: 600;
       color: var(--color-main);
@@ -1075,13 +1063,15 @@
 
     /* Split layout: compact left column + large center viewer. The left
        column renders the SAME files-table as the default tab; the rules
-       below only tighten the cell padding / font size so all three
-       columns (Name / Size / Actions) fit in ~360 px without horizontal
-       scroll. The right sidebar (Downloads / Info / Owner) stays outside
-       this grid. */
+       below only tighten the cell padding / font size so the Name and
+       Size columns fit in ~360-480 px without horizontal scroll. The
+       right sidebar (Downloads / Info / Owner) stays outside this grid.
+       When the page is in wide mode (`main.main--files-view`) the
+       container cap below expands, so the center viewer gets much more
+       horizontal room. */
     .files-split {
       display: grid;
-      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      grid-template-columns: minmax(360px, 480px) minmax(0, 1fr);
       gap: var(--gap-tile);
       align-items: start;
     }
@@ -1093,7 +1083,12 @@
     .files-tree-column .files-table td { padding: 6px 8px; font-size: 12px; }
     .files-tree-column .files-table .files-name,
     .files-tree-column .files-table .files-link { word-break: break-all; }
-    .files-tree-column .files-table .files-actions .files-action { margin-left: 4px; padding: 0 8px; }
+    /* Wide view mode — files tab with a viewer open lifts the global
+       1000 px `bg-tile__inner` cap to 1560 px (96 vw floor) so the
+       split layout has real room. The marker class is emitted only by
+       view.html when `tab_files_active and files_viewer_path`; every
+       other page inherits base.html's empty default. */
+    main.main--files-view .bg-tile__inner { max-width: min(1560px, 96vw); }
     /* Active-file highlight: a 2 px main-color accent border on the
        left of the row + paper-blue background (BLP tokens only — square
        corners, no radius). Permanent-selection exception applies: the
