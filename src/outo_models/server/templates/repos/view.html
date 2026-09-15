@@ -104,6 +104,74 @@
 
       {# ============== FILES TAB ============== #}
       {% elif tab_files_active %}
+        {# One source of truth for the Files-tab listing. Rendered by both
+           branches below so the column inside the split layout and the
+           full-width default tab present the same UI (same table, same
+           action links, same query-param carry-through). Scope to the
+           rows of the active path only: outside the split the table is
+           bordered; inside the split the column wraps a tighter variant
+           of the same table (SCSS / CSS scoped to .files-split).
+
+           Active-path highlight is opt-in: pass `active_path` to mark a
+           row of `files-row--active`. None / "" → no highlight. #}
+        {% macro files_listing(entries, files_path, files_upload_open, active_path) %}
+          {% if files_path %}
+            <p class="breadcrumbs">
+              <a href="/{{ owner }}/{{ repo.name }}/files{% if files_upload_open %}?upload=1{% endif %}">/</a>
+              {% for segment in files_path.split('/') %}
+                {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
+                / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}{% if files_upload_open %}&amp;upload=1{% endif %}">{{ segment }}</a>
+              {% endfor %}
+            </p>
+          {% endif %}
+          <table class="files-table{% if active_path %} files-table--with-active{% endif %}">
+            <thead>
+              <tr><th>Name</th><th class="files-size">Size</th><th class="files-actions">Actions</th></tr>
+            </thead>
+            <tbody>
+              {% for entry in entries %}
+                <tr class="files-row files-row--{{ entry.kind }}{% if active_path and active_path == entry.path %} files-row--active{% endif %}">
+                  <td>
+                    {% if entry.kind == 'dir' %}
+                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}" class="files-link">{{ entry.name }}/</a>
+                    {% else %}
+                      <span class="files-name">{{ entry.name }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="files-size muted">
+                    {% if entry.size_bytes is none %}-{% else %}
+                      {% set size = entry.size_bytes %}
+                      {% if size < 1024 %}{{ size }} B
+                      {% elif size < 1024 * 1024 %}{{ (size / 1024) | round(1) }} KB
+                      {% elif size < 1024 * 1024 * 1024 %}{{ (size / (1024 * 1024)) | round(1) }} MB
+                      {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
+                      {% endif %}
+                      {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
+                    {% endif %}
+                  </td>
+                  <td class="files-actions">
+                    {% if entry.kind == 'file' %}
+                      <a class="files-action"
+                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
+                         title="View file">View</a>
+                      {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
+                        <a class="files-action"
+                           href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}&amp;edit=1{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
+                           title="Edit file">Edit</a>
+                      {% endif %}
+                      <button type="button" class="copy-btn files-action"
+                              data-copy-target="raw-url-{{ entry.path | replace('/', '_') }}"
+                              title="Copy raw URL to clipboard">Raw URL</button>
+                      <pre id="raw-url-{{ entry.path | replace('/', '_') }}" class="clone-url-source"
+                           aria-hidden="true">/{{ owner }}/{{ repo.name }}/raw/{{ repo.default_branch }}/{{ entry.path }}</pre>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endmacro %}
+
         {# Upload form: hidden by default; owner/admin reveals it via a
            `?upload=1` query param so the default page is uncluttered.
            When open, the toggle is replaced by a Close link. #}
@@ -166,34 +234,13 @@
           </article>
         {% elif files_viewer_path %}
           {# Viewer mode: narrow left tree + large center viewer. The
-             table -> compact list swap is gated by `files_viewer_path`,
-             so the default Files tab still renders the full table. #}
+             left column renders the SAME files-table as the default
+             tab via the `files_listing` macro above — the only
+             difference is the `active_path` highlight on the viewed
+             file and the compact CSS scoped to `.files-split`. #}
           <div class="files-split">
             <aside class="files-tree-column el-tile" aria-label="File tree">
-              {% if files_path %}
-                <p class="breadcrumbs">
-                  <a href="/{{ owner }}/{{ repo.name }}/files">/</a>
-                  {% for segment in files_path.split('/') %}
-                    {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
-                    / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}{% if files_upload_open %}&amp;upload=1{% endif %}">{{ segment }}</a>
-                  {% endfor %}
-                </p>
-              {% endif %}
-              <ul class="files-tree-list">
-                {% for entry in files_entries %}
-                  <li class="files-tree-row files-tree-row--{{ entry.kind }}{% if files_viewer_path == entry.path %} files-tree-row--active{% endif %}">
-                    {% if entry.kind == 'dir' %}
-                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}"
-                         class="files-tree-link"
-                         title="Open directory">{{ entry.name }}/</a>
-                    {% else %}
-                      <a href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}"
-                         class="files-tree-link"
-                         title="View file">{{ entry.name }}</a>
-                    {% endif %}
-                  </li>
-                {% endfor %}
-              </ul>
+              {{ files_listing(files_entries, files_path, files_upload_open, files_viewer_path) }}
             </aside>
 
             <article class="files-viewer el-tile" aria-label="File viewer">
@@ -294,62 +341,9 @@
             </article>
           </div>
         {% else %}
-          {# Default full-width tree as a table. #}
-          {% if files_path %}
-            <p class="breadcrumbs">
-              <a href="/{{ owner }}/{{ repo.name }}/files{% if files_upload_open %}?upload=1{% endif %}">/</a>
-              {% for segment in files_path.split('/') %}
-                {% set so_far = files_path.split('/')[:loop.index] | join('/') %}
-                / <a href="/{{ owner }}/{{ repo.name }}/files?path={{ so_far }}{% if files_upload_open %}&amp;upload=1{% endif %}">{{ segment }}</a>
-              {% endfor %}
-            </p>
-          {% endif %}
-          <table class="files-table">
-            <thead>
-              <tr><th>Name</th><th class="files-size">Size</th><th class="files-actions">Actions</th></tr>
-            </thead>
-            <tbody>
-              {% for entry in files_entries %}
-                <tr class="files-row files-row--{{ entry.kind }}">
-                  <td>
-                    {% if entry.kind == 'dir' %}
-                      <a href="/{{ owner }}/{{ repo.name }}/files?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}" class="files-link">{{ entry.name }}/</a>
-                    {% else %}
-                      <span class="files-name">{{ entry.name }}</span>
-                    {% endif %}
-                  </td>
-                  <td class="files-size muted">
-                    {% if entry.size_bytes is none %}-{% else %}
-                      {% set size = entry.size_bytes %}
-                      {% if size < 1024 %}{{ size }} B
-                      {% elif size < 1024 * 1024 %}{{ (size / 1024) | round(1) }} KB
-                      {% elif size < 1024 * 1024 * 1024 %}{{ (size / (1024 * 1024)) | round(1) }} MB
-                      {% else %}{{ (size / (1024 * 1024 * 1024)) | round(1) }} GB
-                      {% endif %}
-                      {% if entry.lfs %} <span class="pill lfs">LFS</span>{% endif %}
-                    {% endif %}
-                  </td>
-                  <td class="files-actions">
-                    {% if entry.kind == 'file' %}
-                      <a class="files-action"
-                         href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
-                         title="View file">View</a>
-                      {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
-                        <a class="files-action"
-                           href="/{{ owner }}/{{ repo.name }}/files/view?path={{ entry.path }}&amp;edit=1{% if files_upload_open %}&amp;upload=1{% endif %}{% if files_path %}&amp;dir={{ files_path }}{% endif %}"
-                           title="Edit file">Edit</a>
-                      {% endif %}
-                      <button type="button" class="copy-btn files-action"
-                              data-copy-target="raw-url-{{ entry.path | replace('/', '_') }}"
-                              title="Copy raw URL to clipboard">Raw URL</button>
-                      <pre id="raw-url-{{ entry.path | replace('/', '_') }}" class="clone-url-source"
-                           aria-hidden="true">/{{ owner }}/{{ repo.name }}/raw/{{ repo.default_branch }}/{{ entry.path }}</pre>
-                    {% endif %}
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+          {# Default full-width tree — same macro as the split column,
+             no active highlight. #}
+          {{ files_listing(files_entries, files_path, files_upload_open, "") }}
         {% endif %}
 
       {# ============== COMMUNITY TAB ============== #}
@@ -1079,31 +1073,37 @@
       background: var(--blp-paper-blue-2);
     }
 
-    /* Split layout: narrow left tree + large center viewer. The right
-       sidebar (Downloads / Info / Owner) stays outside this grid. */
+    /* Split layout: compact left column + large center viewer. The left
+       column renders the SAME files-table as the default tab; the rules
+       below only tighten the cell padding / font size so all three
+       columns (Name / Size / Actions) fit in ~360 px without horizontal
+       scroll. The right sidebar (Downloads / Info / Owner) stays outside
+       this grid. */
     .files-split {
       display: grid;
-      grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
       gap: var(--gap-tile);
       align-items: start;
     }
     @media (max-width: 900px) {
       .files-split { grid-template-columns: minmax(0, 1fr); }
     }
-    .files-tree-column { padding: 12px; }
-    .files-tree-list {
-      list-style: none;
-      margin: 8px 0 0;
-      padding: 0;
+    .files-tree-column { padding: 12px; min-width: 0; }
+    .files-tree-column .files-table th { padding: 6px 8px; font-size: 12px; }
+    .files-tree-column .files-table td { padding: 6px 8px; font-size: 12px; }
+    .files-tree-column .files-table .files-name,
+    .files-tree-column .files-table .files-link { word-break: break-all; }
+    .files-tree-column .files-table .files-actions .files-action { margin-left: 4px; padding: 0 8px; }
+    /* Active-file highlight: a 2 px main-color accent border on the
+       left of the row + paper-blue background (BLP tokens only — square
+       corners, no radius). Permanent-selection exception applies: the
+       accent is the marker, not a hover state. */
+    .files-row--active td {
+      border-left: 2px solid var(--color-main);
+      background: var(--blp-paper-blue);
     }
-    .files-tree-row { padding: 2px 0; }
-    .files-tree-row--active .files-tree-link { color: var(--color-main); font-weight: 700; }
-    .files-tree-link {
-      color: var(--text);
-      text-decoration: none;
-      word-break: break-all;
-    }
-    .files-tree-link:hover { color: var(--color-main); text-decoration: underline; }
+    .files-row--active .files-name,
+    .files-row--active .files-link { color: var(--color-main); font-weight: 700; }
 
     /* Upload reveal — owner-only capsule that opens ?upload=1 to
        surface the actual upload form. */

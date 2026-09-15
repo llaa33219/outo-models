@@ -4,6 +4,18 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.8 — Files tab: one listing UI in both modes
+
+### Changed
+
+- The split-view left column (open when viewing a file) now renders the
+  SAME `files-table` as the default Files tab — one shared Jinja macro
+  (`files_listing`) instead of two divergent markups. Name / Size /
+  Actions columns, LFS pills, View / Edit / Raw URL actions are
+  identical in both modes; the column just compacts via scoped CSS.
+  The viewed file's row gets a `files-row--active` accent highlight.
+  The old compact `files-tree-list` markup and CSS are removed.
+
 ## v0.5.7 — Files tab overhaul: read-only view, split viewer, rename, media preview
 
 ### Changed

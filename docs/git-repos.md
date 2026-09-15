@@ -156,10 +156,21 @@ and admins:
 | Upload | `POST /{owner}/{name}/files/upload` | Owner / admin only. The upload form is hidden by default; a header **Upload** link reveals it via `?upload=1`. Same multipart shape as the JSON `/api/repos/{owner}/{name}/upload` endpoint (one or more `files[]` parts, optional `message` + `path` directory prefix). 403 for strangers / 422 on empty / 413 on per-file > 100 MiB / 413 on quota overflow. Lands through `commit_files`; audit `repo.file_upload`. |
 
 When the viewer is rendering a file (`view` query param set), the
-Files tab splits into a narrow left column (compact file tree, ~260 px
-on desktop) and a large center panel (the viewer). With no file being
-viewed the tree renders full-width as a table — the same shape it had
-before the split was introduced.
+Files tab splits into a left column (~320–420 px on desktop) and a
+large center panel (the viewer). The left column renders the SAME
+`<table class="files-table">` listing as the default Files tab — same
+Name / Size / Actions columns, same per-row View / Raw URL / Edit
+actions, same breadcrumb — only the cell padding is tightened so the
+three columns fit inside the column without horizontal scroll. The
+viewed file's row carries an extra `files-row--active` modifier
+(2 px `--color-main` accent border on the left + `--blp-paper-blue`
+background, square corners, no radius) so its position in the tree is
+glanceable. With no file being viewed the listing renders full-width
+as the same table — the shape it had before the split was introduced.
+Both branches share one Jinja macro (`files_listing(entries,
+files_path, files_upload_open, active_path)` in
+`templates/repos/view.html`) so any future listing UI change shows up
+in both places automatically.
 
 #### Renaming via the editor
 

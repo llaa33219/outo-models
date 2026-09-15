@@ -1851,7 +1851,14 @@ class TestFilesUploadToggle:
 
 
 class TestFilesViewerSplitLayout:
-    """Viewing a file splits the Files tab: narrow left tree + viewer right."""
+    """Viewing a file splits the Files tab: narrow left tree + viewer right.
+
+    The left column renders the *same* ``<table class="files-table">`` as
+    the default Files tab — only the surrounding chrome (split column +
+    viewer panel) differs. The unified listing is the whole point of the
+    refactor: visitors must recognise the column as the same UI they saw
+    on the Files tab without a viewer.
+    """
 
     async def test_viewing_file_renders_split_layout(
         self,
@@ -1878,7 +1885,16 @@ class TestFilesViewerSplitLayout:
         body = response.text
         assert "files-tree-column" in body
         assert "files-viewer" in body
-        assert 'class="files-table"' not in body
+        assert '<table class="files-table' in body
+        assert "<th>Name</th>" in body
+        assert '<th class="files-size">Size</th>' in body
+        assert '<th class="files-actions">Actions</th>' in body
+        assert "/alice/split/files/view?path=config.json" in body
+        assert 'id="raw-url-config.json"' in body
+        assert "files-row--active" in body
+        assert "files-tree-list" not in body
+        assert "files-tree-row" not in body
+        assert "files-tree-link" not in body
 
     async def test_no_view_param_renders_full_width_tree(
         self,
@@ -1903,9 +1919,68 @@ class TestFilesViewerSplitLayout:
         response = client.get("/alice/no-split/files")
         assert response.status_code == 200
         body = response.text
-        assert 'class="files-table"' in body
-        assert 'class="files-tree-column"' not in body
-        assert 'class="files-viewer"' not in body
+        assert '<table class="files-table' in body
+        assert "<th>Name</th>" in body
+        assert '<aside class="files-tree-column' not in body
+        assert '<article class="files-viewer' not in body
+
+    async def test_split_view_and_default_tab_share_the_same_listing(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        """Both branches render the SAME listing UI; only the surrounding
+        chrome (split column + viewer panel) differs. The original
+        complaint was that the split column swapped the full table for a
+        compact list, so users saw two different file UIs in the same
+        tab. This test pins that the two branches emit the same table
+        signature.
+        """
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        client.post(
+            "/api/repos",
+            json={"name": "sigsame", "kind": "model", "visibility": "public"},
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="sigsame",
+            files={"README.md": "x", "config.json": "{}", "src/util.py": "pass"},
+        )
+
+        full_response = client.get("/alice/sigsame/files")
+        split_response = client.get("/alice/sigsame/files/view?path=config.json")
+        assert full_response.status_code == 200
+        assert split_response.status_code == 200
+        full_body = full_response.text
+        split_body = split_response.text
+
+        for needle in (
+            "<th>Name</th>",
+            '<th class="files-size">Size</th>',
+            '<th class="files-actions">Actions</th>',
+            'class="files-row files-row--file"',
+            "/alice/sigsame/files/view?path=config.json",
+            'id="raw-url-config.json"',
+        ):
+            assert needle in full_body, (needle, "full")
+            assert needle in split_body, (needle, "split")
+
+        for forbidden in (
+            "files-tree-list",
+            "files-tree-row",
+            "files-tree-link",
+        ):
+            assert forbidden not in full_body, forbidden
+            assert forbidden not in split_body, forbidden
+
+        assert '<aside class="files-tree-column' in split_body
+        assert '<article class="files-viewer' in split_body
+        assert '<aside class="files-tree-column' not in full_body
+        assert '<article class="files-viewer' not in full_body
 
 
 class TestFilesEditRename:
