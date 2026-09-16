@@ -1773,6 +1773,8 @@ class TestFilesViewReadOnly:
         assert "files-viewer__textarea" in body
         assert 'name="new_path"' in body
         assert 'value="config.json"' in body
+        assert 'href="/alice/f-edit/files/view?path=config.json">Cancel</a>' in body
+        assert body.count("&amp;edit=1") == 1
 
     async def test_stranger_view_with_edit_param_renders_read_only(
         self,

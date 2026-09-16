@@ -302,6 +302,8 @@
                       </p>
                       <p class="files-viewer__edit-actions">
                         <button type="submit" class="primary">Save changes</button>
+                        <a class="nav-link"
+                           href="/{{ owner }}/{{ repo.name }}/files/view?path={{ files_viewer_path }}{% if files_upload_open %}&amp;upload=1{% endif %}">Cancel</a>
                         <span class="muted files-viewer__edit-hint">
                           Text files up to 1 MiB.
                         </span>

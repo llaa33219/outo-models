@@ -4,6 +4,14 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.10 — File editor Cancel button
+
+### Added
+
+- The file editor now has a Cancel link next to Save changes: it
+  abandons the edit and returns to the read-only viewer of the same
+  file (view URL without `edit=1`), carrying the upload toggle state.
+
 ## v0.5.9 — Files tab: click-to-view, wide viewer, row actions removed
 
 ### Changed
