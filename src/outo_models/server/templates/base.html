@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>{% block title %}outo-models{% endblock %}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 {% block head_extra %}{% endblock %}
 <style>
@@ -41,6 +42,44 @@
 
   /* Page chrome */
   --max-content:          1000px;
+}
+
+/* ============================================================
+ * Dark palette (디자인.md §3.3, opt-in via prefers-color-scheme).
+ * Activated automatically by the user's OS — no manual toggle
+ * (out of scope; see prompt). Token-only, so every chrome
+ * surface that already reads `var(--*)` flips without further
+ * edits. The `pre { ... }` block below also has a scoped dark
+ * override so the syntax-highlight box stays readable in dark
+ * mode (light-mode values stay byte-identical).
+ *
+ * Palette intent:
+ *   - `--tile-bg` near-black, blue-tinted, so borders + accents
+ *     still read as "BLP blue on dark".
+ *   - `--text` near-white blue-tinted; `--text-sub` lifted from
+ *     `#3E4D5F` to a light blue-gray so muted copy remains > 7:1.
+ *   - `--color-main` stays BLP BLUE on dark; `--el-hover` and
+ *     `--el-active` are brighter / more saturated to keep hover
+ *     and focus distinguishable on a dark surface.
+ *   - `--blp-paper-blue*` / `--blp-light-blue` swap to dark
+ *     desaturated blue tints so filled chips don't go bright-
+ *     white in dark mode.
+ * ============================================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-main:           #4D9DFF; /* brighter on dark for 4.5:1 on bg */
+    --color-inactive:       #6E7681; /* visible against dark blue */
+    --tile-bg:              #0E1420; /* near-black, blue-tinted */
+    --text:                 #E8EEF7; /* near-white blue-tinted */
+    --text-sub:             #9DA9BC; /* light gray-blue, > 7:1 on bg */
+    --el-hover:             #2F7FFF; /* mid blue for filled hover */
+    --el-active:            #3D5DDB; /* lighter than #0026A3 for contrast */
+    --blp-light-dark-blue:  #1A2940; /* empty-element focus bg shift */
+    --blp-paper-blue:       #15233A; /* filled chip bg */
+    --blp-light-blue:       #1F3050; /* filled chip border */
+    --blp-paper-blue-2:     #131C2E; /* even subtler bg */
+    --blp-soft-blue:        #7DA9C7; /* placeholder on dark */
+  }
 }
 
 /* ============================================================
@@ -130,6 +169,22 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
 }
 
 /* ============================================================
+ * Dark-mode override for the lone chrome surface that bakes raw
+ * dark hexes (`pre` is content per 디자인.md §0.1, but its border
+ * becomes invisible against the new dark `--tile-bg`). In dark
+ * mode we lift the border to a token so the code box edge stays
+ * readable. Light-mode values stay byte-identical — this rule only
+ * fires inside the dark media query.
+ * ============================================================ */
+@media (prefers-color-scheme: dark) {
+  pre {
+    background: #0B1018;        /* a step darker than --tile-bg (#0E1420) */
+    color: #E8EEF7;             /* same as --text so text reads the same */
+    border-color: var(--blp-light-blue); /* #1F3050 — visible against bg */
+  }
+}
+
+/* ============================================================
  * Navbar — left-aligned brand / kind links / auth controls, then
  * a spacer that pushes nothing to the right. The whole bar is a
  * single background tile (spec §8.3).
@@ -153,6 +208,8 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
   margin: 0;
 }
 .navbar .brand {
+  display: inline-flex;
+  align-items: center;
   font-weight: 700;
   font-size: 18px;
   letter-spacing: -0.01em;
@@ -160,6 +217,11 @@ a:hover { color: var(--el-hover); text-decoration: underline; }
   padding: 0 8px;
 }
 .navbar .brand:hover { color: var(--color-main); text-decoration: none; }
+.brand__logo {
+  display: block;
+  height: 26px;
+  width: auto; /* width attr on <img> already locks the intrinsic ratio */
+}
 .navbar .nav-section {
   display: flex;
   align-items: center;
@@ -703,7 +765,7 @@ th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
 <header class="site-header-tile">
   <div class="site-header-tile__inner">
     <nav class="navbar" aria-label="Primary">
-      <a href="/" class="brand">outo-models</a>
+      <a href="/" class="brand" aria-label="outo-models home"><img src="/static/logo.svg" alt="outo-models" class="brand__logo" height="26" width="126"></a>
       <div class="nav-section">
         <a href="/models" class="nav-link{% if active_nav == 'models' %} active{% endif %}">Models</a>
         <a href="/datasets" class="nav-link{% if active_nav == 'datasets' %} active{% endif %}">Datasets</a>

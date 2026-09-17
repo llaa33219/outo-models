@@ -822,10 +822,21 @@ async def _render_repo_page(
 async def static_asset(filename: str) -> Response:
     """Serve bundled static assets (wheel-packaged under assets/static/).
 
-    Only `.js` files, no path traversal — the response is content so the
-    BLP chrome rules do not apply to it, but the route itself is chrome.
+    Only an explicit allowlist of extensions is served — no path traversal,
+    no other content types. The response body is content (BLP chrome rules
+    do not apply to it), but the route is chrome so the allowlist is
+    closed. SVG is allowed because the project ships its own logo asset;
+    serving arbitrary user content here would be unsafe, so anything that
+    doesn't appear in `assets/static/` of the packaged wheel 404s.
     """
-    if "/" in filename or "\\" in filename or not filename.endswith(".js"):
+    if "/" in filename or "\\" in filename:
+        raise NotFoundError(f"no such asset: {filename}")
+    content_type: str | None = None
+    if filename.endswith(".js"):
+        content_type = "application/javascript"
+    elif filename.endswith(".svg"):
+        content_type = "image/svg+xml"
+    if content_type is None:
         raise NotFoundError(f"no such asset: {filename}")
     # Reading via importlib.resources keeps ASYNC240 happy (async route) and
     # works identically from a wheel zip or a source tree.
@@ -836,7 +847,7 @@ async def static_asset(filename: str) -> Response:
         raise NotFoundError(f"no such asset: {filename}")
     return Response(
         content=asset_ref.read_bytes(),
-        media_type="application/javascript",
+        media_type=content_type,
         headers={"Cache-Control": "public, max-age=3600"},
     )
 

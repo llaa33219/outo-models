@@ -2378,7 +2378,9 @@ class TestFilesViewerMedia:
         response = client.get("/alice/f-bigimg/files/view?path=huge.png")
         assert response.status_code == 200
         body = response.text
-        assert "<img" not in body
+        # Anchor on the inline-preview class — a bare `<img` substring
+        # would false-positive on the v0.5.11 navbar logo <img>.
+        assert 'class="files-viewer__media"' not in body
         assert "Download" in body
         assert "/alice/f-bigimg/raw/main/huge.png" in body
 

@@ -1,5 +1,7 @@
 # outo-models
 
+<p align="center"><img src="logo.svg" width="1000" alt="outo-models wordmark"></p>
+
 A fully open-source, self-hostable model hub server. Modeled on Hugging Face
 and ModelScope, it lets you share **models, datasets, and Spaces** over plain
 git. After installation, port opening, HTTPS certificate issuance/renewal, DNS

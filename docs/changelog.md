@@ -4,6 +4,22 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.5.11 — Logo in README and navbar, dark mode
+
+### Added
+
+- **Logo**: `logo.svg` (wordmark) embedded in the README at 1000px and
+  rendered in the navbar brand (image replaces the text link;
+  intrinsic-ratio locked at 26px height). Served from
+  `/static/logo.svg` — the static-asset allowlist now permits `.svg`
+  with `image/svg+xml` (packaged asset only, traversal guards intact).
+- **Dark mode**: automatic via `prefers-color-scheme: dark`. A full
+  dark BLP palette overrides every color token (`--tile-bg #0E1420`,
+  near-white text, brighter `--color-main` for contrast, dark `--blp-*`
+  tints); `color-scheme: light dark` adapts native controls. Light
+  theme values are byte-identical; repo accent `color-mix` tints adapt
+  automatically. Dark palette documented in 디자인.md §3.3.1.
+
 ## v0.5.10 — File editor Cancel button
 
 ### Added
