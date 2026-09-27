@@ -4,6 +4,16 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.1 — Reaction palette expanded to 26 emoji
+
+### Changed
+
+- 18 glyphs added to the reaction palette: 🫪 🤓 🧐 😎 ‼️ ⁉️ ❓ ❗
+  ✅ ❌ 👏 🍄 🐞 ⭐ 🌟 🔥 💧 🌝 (8 → 26 total). Migration 0006
+  rebuilds the `ck_post_reactions_emoji` CHECK constraint on
+  `post_reactions` so the database accepts the new glyphs; existing
+  reactions are preserved.
+
 ## v0.6.0 — Posts, mixed-tile home, omc hyper-detailed help
 
 ### Added

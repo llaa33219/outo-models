@@ -53,15 +53,20 @@ the first.
 
 ## Reactions
 
-A fixed palette of 8 emoji, locked at the model layer
+A fixed palette of 26 emoji, locked at the model layer
 (`REACTION_PALETTE` in `outo_models.db.models.posts`). Adding a glyph
-is a deliberate contract change.
+is a deliberate contract change (migration 0006 expanded the palette
+from 8 to 26 glyphs in v0.6.1).
 
-| | | |
-| --- | --- | --- |
-| 👍 (thumbs up) | 👎 (thumbs down) | ❤️ (red heart) |
-| 🚀 (rocket) | 🎉 (party / tada) | 😮 (open mouth) |
-| 😕 (confused) | 👀 (eyes) | |
+| | | | |
+| --- | --- | --- | --- |
+| 👍 (thumbs up) | 👎 (thumbs down) | ❤️ (red heart) | 🚀 (rocket) |
+| 🎉 (party / tada) | 😮 (open mouth) | 😕 (confused) | 👀 (eyes) |
+| 🫪 (face with bags under eyes) | 🤓 (nerd face) | 🧐 (face with monocle) | 😎 (sunglasses) |
+| ‼️ (double exclamation) | ⁉️ (exclamation question) | ❓ (red question) | ❗ (red exclamation) |
+| ✅ (check mark button) | ❌ (cross mark) | 👏 (clapping hands) | 🍄 (mushroom) |
+| 🐞 (lady beetle) | ⭐ (star) | 🌟 (glowing star) | 🔥 (fire) |
+| 💧 (droplet) | 🌝 (full moon face) | | |
 
 Reactions are per-user toggles: `POST /posts/{id}/react` with an emoji
 adds the reaction if missing, removes it if present. The DB enforces

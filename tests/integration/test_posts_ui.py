@@ -660,6 +660,55 @@ class TestPostReactions:
             )
         assert len(reactions) == 0
 
+    async def test_react_accepts_v061_palette_glyphs(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, "/posts/new")
+        create = client.post(
+            "/posts/new",
+            data={
+                "_csrf": csrf,
+                "kind": "short",
+                "title": "",
+                "body": "palette target",
+                "repo_link": "",
+            },
+            follow_redirects=False,
+        )
+        assert create.status_code == 303
+        post_id = int(create.headers["location"].rsplit("/", 1)[-1])
+
+        csrf = _form_csrf(client, f"/posts/{post_id}")
+        for glyph in ("\U0001faea", "\u203c\ufe0f", "\U0001f344", "\U0001f31d"):
+            response = client.post(
+                f"/posts/{post_id}/react",
+                data={"_csrf": csrf, "emoji": glyph},
+                follow_redirects=False,
+            )
+            assert response.status_code == 303
+
+        async with factory() as session:
+            reactions = (
+                (await session.execute(select(PostReaction).where(PostReaction.post_id == post_id)))
+                .scalars()
+                .all()
+            )
+        assert {r.emoji for r in reactions} == {
+            "\U0001faea",
+            "\u203c\ufe0f",
+            "\U0001f344",
+            "\U0001f31d",
+        }
+
     async def test_react_two_users_aggregate(
         self,
         app: tuple[TestClient, FastAPI, object],

@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect
@@ -129,6 +130,41 @@ class TestMigrationsApply:
             assert {"id", "author_id", "kind", "title", "body", "repo_id"} <= post_cols
             assert {"id", "post_id", "user_id", "emoji"} <= reaction_cols
             assert {"id", "post_id", "author_id", "body"} <= comment_cols
+        finally:
+            await eng.dispose()
+            await dispose_engines()
+
+    async def test_upgrade_expands_0006_reaction_palette(self, tmp_data_dir: Path) -> None:
+        await dispose_engines()
+        settings = get_settings()
+        eng = get_engine(settings)
+        try:
+            await run_migrations(eng)
+            async with eng.begin() as conn:
+                await conn.execute(
+                    sa.text(
+                        "INSERT INTO posts (id, author_id, kind, title, body,"
+                        " repo_id, created_at, updated_at)"
+                        " VALUES (1, 1, 'short', NULL, 'seed', NULL,"
+                        " '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                    )
+                )
+                await conn.execute(
+                    sa.text(
+                        "INSERT INTO post_reactions (post_id, user_id, emoji,"
+                        " created_at) VALUES (1, 1, '🍄',"
+                        " '2026-01-01 00:00:00')"
+                    )
+                )
+            with pytest.raises(sa.exc.IntegrityError):
+                async with eng.begin() as conn:
+                    await conn.execute(
+                        sa.text(
+                            "INSERT INTO post_reactions (post_id, user_id,"
+                            " emoji, created_at) VALUES (1, 2, '🦄',"
+                            " '2026-01-01 00:00:00')"
+                        )
+                    )
         finally:
             await eng.dispose()
             await dispose_engines()

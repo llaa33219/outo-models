@@ -47,6 +47,24 @@ REACTION_PALETTE: tuple[str, ...] = (
     "\U0001f62e",  # open mouth
     "\U0001f615",  # confused
     "\U0001f440",  # eyes
+    "\U0001faea",  # face with bags under eyes
+    "\U0001f913",  # nerd face
+    "\U0001f9d0",  # face with monocle
+    "\U0001f60e",  # smiling face with sunglasses
+    "\u203c\ufe0f",  # double exclamation mark
+    "\u2049\ufe0f",  # exclamation question mark
+    "\u2753",  # red question mark
+    "\u2757",  # red exclamation mark
+    "\u2705",  # check mark button
+    "\u274c",  # cross mark
+    "\U0001f44f",  # clapping hands
+    "\U0001f344",  # mushroom
+    "\U0001f41e",  # lady beetle
+    "\u2b50",  # star
+    "\U0001f31f",  # glowing star
+    "\U0001f525",  # fire
+    "\U0001f4a7",  # droplet
+    "\U0001f31d",  # full moon face
 )
 _PALETTE_CSV = ",".join(f"'{glyph}'" for glyph in REACTION_PALETTE)
 
