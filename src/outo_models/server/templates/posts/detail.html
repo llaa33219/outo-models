@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title if post.title else ('@' + post.author.username) }} &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs"><a href="/posts">Posts</a> &rarr;</p>
+
+  <article class="post-detail"
+           {% if post.repo and post.repo.color %}style="background-color: color-mix(in srgb, {{ post.repo.color }} 14%, var(--tile-bg))"{% endif %}>
+    <div class="post-detail__header">
+      <span class="pill post-detail__kind">
+        {% if post.kind == "long" %}Long{% else %}Short{% endif %}
+      </span>
+      {% if post.title %}
+        <h1 class="post-detail__title">{{ post.title }}</h1>
+      {% endif %}
+    </div>
+
+    <p class="post-detail__author">
+      <a href="/{{ post.author.username }}" class="post-detail__author-link">
+        <span class="avatar" aria-hidden="true">{{ post.author.username[0]|upper }}</span>
+        <span>{{ post.author.username }}</span>
+      </a>
+      <time class="muted post-detail__time" datetime="{{ post.created_at.isoformat() if post.created_at else '' }}">
+        {{ post.created_at.strftime("%Y-%m-%d %H:%M") if post.created_at else "" }}
+      </time>
+    </p>
+
+    <div class="post-detail__body">
+      {% if post.kind == "long" %}
+        {% if body_html %}
+          {{ body_html | safe }}
+        {% else %}
+          <p class="muted">Empty post body.</p>
+        {% endif %}
+      {% else %}
+        <p>{{ body_html | safe }}</p>
+      {% endif %}
+    </div>
+
+    {% if post.repo and viewer_can_see_repo %}
+      <p class="post-detail__repo">
+        <span class="muted">About:</span>
+        <a href="/{{ post.repo.owner.username }}/{{ post.repo.name }}" class="post-detail__repo-link">
+          {{ post.repo.owner.username }}/{{ post.repo.name }}
+        </a>
+        <span class="pill {{ post.repo.kind }}">{{ post.repo.kind }}</span>
+        <span class="pill {{ post.repo.visibility }}">{{ post.repo.visibility }}</span>
+      </p>
+    {% endif %}
+
+    <div class="post-detail__reactions">
+      {% if current_user %}
+        {% for emoji in reaction_palette %}
+          <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+            <input type="hidden" name="emoji" value="{{ emoji }}">
+            <button type="submit" class="post-detail__reaction {% if emoji in viewer_reacted %}post-detail__reaction--active{% endif %}"
+                    aria-label="Toggle reaction {{ emoji }}">
+              <span class="post-detail__reaction-glyph">{{ emoji }}</span>
+              <span class="post-detail__reaction-count">{{ reaction_totals.get(emoji, 0) }}</span>
+            </button>
+          </form>
+        {% endfor %}
+      {% else %}
+        {% for emoji in reaction_palette %}
+          <span class="pill post-detail__reaction-pill">
+            {{ emoji }} {{ reaction_totals.get(emoji, 0) }}
+          </span>
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    {% if current_user and viewer_can_delete_post %}
+      <form method="post" action="/posts/{{ post.id }}/delete" class="form-inline post-detail__delete">
+        <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+        <button type="submit" class="danger"
+                onclick="return confirm('Delete this post? Reactions and comments will be removed too.');">
+          Delete post
+        </button>
+      </form>
+    {% endif %}
+  </article>
+
+  <section id="comments" class="post-comments" aria-label="Comments">
+    <h2>Comments</h2>
+    {% if not comments %}
+      <p class="muted post-comments__empty">No comments yet.</p>
+    {% else %}
+      <ul class="post-comments__list">
+        {% for comment in comments %}
+          <li class="post-comments__row">
+            <a href="/{{ comment.author.username }}" class="post-comments__author">
+              {{ comment.author.username }}
+            </a>
+            <time class="muted post-comments__time" datetime="{{ comment.created_at.isoformat() if comment.created_at else '' }}">
+              {{ comment.created_at.strftime("%Y-%m-%d %H:%M") if comment.created_at else "" }}
+            </time>
+            <p class="post-comments__body">{{ comment.body }}</p>
+            {% if comment_delete_map.get(comment.id) %}
+              <form method="post" action="/posts/{{ post.id }}/comments/{{ comment.id }}/delete" class="form-inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+                <button type="submit" class="post-comments__delete"
+                        onclick="return confirm('Delete this comment?');">Delete</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if current_user %}
+      <form method="post" action="/posts/{{ post.id }}/comments" class="post-comments__compose">
+        <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+        <label for="comment-body" class="post-comments__compose-label">Add a comment</label>
+        <textarea id="comment-body" name="body" rows="3" required maxlength="4000"></textarea>
+        <p class="form-actions">
+          <button type="submit" class="primary">Post comment</button>
+        </p>
+      </form>
+    {% else %}
+      <p class="muted post-comments__anon">
+        <a href="/login?next=/posts/{{ post.id }}">Log in</a> to comment.
+      </p>
+    {% endif %}
+  </section>
+
+  <style>
+    .post-detail {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 24px;
+      transition: border-color var(--t-tile);
+    }
+    .post-detail:hover { border-color: var(--color-main); }
+    .post-detail__header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .post-detail__kind {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    .post-detail__title {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .post-detail__author {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0;
+    }
+    .post-detail__author-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .post-detail__author-link:hover { color: var(--color-main); text-decoration: none; }
+    .post-detail__time { font-size: 12px; }
+    .post-detail__body p { margin: 8px 0; }
+    .post-detail__repo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0;
+    }
+    .post-detail__repo-link { font-weight: 600; color: var(--text); }
+    .post-detail__repo-link:hover { color: var(--color-main); text-decoration: none; }
+    .post-detail__reactions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .post-detail__reaction {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      font-size: 14px;
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .post-detail__reaction:hover { border-color: var(--color-main); color: var(--color-main); }
+    .post-detail__reaction--active {
+      background: var(--blp-paper-blue);
+      border-color: var(--color-main);
+      color: var(--text);
+    }
+    .post-detail__reaction-count {
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .post-detail__reaction-pill { font-size: 13px; }
+    .post-detail__delete { margin-top: 8px; }
+
+    .post-comments {
+      margin-top: 24px;
+    }
+    .post-comments h2 { margin: 0 0 12px; }
+    .post-comments__list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .post-comments__row {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 12px 16px;
+      transition: border-color var(--t-tile);
+    }
+    .post-comments__row:hover { border-color: var(--color-main); }
+    .post-comments__author {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .post-comments__author:hover { color: var(--color-main); text-decoration: none; }
+    .post-comments__time { font-size: 12px; margin-left: 8px; }
+    .post-comments__body {
+      margin: 8px 0 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .post-comments__delete {
+      background: transparent;
+      color: var(--blp-deep-red);
+      border: var(--border-el) solid transparent;
+      padding: 4px 10px;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .post-comments__delete:hover { border-color: var(--blp-deep-red); color: var(--blp-deep-red); background: transparent; }
+    .post-comments__compose {
+      margin-top: 16px;
+      max-width: 600px;
+    }
+    .post-comments__compose-label {
+      font-weight: 600;
+      margin-top: 0;
+    }
+    .post-comments__empty { margin: 12px 0; }
+    .post-comments__anon { margin-top: 12px; }
+    .form-inline { display: inline; }
+  </style>
+{% endblock %}

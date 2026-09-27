@@ -3,6 +3,12 @@
 This module owns the root `app`, the `--version` / `--debug` callbacks,
 and the central error funnel every command routes through. Commands
 live in sibling modules; `main.py` only assembles them.
+
+The root app's help is intentionally long: it is the page an AI agent
+or a new user lands on when they type `omc` or `omc --help`. Every
+section (PURPOSE, CONCEPTS, GETTING STARTED, COMMAND INDEX, CONFIG,
+MORE HELP) is sourced from `commands/_help_text` so the help text and
+the test markers stay in lock-step.
 """
 
 from __future__ import annotations
@@ -15,6 +21,14 @@ from typing import Annotated
 import typer
 
 from outo_models_cli import __version__, config
+from outo_models_cli.commands._help_text import (
+    AUTH_APP_HELP,
+    DOWNLOAD_EPILOG,
+    LS_EPILOG,
+    REPO_APP_HELP,
+    ROOT_HELP,
+    UPLOAD_EPILOG,
+)
 from outo_models_cli.commands.auth import auth_app
 from outo_models_cli.commands.download import download_command
 from outo_models_cli.commands.ls import ls_command
@@ -52,8 +66,8 @@ def _load_state(config_path: Path, debug: bool) -> AppState:
 
 app = typer.Typer(
     name="omc",
-    help="Command-line client for self-hosted outo-models servers.",
-    no_args_is_help=True,
+    help=ROOT_HELP,
+    invoke_without_command=True,
     rich_markup_mode="rich",
     add_completion=False,
     pretty_exceptions_enable=False,
@@ -88,7 +102,17 @@ def _root_callback(
         ),
     ] = False,
 ) -> None:
-    """`omc` root callback — wires shared flags and the credential store."""
+    """`omc` root callback — wires shared flags and the credential store.
+
+    When no subcommand is supplied (bare `omc`), the help is printed
+    and the process exits 0. Without this branch Click would treat the
+    missing-subcommand case as a usage error (exit 2) because the
+    callback signature has arguments; the explicit branch converts it
+    into the documented "show help and exit" behaviour.
+    """
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(code=0)
     config_path = config.config_path()
     state = _load_state(config_path, debug=debug)
     ctx.obj = {
@@ -99,12 +123,42 @@ def _root_callback(
     }
 
 
-# Subcommand registrations.
-app.add_typer(auth_app, name="auth", help="Manage stored credentials.")
-app.add_typer(repo_app, name="repo", help="Manage repositories.")
-app.command("ls", help="List a directory of a repository.")(ls_command)
-app.command("download", help="Recursively download a repository.")(download_command)
-app.command("upload", help="Upload a file or directory to a repository.")(upload_command)
+# Subcommand registrations. The long-form help text lives on the
+# sub-Typer itself (AUTH_APP_HELP / REPO_APP_HELP); passing the same
+# constant to `add_typer` ensures `omc auth --help` / `omc repo --help`
+# render the full structured description, not just the first line.
+# `short_help` is the one-liner the parent Commands table uses; the
+# multi-line `help` would otherwise leak "PURPOSE" into the table.
+app.add_typer(
+    auth_app,
+    name="auth",
+    help=AUTH_APP_HELP,
+    short_help="Manage stored credentials.",
+)
+app.add_typer(
+    repo_app,
+    name="repo",
+    help=REPO_APP_HELP,
+    short_help="Manage repositories.",
+)
+# `short_help` is the one-liner shown in the parent's Commands table;
+# the full PURPOSE / USAGE description is sourced from each command's
+# docstring (Typer picks multi-line docstrings up automatically).
+app.command(
+    "ls",
+    short_help="List a directory of a repository.",
+    epilog=LS_EPILOG,
+)(ls_command)
+app.command(
+    "download",
+    short_help="Recursively download a repository.",
+    epilog=DOWNLOAD_EPILOG,
+)(download_command)
+app.command(
+    "upload",
+    short_help="Upload a file or directory to a repository.",
+    epilog=UPLOAD_EPILOG,
+)(upload_command)
 
 
 # ---------------------------------------------------------------------------

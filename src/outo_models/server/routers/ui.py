@@ -853,30 +853,73 @@ async def static_asset(filename: str) -> Response:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def repos_list_page(
+async def home_page(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
 ) -> Response:
-    """Render the public repos catalog (the home page)."""
-    repos = (
-        (
-            await db.execute(
-                select(Repo)
-                .where(Repo.visibility == "public")
-                .options(selectinload(Repo.owner))
-                .order_by(Repo.id)
-            )
-        )
-        .scalars()
-        .all()
+    """Render the home page: a mixed tile feed (posts + repos + spaces).
+
+    The home page is no longer a single "Public repositories" catalog —
+    the kind catalogs at `/models`, `/datasets`, and `/spaces` serve
+    that role. Instead the home mixes:
+
+      * recently popular posts (top by reaction count over the last 7
+        days, fallback to most-recent when no reactions exist in the
+        window);
+      * top public models ordered by `downloads_count` (an all-time
+        counter incremented by the git smart-HTTP upload-pack path —
+        no per-event timestamp is persisted);
+      * top public datasets ordered by `downloads_count`;
+      * public Spaces ordered by `updated_at desc` — the Spaces v2
+        runtime does NOT persist a `running_since` timestamp, so the
+        "longest-running" answer is approximated by most-recently-
+        updated. The home tile carries that caveat in its label.
+
+    The aggregate query is one batched `selectinload` per kind plus
+    `aggregate_reactions` for the posts, so the page is N+1-free.
+    """
+    from outo_models.posts import (
+        REACTION_PALETTE,
+        aggregate_reactions,
+        home_preview,
+        list_running_spaces,
+        list_top_repos_by_downloads,
+        list_trending_posts,
+        render_short_body,
+        viewer_reaction_set,
     )
+
+    trending_posts = list(await list_trending_posts(db, limit=6))
+    post_ids = [p.id for p in trending_posts]
+    reaction_totals = await aggregate_reactions(db, post_ids=post_ids)
+    viewer_reactions = await viewer_reaction_set(db, viewer=user, post_ids=post_ids)
+    trending_rendered = [
+        {
+            "post": post,
+            "preview_html": render_short_body(home_preview(post.body)),
+            "reaction_totals": reaction_totals.get(post.id, {}),
+            "viewer_reacted": {emoji for (pid, emoji) in viewer_reactions if pid == post.id},
+        }
+        for post in trending_posts
+    ]
+
+    top_models = list(await list_top_repos_by_downloads(db, kind="model", limit=6))
+    top_datasets = list(await list_top_repos_by_downloads(db, kind="dataset", limit=6))
+    running_spaces = list(await list_running_spaces(db, limit=6))
+
     return await _render(
         request,
-        "repos/list.html",
+        "home.html",
         user=user,
         active_nav=None,
-        context={"repos": repos, "clone_url": clone_url},
+        context={
+            "trending_posts": trending_rendered,
+            "top_models": top_models,
+            "top_datasets": top_datasets,
+            "running_spaces": running_spaces,
+            "reaction_palette": REACTION_PALETTE,
+        },
     )
 
 
@@ -1273,6 +1316,26 @@ async def user_profile_page(
     ]
     activity = await recent_activity(db, user=profile, limit=10)
 
+    from outo_models.posts import (
+        aggregate_reactions as _aggregate_post_reactions,
+    )
+    from outo_models.posts import (
+        list_posts_for_user as _list_posts_for_user,
+    )
+    from outo_models.posts import (
+        render_short_body as _render_post_body,
+    )
+
+    user_posts = list(await _list_posts_for_user(db, author=profile, limit=20))
+    user_post_reactions = await _aggregate_post_reactions(db, post_ids=[p.id for p in user_posts])
+    user_posts_rendered = [
+        {
+            "post": post_,
+            "preview_html": _render_post_body(post_.body[:280]),
+        }
+        for post_ in user_posts
+    ]
+
     # Profile README — the `<username>/<username>` repo (any kind) acts as
     # the user's profile README. The lookup is best-effort: a missing
     # repo, missing README, or any read failure collapses to `None` so
@@ -1315,6 +1378,8 @@ async def user_profile_page(
             "interests": interests,
             "links": links,
             "activity": activity,
+            "user_posts": user_posts_rendered,
+            "user_post_reactions": user_post_reactions,
             "profile_readme": profile_readme,
             "profile_readme_repo_name": profile_readme_repo_name,
         },

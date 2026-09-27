@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Posts &mdash; outo-models{% endblock %}
+{% block content %}
+  <div class="posts-header">
+    <h1>Posts</h1>
+    <div class="posts-header__actions">
+      {% if current_user %}
+        <a href="/posts/new" class="new-btn">New post</a>
+      {% else %}
+        <a href="/login?next=/posts/new" class="nav-link">Log in to post</a>
+      {% endif %}
+    </div>
+  </div>
+  <p class="muted">
+    A site-wide feed of short notes and long-form posts. Use reactions
+    to weigh in without commenting.
+  </p>
+
+  {% if not posts_rendered %}
+    <div class="empty-state">
+      <p>No posts yet.</p>
+      {% if current_user %}
+        <p>Be the first &mdash; <a href="/posts/new">share something</a>.</p>
+      {% else %}
+        <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first post.</p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="posts-feed">
+      {% for entry in posts_rendered %}
+        {% set post = entry.post %}
+        <article class="post-tile card"
+                 {% if post.repo and post.repo.color %}style="background-color: color-mix(in srgb, {{ post.repo.color }} 14%, var(--tile-bg))"{% endif %}>
+          <div class="post-tile__header">
+            <span class="pill post-tile__kind">
+              {% if post.kind == "long" %}Long{% else %}Short{% endif %}
+            </span>
+            {% if post.title %}
+              <span class="post-tile__title">{{ post.title }}</span>
+            {% endif %}
+            <time class="post-tile__time muted" datetime="{{ post.created_at.isoformat() if post.created_at else '' }}">
+              {{ post.created_at.strftime("%Y-%m-%d") if post.created_at else "" }}
+            </time>
+          </div>
+
+          <p class="post-tile__author">
+            <a href="/{{ post.author.username }}" class="post-tile__author-link">
+              <span class="avatar" aria-hidden="true">{{ post.author.username[0]|upper }}</span>
+              <span>{{ post.author.username }}</span>
+            </a>
+          </p>
+
+          <div class="post-tile__body">
+            {% if post.kind == "long" %}
+              {% if entry.body_html %}
+                {{ entry.body_html | safe }}
+              {% else %}
+                <p class="muted">Empty post body.</p>
+              {% endif %}
+            {% else %}
+              <p>{{ entry.body_html | safe }}</p>
+            {% endif %}
+          </div>
+
+          {% if post.repo and entry.viewer_can_see_repo %}
+            <p class="post-tile__repo">
+              <a href="/{{ post.repo.owner.username }}/{{ post.repo.name }}" class="post-tile__repo-link">
+                {{ post.repo.owner.username }}/{{ post.repo.name }}
+              </a>
+              <span class="pill {{ post.repo.kind }}">{{ post.repo.kind }}</span>
+            </p>
+          {% endif %}
+
+          <div class="post-tile__reactions">
+            {% if current_user %}
+              {% for emoji in reaction_palette %}
+                <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+                  <input type="hidden" name="emoji" value="{{ emoji }}">
+                  <button type="submit" class="post-tile__reaction {% if emoji in entry.viewer_reacted %}post-tile__reaction--active{% endif %}"
+                          aria-label="Toggle reaction {{ emoji }}">
+                    {{ emoji }}
+                    {% if entry.reaction_totals.get(emoji) %}
+                      <span class="post-tile__reaction-count">{{ entry.reaction_totals.get(emoji) }}</span>
+                    {% endif %}
+                  </button>
+                </form>
+              {% endfor %}
+            {% else %}
+              {% for emoji, count in entry.reaction_totals.items() %}
+                <span class="pill post-tile__reaction-count-pill">{{ emoji }} {{ count }}</span>
+              {% endfor %}
+            {% endif %}
+          </div>
+
+          <p class="post-tile__footer">
+            <a href="/posts/{{ post.id }}#comments">Read more</a>
+            <span class="muted">&middot;</span>
+            <a href="/posts/{{ post.id }}#comments">Comments</a>
+          </p>
+        </article>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <style>
+    /* BLP minimal-tile grid (디자인.md §7.3). Posts render in a
+     * 2-3 column auto-fill grid so the feed reads as a coherent tile
+     * surface next to the home mix. */
+    .posts-feed {
+      display: grid;
+      gap: var(--gap-tile);
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      margin-top: 16px;
+    }
+    .posts-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .posts-header h1 { margin: 0; }
+    .posts-header__actions { display: flex; gap: 8px; align-items: center; }
+    .post-tile {
+      gap: 8px;
+    }
+    .post-tile__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .post-tile__kind {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    .post-tile__title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .post-tile__time { font-size: 12px; margin-left: auto; }
+    .post-tile__author { margin: 0; }
+    .post-tile__author-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .post-tile__author-link:hover { color: var(--color-main); text-decoration: none; }
+    .post-tile__body p { margin: 0; }
+    .post-tile__repo {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .post-tile__repo-link { font-weight: 600; color: var(--text); }
+    .post-tile__repo-link:hover { color: var(--color-main); text-decoration: none; }
+    .post-tile__reactions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .post-tile__reaction {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 28px;
+      padding: 0 10px;
+      font-size: 13px;
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .post-tile__reaction:hover { border-color: var(--color-main); color: var(--color-main); }
+    .post-tile__reaction--active {
+      background: var(--blp-paper-blue);
+      border-color: var(--color-main);
+      color: var(--text);
+    }
+    .post-tile__reaction-count {
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .post-tile__reaction-count-pill {
+      font-size: 12px;
+    }
+    .post-tile__footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-size: 13px;
+    }
+    .form-inline { display: inline; }
+  </style>
+{% endblock %}

@@ -57,7 +57,18 @@ def download_command(
     ] = 8,
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """Recursively download a repository to `--local-dir`."""
+    """PURPOSE
+    Recursively download a repository into a local directory. Files
+    larger than the per-file LFS boundary (default 100 MiB) are
+    streamed through the LFS GET endpoint; smaller files come through
+    the resolve endpoint. The download is resumable - a partially
+    populated directory is filled in on the next run.
+
+    USAGE
+    omc download <owner>/<name> [--revision <branch|tag|sha>]
+                            [--include <glob>] [--exclude <glob>]
+                            [--local-dir <path>] [--max-workers <int>]
+                            [--server <url>]"""
     store: Store = ctx.obj["store"]
     config_path: Path | None = ctx.obj.get("config_path")
     try:

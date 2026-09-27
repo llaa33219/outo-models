@@ -29,6 +29,8 @@ and cross-doc consistency automatically through `scripts/check-docs.sh`.
   policy
 - [Spaces](spaces.md) — v2 runtime lifecycle, Podman integration, GPUs, the
   reverse proxy
+- [Posts](posts.md) — site-wide Posts feed: short notes, long-form
+  markdown articles, emoji reactions, comments
 - [Troubleshooting](troubleshooting.md) — common operational issues (Podman,
   LFS, S3 included)
 - [omc (user CLI)](omc.md)

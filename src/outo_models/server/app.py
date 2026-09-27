@@ -39,6 +39,7 @@ from outo_models.server.errors import register_exception_handlers
 from outo_models.server.middleware import SecurityHeadersMiddleware
 from outo_models.server.routers import admin as admin_router
 from outo_models.server.routers import auth as auth_router
+from outo_models.server.routers import posts as posts_router
 from outo_models.server.routers import repos as repos_router
 from outo_models.server.routers import resolve as resolve_router
 from outo_models.server.routers import spaces as spaces_router
@@ -96,6 +97,7 @@ def _register_routes_and_middleware(app: FastAPI, settings: Settings) -> None:
     app.include_router(webhooks_router.router)
     app.include_router(resolve_router.router)
     app.include_router(upload_router.router)
+    app.include_router(posts_router.router)
     app.include_router(ui_router.router)
 
     # Security headers wrap every outgoing response, including the git

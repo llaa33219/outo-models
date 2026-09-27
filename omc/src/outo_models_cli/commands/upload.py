@@ -69,7 +69,18 @@ def upload_command(
     ] = None,
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """Upload a file or folder to a repository."""
+    """PURPOSE
+    Upload a local file or folder to a repository. Files at or below
+    100 MiB ride the multipart endpoint in one (or sequential) commits;
+    files above the cap are routed through Git LFS - a single batch
+    POST, one streaming PUT per object, and a pointer-text commit that
+    ships alongside the small files in one final commit. No `git lfs
+    track` setup is required on the user side.
+
+    USAGE
+    omc upload <owner>/<name> <local-path>
+                           [--path-in-repo <subdir>] [--message <text>]
+                           [--server <url>]"""
     store: Store = ctx.obj["store"]
     config_path: Path | None = ctx.obj.get("config_path")
     try:

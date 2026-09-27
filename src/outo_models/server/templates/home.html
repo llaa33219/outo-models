@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Home &mdash; outo-models{% endblock %}
+{% block content %}
+  <h1>Home</h1>
+  <p class="muted">
+    A live mix of recently popular posts, most-downloaded models and
+    datasets, and recently updated Spaces. Browse the kind catalogs at
+    <a href="/models">Models</a>, <a href="/datasets">Datasets</a>, and
+    <a href="/spaces">Spaces</a> for the full lists.
+  </p>
+
+  {% if not (trending_posts or top_models or top_datasets or running_spaces) %}
+    <div class="empty-state">
+      <p>The community has not published anything yet.</p>
+      {% if not current_user %}
+        <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first post or repo.</p>
+      {% else %}
+        <p>
+          Be the first &mdash;
+          <a href="/posts/new">share a post</a> or
+          <a href="/new">create a repo</a>.
+        </p>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {# ------------------------------------------------------------------
+   * Mixed tile feed. Each tile shares the same BLP chrome (square
+   * 2px-border, no radius, instant border hover, see 디자인.md §1.3 /
+   * §5.1). A small "kind" pill inside each tile marks whether it is a
+   * Post / Model / Dataset / Space so the mix reads at a glance.
+   * The grid is a CSS `repeat(auto-fill, minmax(280px, 1fr))` so it
+   * tiles at 2 or 3 columns depending on viewport width (per the BLP
+   * catalog grid, 디자인.md §7.3).
+   * ------------------------------------------------------------------ #}
+  <div class="home-feed">
+    {% for post in trending_posts %}
+      <article class="home-tile card">
+        <div class="home-tile__header">
+          <span class="pill home-tile__kind">Post</span>
+          {% if post.post.kind == "long" %}
+            <span class="pill">Long</span>
+          {% endif %}
+        </div>
+        <h2>
+          <a href="/posts/{{ post.post.id }}">@{{ post.post.author.username }}</a>
+        </h2>
+        <p class="home-tile__body">{{ post.preview_html | safe }}</p>
+        <p class="home-tile__meta">
+          <a class="home-tile__author" href="/{{ post.post.author.username }}">
+            {{ post.post.author.username }}
+          </a>
+          <span class="home-tile__time muted">
+            {{ post.post.created_at.strftime("%Y-%m-%d") if post.post.created_at else "" }}
+          </span>
+        </p>
+        {% if post.reaction_totals %}
+          <p class="home-tile__reactions">
+            {% for emoji, count in post.reaction_totals.items() %}
+              <span class="pill home-tile__reaction">{{ emoji }} {{ count }}</span>
+            {% endfor %}
+          </p>
+        {% endif %}
+      </article>
+    {% endfor %}
+
+    {% for repo in top_models %}
+      <article class="home-tile card">
+        <div class="home-tile__header">
+          <span class="pill home-tile__kind">Model</span>
+        </div>
+        <h2>
+          <a href="/{{ repo.owner.username }}/{{ repo.name }}">
+            {{ repo.owner.username }}/{{ repo.name }}
+          </a>
+        </h2>
+        <p class="home-tile__body">{{ repo.description or "" }}</p>
+        <p class="home-tile__meta">
+          <span class="pill stat">&#8595; {{ repo.downloads_count or 0 }}</span>
+          <span class="home-tile__time muted">
+            Updated {{ repo.updated_at.strftime("%Y-%m-%d") if repo.updated_at else "" }}
+          </span>
+        </p>
+      </article>
+    {% endfor %}
+
+    {% for repo in top_datasets %}
+      <article class="home-tile card">
+        <div class="home-tile__header">
+          <span class="pill home-tile__kind">Dataset</span>
+        </div>
+        <h2>
+          <a href="/{{ repo.owner.username }}/{{ repo.name }}">
+            {{ repo.owner.username }}/{{ repo.name }}
+          </a>
+        </h2>
+        <p class="home-tile__body">{{ repo.description or "" }}</p>
+        <p class="home-tile__meta">
+          <span class="pill stat">&#8595; {{ repo.downloads_count or 0 }}</span>
+          <span class="home-tile__time muted">
+            Updated {{ repo.updated_at.strftime("%Y-%m-%d") if repo.updated_at else "" }}
+          </span>
+        </p>
+      </article>
+    {% endfor %}
+
+    {% for repo in running_spaces %}
+      <article class="home-tile card">
+        <div class="home-tile__header">
+          <span class="pill home-tile__kind">Space</span>
+        </div>
+        <h2>
+          <a href="/{{ repo.owner.username }}/{{ repo.name }}">
+            {{ repo.owner.username }}/{{ repo.name }}
+          </a>
+        </h2>
+        <p class="home-tile__body">{{ repo.description or "" }}</p>
+        <p class="home-tile__meta">
+          <span class="pill stat">Updated {{ repo.updated_at.strftime("%Y-%m-%d") if repo.updated_at else "" }}</span>
+          <span class="muted home-tile__time">Recently updated</span>
+        </p>
+      </article>
+    {% endfor %}
+  </div>
+
+  {# ------------------------------------------------------------------
+   * The Spaces v2 runtime does NOT persist a `running_since`
+   * timestamp — the runtime state is reconstructed from Podman on
+   * demand. The home tile uses `updated_at desc` as the documented
+   * approximation. The footnote makes that explicit so the operator
+   * does not mistake "recently updated" for "longest-running".
+   * ------------------------------------------------------------------ #}
+  {% if running_spaces %}
+    <p class="muted home-feed__footnote">
+      Spaces shown above are ordered by most-recent update, not
+      uptime, because the runtime does not persist a running-since
+      timestamp.
+    </p>
+  {% endif %}
+
+  <style>
+    /* BLP minimal-tile grid (디자인.md §7.3). The shared `.repo-grid`
+     * class is the right primitive; we use it so the home tile mix
+     * tiles at 2-3 columns identically to the kind catalog pages. */
+    .home-feed {
+      display: grid;
+      gap: var(--gap-tile);
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      margin-top: 16px;
+    }
+    .home-tile.card {
+      /* Inherit .card chrome (2px border, 0 radius, instant border
+       * hover). Override padding so the kind pill + meta row breathe
+       * inside the square tile. */
+      gap: 8px;
+    }
+    .home-tile__header {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .home-tile__kind {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    .home-tile h2 {
+      font-size: 16px;
+      margin: 0;
+    }
+    .home-tile h2 a {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .home-tile h2 a:hover { color: var(--color-main); text-decoration: none; }
+    .home-tile__body {
+      color: var(--text-sub);
+      font-size: 13.5px;
+      line-height: 1.5;
+      margin: 0;
+      /* Two-line clamp keeps tile heights uniform across the grid. */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .home-tile__meta {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 0;
+    }
+    .home-tile__author { font-weight: 600; color: var(--text); }
+    .home-tile__author:hover { color: var(--color-main); text-decoration: none; }
+    .home-tile__time { font-size: 12px; }
+    .home-tile__reactions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 0;
+    }
+    .home-tile__reaction {
+      font-size: 12px;
+    }
+    .home-feed__footnote { margin-top: 16px; font-size: 12px; }
+  </style>
+{% endblock %}

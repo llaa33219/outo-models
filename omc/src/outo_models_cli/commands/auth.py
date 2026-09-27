@@ -9,6 +9,11 @@ Four subcommands mirror the HF CLI surface:
 
 All four share the `_auth_resolve` helper, which handles URL
 normalization and the env-var overrides the store layer exposes.
+
+The long-form help (PURPOSE / USAGE / EXAMPLES / EXIT CODES / NOTES)
+lives in `commands/_help_text/_auth.py` so it stays consistent with the
+test markers. The docstrings below remain the one-line summary Typer
+renders above the auto-generated table.
 """
 
 from __future__ import annotations
@@ -21,6 +26,13 @@ import typer
 from rich.table import Table
 
 from outo_models_cli import api, config
+from outo_models_cli.commands._help_text import (
+    AUTH_APP_HELP,
+    AUTH_LOGIN_EPILOG,
+    AUTH_LOGOUT_EPILOG,
+    AUTH_STATUS_EPILOG,
+    AUTH_WHOAMI_EPILOG,
+)
 from outo_models_cli.commands._shared import (
     _errprint,
     console,
@@ -35,7 +47,7 @@ from outo_models_cli.errors import (
 if TYPE_CHECKING:
     from outo_models_cli.config import Store
 
-auth_app = typer.Typer(help="Manage stored credentials.", no_args_is_help=True)
+auth_app = typer.Typer(help=AUTH_APP_HELP, no_args_is_help=True)
 
 
 def _prompt_token(url: str) -> str:
@@ -62,7 +74,7 @@ def _resolve_target_url(
     return config.normalize_server_url(raw)
 
 
-@auth_app.command("login")
+@auth_app.command("login", epilog=AUTH_LOGIN_EPILOG)
 def auth_login(
     ctx: typer.Context,
     server: Annotated[
@@ -84,7 +96,16 @@ def auth_login(
         ),
     ] = False,
 ) -> None:
-    """Log in to a server: verify the PAT and store it."""
+    """PURPOSE
+    Verify a Personal Access Token against an outo-models server and
+    persist it under the normalized server URL so every other command
+    picks it up automatically. Use this once per server; the CLI will
+    remember it across shells, reboots, and rebooted shells.
+
+    USAGE
+    omc auth login --server <url> [--token PAT] [--set-default]
+    omc auth login                 # server from OMC_SERVER or config default
+    omc auth login --token <PAT>   # PAT on the command line (scripts / CI)"""
     store: Store = ctx.obj["store"]
     try:
         url = _resolve_target_url(store, requested=server)
@@ -120,7 +141,7 @@ def auth_login(
     )
 
 
-@auth_app.command("logout")
+@auth_app.command("logout", epilog=AUTH_LOGOUT_EPILOG)
 def auth_logout(
     ctx: typer.Context,
     server: Annotated[
@@ -128,7 +149,14 @@ def auth_logout(
         typer.Option(help="Server to log out (default: the configured default)."),
     ] = None,
 ) -> None:
-    """Remove the stored credential for one server."""
+    """PURPOSE
+    Remove the stored credential for one server. Use this when you want
+    to revoke the CLI's access without rotating the PAT on the server
+    (the PAT itself is still valid until you revoke it server-side).
+
+    USAGE
+    omc auth logout [--server <url>]
+    omc auth logout                     # removes the resolved default server"""
     store: Store = ctx.obj["store"]
     try:
         url = _resolve_target_url(store, requested=server)
@@ -145,7 +173,7 @@ def auth_logout(
     console.print(f"Removed stored credential for {url}.")
 
 
-@auth_app.command("whoami")
+@auth_app.command("whoami", epilog=AUTH_WHOAMI_EPILOG)
 def auth_whoami(
     ctx: typer.Context,
     server: Annotated[
@@ -153,7 +181,13 @@ def auth_whoami(
         typer.Option(help="Server to query (default: the configured default)."),
     ] = None,
 ) -> None:
-    """Print the authenticated user, server, and token source."""
+    """PURPOSE
+    Print the authenticated user, the resolved server, the server-side
+    role, and the source of the bearer token. Use it to confirm that a
+    new credential is wired up correctly before running mutating commands.
+
+    USAGE
+    omc auth whoami [--server <url>]"""
     store: Store = ctx.obj["store"]
     try:
         url, token = store.resolve(server)
@@ -177,9 +211,14 @@ def auth_whoami(
     console.print(table)
 
 
-@auth_app.command("status")
+@auth_app.command("status", epilog=AUTH_STATUS_EPILOG)
 def auth_status(ctx: typer.Context) -> None:
-    """List every configured server and mark the default."""
+    """PURPOSE
+    List every server the CLI has a credential for and mark the default.
+    Pure local inspection - no network call, no token printed.
+
+    USAGE
+    omc auth status"""
     store: Store = ctx.obj["store"]
     if not store.servers:
         console.print("No servers configured. Run `omc auth login --server <url>`.")

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}New post &mdash; outo-models{% endblock %}
+{% block content %}
+  <p class="breadcrumbs"><a href="/posts">Posts</a> &rarr; New</p>
+  <h1>New post</h1>
+  <p class="muted">
+    Short posts render as escaped plain text with preserved line
+    breaks. Long posts render as sanitized markdown and need a
+    title. Optionally link a repo so readers can jump straight to
+    the model, dataset, or Space the post is about.
+  </p>
+
+  {% if error %}<div class="errors">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/posts/new" class="form-card">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <fieldset class="post-composer__kind">
+      <legend>Kind</legend>
+      <label>
+        <input type="radio" name="kind" value="short"
+               {% if form_kind == "short" %}checked{% endif %}>
+        Short &mdash; plain text, line breaks preserved (default)
+      </label>
+      <label>
+        <input type="radio" name="kind" value="long"
+               {% if form_kind == "long" %}checked{% endif %}>
+        Long &mdash; sanitized markdown, requires a title
+      </label>
+    </fieldset>
+
+    <label for="post-title">Title (long posts only)</label>
+    <input id="post-title" type="text" name="title" maxlength="200"
+           value="{{ form_title or '' }}">
+    <p class="help">
+      Leave blank for a short post. Long posts require a non-empty
+      title (up to 200 characters).
+    </p>
+
+    <label for="post-body">Body</label>
+    <textarea id="post-body" name="body" rows="6" required maxlength="50000">{{ form_body or '' }}</textarea>
+    <p class="help">
+      Short posts cap at 2000 characters. Long posts cap at 50000
+      characters and render as sanitized markdown.
+    </p>
+
+    <label for="post-repo-link">Linked repo (optional)</label>
+    <input id="post-repo-link" type="text" name="repo_link"
+           placeholder="owner/name" maxlength="200"
+           value="{{ form_repo_link or '' }}"
+           pattern="[a-z0-9][a-z0-9._-]{0,62}/[a-z0-9][a-z0-9._-]{0,62}">
+    <p class="help">
+      Use the form <code>owner/name</code>. The repo must exist and
+      must be visible to you (public repos anyone can link; private
+      repos only the owner / admins can link).
+    </p>
+
+    <p class="form-actions">
+      <button type="submit" class="primary">Publish</button>
+      <a class="post-composer__cancel" href="/posts">Cancel</a>
+    </p>
+  </form>
+
+  <style>
+    /* JS-free short/long switch: the two radio buttons submit
+     * `kind=short` / `kind=long` to the server, and the form re-renders
+     * with the chosen variant on validation error. The legend + fieldset
+     * group the radios without inline <script>. */
+    .post-composer__kind {
+      border: var(--border-el) solid var(--color-inactive);
+      padding: 12px 16px;
+      margin: 16px 0;
+    }
+    .post-composer__kind legend {
+      font-weight: 600;
+      padding: 0 6px;
+    }
+    .post-composer__kind label {
+      display: block;
+      margin: 6px 0;
+      font-weight: 400;
+    }
+    .post-composer__cancel {
+      display: inline-flex;
+      align-items: center;
+      height: 40px;
+      padding: 0 14px;
+      color: var(--text-sub);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      text-decoration: none;
+    }
+    .post-composer__cancel:hover { color: var(--color-main); border-color: var(--color-main); text-decoration: none; }
+  </style>
+{% endblock %}

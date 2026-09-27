@@ -1,4 +1,9 @@
-"""`omc ls <owner>/<name>` — list one directory of a repository."""
+"""`omc ls <owner>/<name>` — list one directory of a repository.
+
+The long-form help (PURPOSE / USAGE / EXAMPLES / EXIT CODES / NOTES)
+lives in `commands/_help_text/_transfer.py` so it stays consistent with
+the test markers.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +42,14 @@ def ls_command(
     ] = "main",
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """List one directory of a repository."""
+    """PURPOSE
+    List the contents of one directory of a repository at a revision.
+    Equivalent to `ls -la` on a working tree - useful for inspecting a
+    repo before downloading or uploading.
+
+    USAGE
+    omc ls <owner>/<name> [--path <subdir>] [--revision <branch|tag|sha>]
+                         [--server <url>]"""
     store: Store = ctx.obj["store"]
     try:
         owner, name = _parse_owner_repo(repo)

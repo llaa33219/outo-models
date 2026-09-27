@@ -4,6 +4,31 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.0 — Posts, mixed-tile home, omc hyper-detailed help
+
+### Added
+
+- **Posts** — a global thread/X-style feed, separate from per-repo
+  community tabs: short-form by default, optional long-form (title +
+  sanitized markdown) for blogs/papers/reports, optional repository
+  link chip (model/dataset/space; private-repo chips render only for
+  viewers who can see the repo), 8-emoji reactions with per-user
+  toggle, comments, author/admin deletion. Posts appear on the
+  author's profile. Routes under `/posts`, new `Posts` nav link.
+- **Mixed-tile home** — the home page no longer lists "Public
+  repositories"; it interleaves trending posts (reaction count, 7-day
+  window, recent fallback), top-downloaded models and datasets, and
+  recently-updated running Spaces as BLP tiles with kind pills.
+- **omc help overhaul** — bare `omc` and every `--help` now print a
+  structured, AI-readable reference (PURPOSE / USAGE / EXAMPLES /
+  EXIT CODES / NOTES, plus GETTING STARTED, CONCEPTS, COMMAND INDEX,
+  CONFIG with the full env-var inventory). Bare `omc` exits 0.
+
+### Changed
+
+- Database schema: new `posts`, `post_reactions`, `post_comments`
+  tables (migration 0005).
+
 ## v0.5.11 — Logo in README and navbar, dark mode
 
 ### Added

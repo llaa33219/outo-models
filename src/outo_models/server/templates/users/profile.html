@@ -114,6 +114,7 @@
         <a href="#models" class="profile-repos__tab">Models <span class="muted">({{ grouped.model|length }})</span></a>
         <a href="#datasets" class="profile-repos__tab">Datasets <span class="muted">({{ grouped.dataset|length }})</span></a>
         <a href="#spaces" class="profile-repos__tab">Spaces <span class="muted">({{ grouped.space|length }})</span></a>
+        <a href="#posts" class="profile-repos__tab">Posts <span class="muted">({{ user_posts|length }})</span></a>
       </nav>
 
       {% macro section(kind, items, heading) %}
@@ -143,6 +144,49 @@
       {{ section('model', grouped.model, 'Models') }}
       {{ section('dataset', grouped.dataset, 'Datasets') }}
       {{ section('space', grouped.space, 'Spaces') }}
+
+      <section id="posts" class="profile-repos__section profile-posts">
+        <h2 class="profile-repos__heading">Posts</h2>
+        {% if user_posts %}
+          <div class="profile-posts__list">
+            {% for entry in user_posts %}
+              {% set post_ = entry.post %}
+              <article class="profile-posts__tile card">
+                <div class="profile-posts__header">
+                  <span class="pill profile-posts__kind">
+                    {% if post_.kind == "long" %}Long{% else %}Short{% endif %}
+                  </span>
+                  {% if post_.title %}
+                    <span class="profile-posts__title">{{ post_.title }}</span>
+                  {% endif %}
+                  <time class="muted profile-posts__time" datetime="{{ post_.created_at.isoformat() if post_.created_at else '' }}">
+                    {{ post_.created_at.strftime("%Y-%m-%d") if post_.created_at else "" }}
+                  </time>
+                </div>
+                <p class="profile-posts__body">{{ entry.preview_html | safe }}</p>
+                {% if user_post_reactions.get(post_.id) %}
+                  <p class="profile-posts__reactions">
+                    {% for emoji, count in user_post_reactions.get(post_.id, {}).items() %}
+                      <span class="pill">{{ emoji }} {{ count }}</span>
+                    {% endfor %}
+                  </p>
+                {% endif %}
+                <p class="profile-posts__footer">
+                  <a href="/posts/{{ post_.id }}">Open post</a>
+                </p>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted profile-repos__empty">
+            {% if is_self %}
+              You haven't posted yet &mdash; <a href="/posts/new">share something</a>.
+            {% else %}
+              {{ profile.username }} hasn't posted yet.
+            {% endif %}
+          </p>
+        {% endif %}
+      </section>
     </section>
   </div>
 
@@ -353,5 +397,51 @@
 
     /* Activity row anchors — used by the in-page nav. */
     .profile-repos__section:first-of-type .profile-repos__heading { margin-top: 0; }
+
+    /* Posts section tiles — same BLP square tile chrome as the
+     * catalog card so the profile reads as a single surface. */
+    .profile-posts__list {
+      display: grid;
+      gap: var(--gap-tile);
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    }
+    .profile-posts__tile {
+      gap: 6px;
+    }
+    .profile-posts__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .profile-posts__kind {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    .profile-posts__title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .profile-posts__time { font-size: 12px; margin-left: auto; }
+    .profile-posts__body {
+      color: var(--text-sub);
+      font-size: 13.5px;
+      line-height: 1.5;
+      margin: 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .profile-posts__reactions {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin: 0;
+    }
+    .profile-posts__footer { margin: 0; font-size: 13px; }
   </style>
 {% endblock %}

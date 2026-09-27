@@ -1,4 +1,10 @@
-"""`omc repo ...` — manage repositories on the configured server."""
+"""`omc repo ...` — manage repositories on the configured server.
+
+The long-form help (PURPOSE / USAGE / EXAMPLES / EXIT CODES / NOTES)
+lives in `commands/_help_text/_repo.py` so it stays consistent with
+the test markers. Docstrings stay as the one-line summary Typer
+renders above the auto-generated table.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,12 @@ import typer
 from rich.table import Table
 
 from outo_models_cli import api
+from outo_models_cli.commands._help_text import (
+    REPO_APP_HELP,
+    REPO_CREATE_EPILOG,
+    REPO_DELETE_EPILOG,
+    REPO_LIST_EPILOG,
+)
 from outo_models_cli.commands._shared import (
     _errprint,
     _human_bytes,
@@ -24,10 +36,10 @@ from outo_models_cli.errors import (
 if TYPE_CHECKING:
     from outo_models_cli.config import Store
 
-repo_app = typer.Typer(help="Manage repositories.", no_args_is_help=True)
+repo_app = typer.Typer(help=REPO_APP_HELP, no_args_is_help=True)
 
 
-@repo_app.command("create")
+@repo_app.command("create", epilog=REPO_CREATE_EPILOG)
 def repo_create(
     ctx: typer.Context,
     name: Annotated[str, typer.Argument(help="Repository name.")],
@@ -46,7 +58,14 @@ def repo_create(
     ] = None,
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """Create a new repository on the target server."""
+    """PURPOSE
+    Create a new repository on the resolved server. After creation the
+    CLI prints the new repo's `owner/name`, visibility, kind, and
+    git-style clone URL.
+
+    USAGE
+    omc repo create <name> [--kind model|dataset|space] [--public|--private]
+                         [--description <text>] [--server <url>]"""
     store: Store = ctx.obj["store"]
     try:
         kind = _validate_kind(kind)
@@ -75,7 +94,7 @@ def repo_create(
     console.print(f"Clone URL: {summary.clone_url}")
 
 
-@repo_app.command("delete")
+@repo_app.command("delete", epilog=REPO_DELETE_EPILOG)
 def repo_delete(
     ctx: typer.Context,
     repo: Annotated[str, typer.Argument(help="Repository as `<owner>/<name>`.")],
@@ -89,7 +108,15 @@ def repo_delete(
     ] = False,
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """Delete a repository (owner or admin only)."""
+    """PURPOSE
+    Permanently delete a repository on the resolved server. The owner
+    or any account with the `admin` role may delete. The operation
+    is irreversible - the git history, all revisions, and every LFS
+    object are removed.
+
+    USAGE
+    omc repo delete <owner>/<name> [--kind model|dataset|space]
+                              [--yes] [--server <url>]"""
     store: Store = ctx.obj["store"]
     if "/" not in repo:
         _errprint("Argument must be `<owner>/<name>`.")
@@ -117,7 +144,7 @@ def repo_delete(
     console.print(f"Deleted {kind} {owner}/{name}.")
 
 
-@repo_app.command("list")
+@repo_app.command("list", epilog=REPO_LIST_EPILOG)
 def repo_list(
     ctx: typer.Context,
     owner: Annotated[str | None, typer.Option(help="Limit to one owner's repos.")] = None,
@@ -127,7 +154,14 @@ def repo_list(
     ] = None,
     server: Annotated[str | None, typer.Option(help="Target server URL.")] = None,
 ) -> None:
-    """List repositories on the target server."""
+    """PURPOSE
+    List every repository on the resolved server, with optional
+    filters on owner and kind. The output is a Rich table; pipe it
+    through `column -t -s '|'` or convert with `jq` for machine use.
+
+    USAGE
+    omc repo list [--owner <name>] [--kind model|dataset|space]
+                  [--server <url>]"""
     store: Store = ctx.obj["store"]
     try:
         kind = _validate_kind(kind) if kind else None

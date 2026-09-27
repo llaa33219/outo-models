@@ -101,6 +101,38 @@ class TestMigrationsApply:
             await eng.dispose()
             await dispose_engines()
 
+    async def test_upgrade_adds_0005_posts_tables(self, tmp_data_dir: Path) -> None:
+        await dispose_engines()
+        settings = get_settings()
+        eng = get_engine(settings)
+        try:
+            await run_migrations(eng)
+            async with eng.connect() as conn:
+                tables = await conn.run_sync(_table_names)
+            assert {"posts", "post_reactions", "post_comments"} <= tables
+
+            def _post_reactions_cols(sync_conn: object) -> set[str]:
+                return {c["name"] for c in inspect(sync_conn).get_columns("post_reactions")}
+
+            def _posts_cols(sync_conn: object) -> set[str]:
+                return {c["name"] for c in inspect(sync_conn).get_columns("posts")}
+
+            def _post_comments_cols(sync_conn: object) -> set[str]:
+                return {c["name"] for c in inspect(sync_conn).get_columns("post_comments")}
+
+            async with eng.connect() as conn:
+                post_cols = await conn.run_sync(_posts_cols)
+                reaction_cols = await conn.run_sync(_post_reactions_cols)
+                comment_cols = await conn.run_sync(_post_comments_cols)
+
+            # The columns the 0005 migration introduces.
+            assert {"id", "author_id", "kind", "title", "body", "repo_id"} <= post_cols
+            assert {"id", "post_id", "user_id", "emoji"} <= reaction_cols
+            assert {"id", "post_id", "author_id", "body"} <= comment_cols
+        finally:
+            await eng.dispose()
+            await dispose_engines()
+
 
 class TestMigrationRoundTrip:
     """`upgrade head -> downgrade base -> upgrade head` is a no-op on the schema."""
