@@ -25,6 +25,9 @@ What is asserted:
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -38,6 +41,18 @@ from outo_models_cli.commands._help_text import (
 from outo_models_cli.main import app
 
 SERVER = "http://api.test"
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _plain(result: Any) -> str:
+    """result.stdout with ANSI styling stripped.
+
+    Rich 15 honours FORCE_COLOR above NO_COLOR, and CI agents export
+    FORCE_COLOR — assertions must match the TEXT, never the styling.
+    """
+    return _ANSI_RE.sub("", result.stdout)
 
 
 @pytest.fixture
@@ -56,7 +71,7 @@ def test_root_help_lists_every_command(runner: CliRunner) -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     for cmd in ("auth", "repo", "ls", "download", "upload"):
-        assert cmd in result.stdout, f"missing {cmd} in root help"
+        assert cmd in _plain(result), f"missing {cmd} in root help"
 
 
 def test_bare_omc_prints_full_help_and_exits_zero(runner: CliRunner) -> None:
@@ -68,7 +83,7 @@ def test_bare_omc_prints_full_help_and_exits_zero(runner: CliRunner) -> None:
     result = runner.invoke(app, [])
     assert result.exit_code == 0
     for marker in ROOT_MARKERS:
-        assert marker in result.stdout, f"bare `omc` missing {marker!r} marker"
+        assert marker in _plain(result), f"bare `omc` missing {marker!r} marker"
 
 
 def test_root_help_includes_every_required_marker(runner: CliRunner) -> None:
@@ -76,7 +91,7 @@ def test_root_help_includes_every_required_marker(runner: CliRunner) -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     for marker in ROOT_MARKERS:
-        assert marker in result.stdout, f"root help missing {marker!r} marker"
+        assert marker in _plain(result), f"root help missing {marker!r} marker"
 
 
 def test_root_help_includes_environment_variable_inventory(runner: CliRunner) -> None:
@@ -90,7 +105,7 @@ def test_root_help_includes_environment_variable_inventory(runner: CliRunner) ->
         "XDG_CONFIG_HOME",
         "HOME",
     ):
-        assert var in result.stdout, f"env var {var!r} missing from root help"
+        assert var in _plain(result), f"env var {var!r} missing from root help"
 
 
 def test_root_help_command_index_lists_every_command(runner: CliRunner) -> None:
@@ -109,7 +124,7 @@ def test_root_help_command_index_lists_every_command(runner: CliRunner) -> None:
         "download",
         "upload",
     ):
-        assert cmd in result.stdout, f"command {cmd!r} missing from COMMAND INDEX"
+        assert cmd in _plain(result), f"command {cmd!r} missing from COMMAND INDEX"
 
 
 def test_root_help_getting_started_is_copy_pasteable(runner: CliRunner) -> None:
@@ -125,16 +140,16 @@ def test_root_help_getting_started_is_copy_pasteable(runner: CliRunner) -> None:
         "omc upload",
         "omc auth logout",
     ):
-        assert snippet in result.stdout, f"GETTING STARTED missing canonical step {snippet!r}"
+        assert snippet in _plain(result), f"GETTING STARTED missing canonical step {snippet!r}"
 
 
 def test_root_help_explains_lfs(runner: CliRunner) -> None:
     """The CONCEPTS block must describe LFS behaviour for >100 MiB files."""
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "100 MiB" in result.stdout
-    assert "LFS" in result.stdout
-    assert "pointer text" in result.stdout
+    assert "100 MiB" in _plain(result)
+    assert "LFS" in _plain(result)
+    assert "pointer text" in _plain(result)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +161,7 @@ def test_version_flag(runner: CliRunner) -> None:
     """`omc --version` prints the package version and exits 0."""
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "omc" in result.stdout
+    assert "omc" in _plain(result)
 
 
 def test_version_flag_matches_bare_help_version(runner: CliRunner) -> None:
@@ -154,7 +169,7 @@ def test_version_flag_matches_bare_help_version(runner: CliRunner) -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     # The version line always starts with `omc ` followed by a version.
-    body = result.stdout.strip().splitlines()[-1]
+    body = _plain(result).strip().splitlines()[-1]
     assert body.startswith("omc ")
 
 
@@ -198,7 +213,7 @@ def test_every_command_help_lists_markers(
     result = runner.invoke(app, [*args, "--help"])
     assert result.exit_code == 0, f"{command_name} --help exited {result.exit_code}"
     for marker in markers:
-        assert marker in result.stdout, f"{command_name} --help missing marker {marker!r}"
+        assert marker in _plain(result), f"{command_name} --help missing marker {marker!r}"
 
 
 def test_auth_help_lists_every_subcommand(runner: CliRunner) -> None:
@@ -206,7 +221,7 @@ def test_auth_help_lists_every_subcommand(runner: CliRunner) -> None:
     result = runner.invoke(app, ["auth", "--help"])
     assert result.exit_code == 0
     for sub in ("login", "logout", "whoami", "status"):
-        assert sub in result.stdout, f"auth --help missing {sub!r}"
+        assert sub in _plain(result), f"auth --help missing {sub!r}"
 
 
 def test_repo_help_lists_every_subcommand(runner: CliRunner) -> None:
@@ -214,7 +229,7 @@ def test_repo_help_lists_every_subcommand(runner: CliRunner) -> None:
     result = runner.invoke(app, ["repo", "--help"])
     assert result.exit_code == 0
     for sub in ("create", "delete", "list"):
-        assert sub in result.stdout, f"repo --help missing {sub!r}"
+        assert sub in _plain(result), f"repo --help missing {sub!r}"
 
 
 @pytest.mark.parametrize(
@@ -232,7 +247,7 @@ def test_app_help_has_purpose_and_usage(
     result = runner.invoke(app, [*args, "--help"])
     assert result.exit_code == 0
     for marker in markers:
-        assert marker in result.stdout, f"omc {app_name} --help missing {marker!r}"
+        assert marker in _plain(result), f"omc {app_name} --help missing {marker!r}"
 
 
 def test_help_does_not_print_a_real_token(
@@ -268,10 +283,10 @@ def test_auth_login_help_uses_placeholder_token_not_real(runner: CliRunner) -> N
     """
     result = runner.invoke(app, ["auth", "login", "--help"])
     assert result.exit_code == 0
-    assert "hf_xxx" in result.stdout
+    assert "hf_xxx" in _plain(result)
     # The literal `TOPSECRET` from the security invariant must not
     # appear anywhere on the help pages.
-    assert "TOPSECRET" not in result.stdout
+    assert "TOPSECRET" not in _plain(result)
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +329,7 @@ def test_every_flag_appears_in_its_command_help(
     """Every flag a command accepts is mentioned somewhere on its --help."""
     result = runner.invoke(app, [*args, "--help"])
     assert result.exit_code == 0
-    assert flag in result.stdout, f"`omc {' '.join(args)} --help` does not mention flag {flag!r}"
+    assert flag in _plain(result), f"`omc {' '.join(args)} --help` does not mention flag {flag!r}"
 
 
 _ = httpx
