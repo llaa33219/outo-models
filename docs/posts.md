@@ -27,7 +27,13 @@ and link readers to a repo for the long-form material.
 | `POST /posts/{id}/delete` | Delete post (CSRF-protected) | author or admin |
 | `POST /posts/{id}/comments/{cid}/delete` | Delete comment (CSRF-protected) | author or admin |
 
-The feed and the detail page cap their content at 900px. Every popup
+The feed and the detail page cap their content at 900px. Long-form
+posts render an EXCERPT in the feed (`feed_excerpt`, whole paragraphs
+up to 400 chars, ellipsis, "Read more") — the full sanitized body
+renders only on the detail page. Body text, titles, repo chips, and
+comment bodies wrap long unbroken tokens (`overflow-wrap: anywhere`;
+`pre`/`code` use `pre-wrap`) so no content can escape its tile or
+modal horizontally, and every overlay clips overflow. Every popup
 on the posts surface — the per-post **Comments** modal, the feed's
 **New post** modal (short-form only), and the reaction **picker**
 popover — is a native `<details>/<summary>` disclosure styled as a

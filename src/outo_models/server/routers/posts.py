@@ -56,6 +56,7 @@ from outo_models.posts import (
     create_post,
     delete_comment,
     delete_post,
+    feed_excerpt,
     list_comments,
     list_posts,
     load_comment_or_404,
@@ -268,14 +269,17 @@ async def posts_feed_page(
 
     rendered: list[dict[str, Any]] = []
     for post in posts:
+        long_truncated = False
         if post.kind == POST_KIND_LONG:
-            body_html = render_long_body(post.body)
+            excerpt, long_truncated = feed_excerpt(post.body)
+            body_html = render_long_body(excerpt)
         else:
             body_html = render_short_body(post.body)
         rendered.append(
             {
                 "post": post,
                 "body_html": body_html,
+                "long_truncated": long_truncated,
                 "reaction_totals": reaction_totals.get(post.id, {}),
                 "viewer_reacted": {emoji for (pid, emoji) in viewer_reactions if pid == post.id},
                 "viewer_can_see_repo": _viewer_can_see_repo(post.repo, viewer=user),

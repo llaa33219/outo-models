@@ -160,6 +160,61 @@ class TestPostsFeed:
         assert f"/posts/{short_id}" in body
         assert f"/posts/{long_id}" in body
 
+    async def test_feed_shows_excerpt_not_full_long_body(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            head = "excerpt-head-paragraph " + "x" * 120
+            tail = "tail-paragraph-beyond-the-cap " + "y" * 400
+            post_id = await _create_post(
+                factory,
+                author=alice,
+                kind="long",
+                title="Excerpted",
+                body=f"{head}\n\n{tail}",
+            )
+
+        response = client.get("/posts")
+        assert response.status_code == 200
+        body = response.text
+        assert "excerpt-head-paragraph" in body
+        assert "tail-paragraph-beyond-the-cap" not in body
+        assert "Read more" in body
+
+        detail = client.get(f"/posts/{post_id}")
+        assert detail.status_code == 200
+        assert "tail-paragraph-beyond-the-cap" in detail.text
+
+    async def test_feed_and_detail_css_prevent_horizontal_overflow(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            await _create_post(factory, author=alice, body="css probe")
+
+        feed = client.get("/posts").text
+        for marker in (
+            "overflow-wrap: anywhere",
+            "minmax(0, 1fr)",
+            "white-space: pre-wrap",
+        ):
+            assert marker in feed
+
+        detail = client.get("/posts/1").text
+        assert "overflow-wrap: anywhere" in detail
+        assert "minmax(0, 1fr)" in detail
+
     async def test_feed_orders_newest_first(
         self,
         app: tuple[TestClient, FastAPI, object],

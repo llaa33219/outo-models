@@ -103,6 +103,9 @@
                 <p>{{ entry.body_html | safe }}</p>
               {% endif %}
             </div>
+            {% if entry.long_truncated %}
+              <p class="post-tile__more">Read more &#8594;</p>
+            {% endif %}
           </a>
 
           {% if post.repo and entry.viewer_can_see_repo %}
@@ -292,6 +295,29 @@
     }
     .post-tile__body p { margin: 4px 0 0; }
     .post-tile__body p:first-child { margin-top: 0; }
+    .post-tile__title,
+    .post-tile__body,
+    .post-tile__body p,
+    .post-tile__repo-link,
+    .post-tile__more,
+    .post-modal__comment-body,
+    .post-modal__comment-author,
+    .post-modal__hint {
+      overflow-wrap: anywhere;
+      min-width: 0;
+    }
+    .post-tile__body pre,
+    .post-tile__body code,
+    .post-modal__comment-body code,
+    .post-modal__comment-body pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .post-tile__more {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: var(--color-main);
+    }
 
     .post-tile__repo {
       margin: 0;
@@ -384,6 +410,7 @@
       place-items: center;
       padding: 16px;
       z-index: 100;
+      overflow: hidden;
     }
     .post-modal__card,
     .post-picker__card {
@@ -477,11 +504,13 @@
     /* Picker grid — 8 buttons per row. */
     .post-picker__grid {
       display: grid;
-      grid-template-columns: repeat(8, 1fr);
+      grid-template-columns: repeat(8, minmax(0, 1fr));
       gap: 4px;
     }
+    .post-picker__grid .form-inline { min-width: 0; margin: 0; }
     .post-picker__btn {
       width: 100%;
+      min-width: 0;
       height: 40px;
       font-size: 20px;
       line-height: 1;

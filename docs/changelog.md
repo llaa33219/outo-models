@@ -4,6 +4,19 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.3 — Posts overflow fixes, long-form feed excerpts
+
+### Fixed
+
+- Long unbroken tokens (URLs, hashes) no longer escape their tile or
+  modal: post bodies, titles, repo chips, and comment bodies use
+  `overflow-wrap: anywhere`; `pre`/`code` wrap with `pre-wrap`; the
+  reaction picker grid uses `minmax(0, 1fr)` cells and every modal
+  overlay clips overflow — no horizontal page scrolling from popups.
+- The feed shows an EXCERPT for long-form posts (whole paragraphs up
+  to 400 chars + ellipsis + "Read more"); the full sanitized body
+  renders only on the detail page.
+
 ## v0.6.2 — Posts UX overhaul: chips + picker, modals, markdown editor
 
 ### Changed

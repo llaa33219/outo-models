@@ -68,6 +68,35 @@ _TOP_REPOS_LIMIT: Final = 6
 _RUNNING_SPACES_LIMIT: Final = 6
 _PROFILE_POSTS_LIMIT: Final = 20
 _HOME_TILE_PREVIEW_CHARS: Final = 280
+_FEED_EXCERPT_CHARS: Final = 400
+
+
+def feed_excerpt(body: str, *, max_chars: int = _FEED_EXCERPT_CHARS) -> tuple[str, bool]:
+    """Cap a long-form body to a feed-sized raw-markdown excerpt.
+
+    Returns `(excerpt, truncated)`. Whole paragraphs are kept while
+    they fit inside the cap; a single paragraph longer than the cap is
+    hard-cut. The excerpt keeps raw markdown so the feed can render it
+    through the same sanitizer as the full body.
+    """
+    cleaned = body.strip().replace("\r\n", "\n")
+    if len(cleaned) <= max_chars:
+        return cleaned, False
+    kept: list[str] = []
+    used = 0
+    for para in cleaned.split("\n\n"):
+        extra = len(para) + (2 if kept else 0)
+        if not kept and len(para) > max_chars:
+            kept.append(para[:max_chars].rstrip())
+            break
+        if kept and used + extra > max_chars:
+            break
+        kept.append(para)
+        used += extra
+    excerpt = "\n\n".join(kept)
+    return excerpt + "\n\u2026", True
+
+
 _FEED_COMMENT_LIMIT_PER_POST: Final = 50
 
 _TARGET_TYPE_POST: Final = "post"
@@ -736,6 +765,7 @@ __all__ = [
     "comments_by_post",
     "delete_comment",
     "delete_post",
+    "feed_excerpt",
     "home_preview",
     "list_comments",
     "list_posts",

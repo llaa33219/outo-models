@@ -205,6 +205,21 @@
     .post-detail__author-link:hover { color: var(--color-main); text-decoration: none; }
     .post-detail__time { font-size: 12px; }
     .post-detail__body p { margin: 8px 0; }
+    .post-detail__title,
+    .post-detail__body,
+    .post-detail__body p,
+    .post-detail__repo-link,
+    .post-comments__body {
+      overflow-wrap: anywhere;
+      min-width: 0;
+    }
+    .post-detail__body pre,
+    .post-detail__body code,
+    .post-comments__body code,
+    .post-comments__body pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .post-detail__repo {
       display: flex;
       align-items: center;
@@ -280,6 +295,7 @@
       place-items: center;
       padding: 16px;
       z-index: 100;
+      overflow: hidden;
     }
     .post-picker__card {
       width: 100%;
@@ -301,9 +317,10 @@
     .post-picker__header h3 { margin: 0; }
     .post-picker__grid {
       display: grid;
-      grid-template-columns: repeat(8, 1fr);
+      grid-template-columns: repeat(8, minmax(0, 1fr));
       gap: 4px;
     }
+    .post-picker__grid .form-inline { min-width: 0; margin: 0; }
     .post-picker__btn {
       width: 100%;
       height: 40px;
