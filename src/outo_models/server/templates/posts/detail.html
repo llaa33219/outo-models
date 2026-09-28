@@ -48,24 +48,54 @@
     {% endif %}
 
     <div class="post-detail__reactions">
+      {% if reaction_totals %}
+        {% if current_user %}
+          {# Each applied emoji is a toggle chip (clicking again
+             removes the viewer's reaction). #}
+          {% for emoji, count in reaction_totals.items() %}
+            <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+              <input type="hidden" name="emoji" value="{{ emoji }}">
+              <button type="submit"
+                      class="post-detail__chip {% if emoji in viewer_reacted %}post-detail__chip--active{% endif %}"
+                      aria-label="Toggle reaction {{ emoji }}">
+                <span class="post-detail__chip-glyph">{{ emoji }}</span>
+                <span class="post-detail__chip-count">{{ count }}</span>
+              </button>
+            </form>
+          {% endfor %}
+        {% else %}
+          {# Anonymous: chips are static, no toggle. #}
+          {% for emoji, count in reaction_totals.items() %}
+            <span class="pill post-detail__chip post-detail__chip--readonly">{{ emoji }} {{ count }}</span>
+          {% endfor %}
+        {% endif %}
+      {% endif %}
+
+      {# Reaction picker: 26 toggle forms in a 8-column grid. #}
       {% if current_user %}
-        {% for emoji in reaction_palette %}
-          <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
-            <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
-            <input type="hidden" name="emoji" value="{{ emoji }}">
-            <button type="submit" class="post-detail__reaction {% if emoji in viewer_reacted %}post-detail__reaction--active{% endif %}"
-                    aria-label="Toggle reaction {{ emoji }}">
-              <span class="post-detail__reaction-glyph">{{ emoji }}</span>
-              <span class="post-detail__reaction-count">{{ reaction_totals.get(emoji, 0) }}</span>
-            </button>
-          </form>
-        {% endfor %}
-      {% else %}
-        {% for emoji in reaction_palette %}
-          <span class="pill post-detail__reaction-pill">
-            {{ emoji }} {{ reaction_totals.get(emoji, 0) }}
-          </span>
-        {% endfor %}
+        <details class="post-picker">
+          <summary class="post-detail__chip post-detail__chip--picker" aria-label="Add reaction">+</summary>
+          <div class="post-picker__overlay" role="dialog" aria-modal="true" aria-label="Pick a reaction">
+            <div class="post-picker__card el-tile">
+              <div class="post-picker__header">
+                <h3>React</h3>
+                <a class="post-modal__close" href="/posts/{{ post.id }}#comments" aria-label="Close">&#x2715;</a>
+              </div>
+              <div class="post-picker__grid">
+                {% for emoji in reaction_palette %}
+                  <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+                    <input type="hidden" name="emoji" value="{{ emoji }}">
+                    <button type="submit"
+                            class="post-picker__btn {% if emoji in viewer_reacted %}post-picker__btn--active{% endif %}"
+                            aria-label="Toggle reaction {{ emoji }}">{{ emoji }}</button>
+                  </form>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </details>
       {% endif %}
     </div>
 
@@ -124,6 +154,11 @@
   </section>
 
   <style>
+    /* ============================================================
+     * Post detail — 900px cap, square tile, BLP design tokens.
+     * Inline comments stay on this surface (the permalink); chips +
+     * picker mirror the feed so the chrome stays consistent.
+     * ============================================================ */
     .post-detail {
       display: flex;
       flex-direction: column;
@@ -132,6 +167,8 @@
       border: var(--border-tile) solid var(--color-inactive);
       border-radius: 0;
       padding: 24px;
+      max-width: 900px;
+      margin-inline: auto;
       transition: border-color var(--t-tile);
     }
     .post-detail:hover { border-color: var(--color-main); }
@@ -177,40 +214,141 @@
     }
     .post-detail__repo-link { font-weight: 600; color: var(--text); }
     .post-detail__repo-link:hover { color: var(--color-main); text-decoration: none; }
+
     .post-detail__reactions {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+      align-items: center;
       margin-top: 4px;
     }
-    .post-detail__reaction {
+
+    /* Reaction chips on the detail page — mirror feed styling for
+     * consistency across the two surfaces. */
+    .post-detail__chip {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      height: 32px;
+      height: 30px;
       padding: 0 12px;
-      font-size: 14px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
       background: var(--tile-bg);
       border: var(--border-el) solid var(--color-inactive);
       border-radius: var(--radius-pill);
       cursor: pointer;
+      list-style: none;
       transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
     }
-    .post-detail__reaction:hover { border-color: var(--color-main); color: var(--color-main); }
-    .post-detail__reaction--active {
+    .post-detail__chip::-webkit-details-marker { display: none; }
+    .post-detail__chip::marker { display: none; content: ""; }
+    .post-detail__chip:hover {
+      border-color: var(--color-main);
+      color: var(--text);
+    }
+    .post-detail__chip:active,
+    .post-detail__chip:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .post-detail__chip--active {
       background: var(--blp-paper-blue);
       border-color: var(--color-main);
       color: var(--text);
     }
-    .post-detail__reaction-count {
+    .post-detail__chip--picker {
+      font-weight: 700;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .post-detail__chip--readonly {
+      cursor: default;
+    }
+    .post-detail__chip-count {
       font-weight: 600;
       font-size: 13px;
     }
-    .post-detail__reaction-pill { font-size: 13px; }
     .post-detail__delete { margin-top: 8px; }
 
+    /* Picker modal chrome (shared with feed). */
+    .post-picker__overlay {
+      position: fixed;
+      inset: 0;
+      background: color-mix(in srgb, var(--text) 40%, transparent);
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      z-index: 100;
+    }
+    .post-picker__card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .post-picker__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .post-picker__header h3 { margin: 0; }
+    .post-picker__grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+    }
+    .post-picker__btn {
+      width: 100%;
+      height: 40px;
+      font-size: 20px;
+      line-height: 1;
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base);
+    }
+    .post-picker__btn:hover { border-color: var(--color-main); }
+    .post-picker__btn:active,
+    .post-picker__btn:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .post-picker__btn--active {
+      background: var(--blp-paper-blue);
+      border-color: var(--color-main);
+    }
+    .post-modal__close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      color: var(--text-sub);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      font: 700 14px/1 'Pretendard', system-ui, sans-serif;
+      text-decoration: none;
+      transition: border-color var(--t-base), color var(--t-base);
+    }
+    .post-modal__close:hover {
+      color: var(--el-active);
+      border-color: var(--el-active);
+      text-decoration: none;
+    }
+
     .post-comments {
-      margin-top: 24px;
+      margin: 24px auto 0;
+      max-width: 900px;
     }
     .post-comments h2 { margin: 0 0 12px; }
     .post-comments__list {

@@ -4,6 +4,29 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.2 — Posts UX overhaul: chips + picker, modals, markdown editor
+
+### Changed
+
+- **900px feed/detail**: the posts feed and post detail cap their
+  content at 900px.
+- **GitHub/Discord-style reactions**: the 26-glyph palette is no
+  longer a button row. Posts show only APPLIED reactions as
+  `emoji count` chips (click = toggle); a `+` capsule opens the
+  picker popover with the full palette. Home tiles show the chip
+  summary only.
+- **Click-to-open posts**: post title/body areas link to the detail
+  page.
+- **Comments modal**: each post's Comments button opens a pure-CSS
+  `<details>` overlay showing the comments immediately (eager-loaded
+  in one query) plus the composer; submitting returns to the feed
+  with the modal re-opened.
+- **New post modal**: short-form composition happens in a modal on
+  the feed (validation errors re-render the feed with the modal
+  open); long-form writing navigates to a dedicated markdown editor
+  page with a server-side sanitized Preview action
+  (`POST /posts/preview`).
+
 ## v0.6.1 — Reaction palette expanded to 26 emoji
 
 ### Changed

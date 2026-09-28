@@ -16,8 +16,10 @@ and link readers to a repo for the long-form material.
 
 | Path | Purpose | Login |
 | --- | --- | --- |
-| `GET /posts` | Feed (newest 50, mixed short + long) | public |
-| `GET /posts/new` | Composer | required |
+| `GET /posts` | Feed (newest 50, mixed short + long), 900px-wide | public |
+| `GET /posts/new` | Long-form markdown editor page | required |
+| `GET /posts/preview` | Editor page (empty) | required |
+| `POST /posts/preview` | Render the draft through the sanitizer, re-render the editor with the preview + preserved draft | required |
 | `POST /posts/new` | Create (CSRF-protected) | required |
 | `GET /posts/{id}` | Detail + reactions + comments | public |
 | `POST /posts/{id}/react` | Toggle reaction (CSRF-protected) | required |
@@ -25,12 +27,27 @@ and link readers to a repo for the long-form material.
 | `POST /posts/{id}/delete` | Delete post (CSRF-protected) | author or admin |
 | `POST /posts/{id}/comments/{cid}/delete` | Delete comment (CSRF-protected) | author or admin |
 
-The composer renders a kind radio (`short` / `long`). Short posts take
-plain text with preserved line breaks; long posts take a required title
-plus a body that renders as sanitized markdown through the same
-pipeline the model card uses. The radio switching is **pure HTML** —
-no inline `<script>`. The server re-renders the form on validation
-error so the chosen variant survives a rejected submit.
+The feed and the detail page cap their content at 900px. Every popup
+on the posts surface — the per-post **Comments** modal, the feed's
+**New post** modal (short-form only), and the reaction **picker**
+popover — is a native `<details>/<summary>` disclosure styled as a
+fixed-position overlay. No JavaScript anywhere (CSP `script-src
+'self'`); a second `<summary>` inside each overlay acts as the close
+control because clicking any summary of an open `<details>` closes it.
+
+Post tiles are clickable: the title and body preview link to the
+post's detail page. Clicking a post title/body navigates; the
+reaction chips, picker, and comment controls sit outside the link so
+they remain individually clickable.
+
+The long-form editor is a dedicated page: title input, large body
+textarea, a server-side **Preview** action (POST `/posts/preview`
+renders the draft through the same sanitized-markdown pipeline the
+model card uses and returns the editor with the preview plus the
+preserved draft), and **Publish** (POST `/posts/new` with
+`kind=long`). A validation failure on a short-form submit from the
+feed modal re-renders the feed with the modal open (`<details open`)
+so the error shows in context.
 
 ## Post kinds
 
@@ -71,17 +88,31 @@ from 8 to 26 glyphs in v0.6.1).
 Reactions are per-user toggles: `POST /posts/{id}/react` with an emoji
 adds the reaction if missing, removes it if present. The DB enforces
 uniqueness via `UNIQUE(post_id, user_id, emoji)` and the value
-palette via `CHECK(emoji IN (...))`. The home feed and post detail
-page show aggregate counts and highlight the viewer's own reaction.
+palette via `CHECK(emoji IN (...))`.
+
+The UI is GitHub/Discord-style. The full palette is NEVER laid out as
+a button row: a post shows only its **applied reactions** as chips
+(`emoji count`), each chip a toggle form for that emoji, with the
+viewer's own reaction highlighted. Adding a new reaction opens the
+**picker** popover (a `<details>` disclosure triggered by a `+`
+capsule) listing all 26 glyphs as compact toggle buttons. The home
+page's compact post tiles show the applied-chips summary only — no
+picker, no modals on the home grid.
 
 ## Comments
 
 Flat, single-level comments on a post (no replies). 4000-char cap,
-author + post relationships, chronological order on the detail page.
-Comments can be deleted by the comment author or by any admin.
-A deleted post cascades its reactions and comments via the service
-layer (the FK `ON DELETE CASCADE` is declared but SQLite does not
-enforce it without `PRAGMA foreign_keys = ON`).
+author + post relationships, chronological order. On the feed, each
+post's **Comments** button opens a modal (`<details>` overlay) that
+shows the comments immediately — the feed eager-loads comments for
+all listed posts in one `post_id IN (...)` query (latest 50 per post)
+— plus the composer inside the modal. Submitting from the modal
+returns to the feed with that post's modal re-opened. The detail page
+renders comments inline under the `#comments` anchor. Comments can be
+deleted by the comment author or by any admin. A deleted post
+cascades its reactions and comments via the service layer (the FK
+`ON DELETE CASCADE` is declared but SQLite does not enforce it
+without `PRAGMA foreign_keys = ON`).
 
 ## Home page mix
 

@@ -68,6 +68,7 @@ _TOP_REPOS_LIMIT: Final = 6
 _RUNNING_SPACES_LIMIT: Final = 6
 _PROFILE_POSTS_LIMIT: Final = 20
 _HOME_TILE_PREVIEW_CHARS: Final = 280
+_FEED_COMMENT_LIMIT_PER_POST: Final = 50
 
 _TARGET_TYPE_POST: Final = "post"
 _TARGET_TYPE_POST_COMMENT: Final = "post_comment"
@@ -597,6 +598,48 @@ async def load_comment_or_404(
     return comment
 
 
+async def comments_by_post(
+    session: AsyncSession,
+    *,
+    post_ids: Sequence[int],
+    limit_per_post: int = _FEED_COMMENT_LIMIT_PER_POST,
+) -> dict[int, list[PostComment]]:
+    """Return `{post_id: [comments...]}` for every supplied post id in one query.
+
+    Each value list is oldest-first and capped at `limit_per_post` so
+    the feed modal can render a comment list without an N+1 round trip.
+    Authors are eager-loaded. An empty `post_ids` yields an empty dict.
+    """
+    if not post_ids:
+        return {}
+    safe_limit = max(1, min(int(limit_per_post), 200))
+    rows = (
+        (
+            await session.execute(
+                select(PostComment)
+                .where(PostComment.post_id.in_(list(post_ids)))
+                .options(selectinload(PostComment.author))
+                .order_by(
+                    PostComment.post_id.asc(),
+                    PostComment.created_at.asc(),
+                    PostComment.id.asc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cap_per_post: dict[int, int] = {int(pid): 0 for pid in post_ids}
+    out: dict[int, list[PostComment]] = {int(pid): [] for pid in post_ids}
+    for comment in rows:
+        taken = cap_per_post.get(int(comment.post_id), 0)
+        if taken >= safe_limit:
+            continue
+        out.setdefault(int(comment.post_id), []).append(comment)
+        cap_per_post[int(comment.post_id)] = taken + 1
+    return out
+
+
 async def delete_post(session: AsyncSession, *, post: Post, actor: User) -> None:
     """Delete `post` (author or admin only). Reactions + comments cascade.
 
@@ -690,6 +733,7 @@ __all__ = [
     "REACTION_PALETTE_SET",
     "add_comment",
     "aggregate_reactions",
+    "comments_by_post",
     "delete_comment",
     "delete_post",
     "home_preview",

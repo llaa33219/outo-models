@@ -5,22 +5,61 @@
     <h1>Posts</h1>
     <div class="posts-header__actions">
       {% if current_user %}
-        <a href="/posts/new" class="new-btn">New post</a>
+        {# New-post modal — pure-CSS disclosure (디자인.md precedent:
+           the navbar profile dropdown). The <summary> IS the visible
+           trigger; the overlay below is rendered inside the same
+           <details> so it can close naturally on the same click. #}
+        <details class="post-new-modal" {% if open_post_modal %}open{% endif %}>
+          <summary class="new-btn" aria-label="New short post">New post</summary>
+          <div class="post-modal__overlay" role="dialog" aria-modal="true" aria-label="New short post">
+            <div class="post-modal__card el-tile">
+              <div class="post-modal__header">
+                <h2>New post</h2>
+                <a class="post-modal__close" href="/posts" aria-label="Close">&#x2715;</a>
+              </div>
+              <p class="muted post-modal__hint">
+                Plain text, line breaks preserved. For markdown with a title,
+                <a href="/posts/new">write long-form</a>.
+              </p>
+              {% if post_modal_error %}
+                <div class="errors">{{ post_modal_error }}</div>
+              {% endif %}
+              <form method="post" action="/posts/new" class="post-modal__form">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <input type="hidden" name="kind" value="short">
+                <label for="post-modal-body">Body</label>
+                <textarea id="post-modal-body" name="body" rows="4" required
+                          maxlength="2000"
+                          placeholder="Share an update&hellip;">{{ post_modal_form_body or '' }}</textarea>
+                <label for="post-modal-repo">Linked repo (optional)</label>
+                <input id="post-modal-repo" type="text" name="repo_link"
+                       placeholder="owner/name" maxlength="200"
+                       value="{{ post_modal_form_repo or '' }}"
+                       pattern="[a-z0-9][a-z0-9._-]{0,62}/[a-z0-9][a-z0-9._-]{0,62}">
+                <p class="help">Short posts cap at 2000 characters.</p>
+                <p class="form-actions">
+                  <button type="submit" class="primary">Publish</button>
+                  <a class="post-modal__cancel" href="/posts">Cancel</a>
+                </p>
+              </form>
+            </div>
+          </div>
+        </details>
       {% else %}
         <a href="/login?next=/posts/new" class="nav-link">Log in to post</a>
       {% endif %}
     </div>
   </div>
   <p class="muted">
-    A site-wide feed of short notes and long-form posts. Use reactions
-    to weigh in without commenting.
+    A site-wide feed of short notes and long-form posts. Pick an emoji
+    to weigh in; open the comments thread without leaving the page.
   </p>
 
   {% if not posts_rendered %}
     <div class="empty-state">
       <p>No posts yet.</p>
       {% if current_user %}
-        <p>Be the first &mdash; <a href="/posts/new">share something</a>.</p>
+        <p>Be the first &mdash; <a href="/posts/new">share something</a> or open the New post modal above.</p>
       {% else %}
         <p><a href="/signup">Sign up</a> or <a href="/login">log in</a> to publish the first post.</p>
       {% endif %}
@@ -29,38 +68,42 @@
     <div class="posts-feed">
       {% for entry in posts_rendered %}
         {% set post = entry.post %}
+        {# ───── Per-post tile ───── #}
         <article class="post-tile card"
+                 id="post-{{ post.id }}"
                  {% if post.repo and post.repo.color %}style="background-color: color-mix(in srgb, {{ post.repo.color }} 14%, var(--tile-bg))"{% endif %}>
           <div class="post-tile__header">
             <span class="pill post-tile__kind">
               {% if post.kind == "long" %}Long{% else %}Short{% endif %}
             </span>
-            {% if post.title %}
-              <span class="post-tile__title">{{ post.title }}</span>
-            {% endif %}
             <time class="post-tile__time muted" datetime="{{ post.created_at.isoformat() if post.created_at else '' }}">
               {{ post.created_at.strftime("%Y-%m-%d") if post.created_at else "" }}
             </time>
           </div>
 
-          <p class="post-tile__author">
-            <a href="/{{ post.author.username }}" class="post-tile__author-link">
+          {# Title + body are wrapped in a single block-link so the
+             post body is the click target; reaction chips / picker /
+             modals stay OUTSIDE the link so they remain interactive. #}
+          <a class="post-tile__link" href="/posts/{{ post.id }}">
+            <p class="post-tile__author">
               <span class="avatar" aria-hidden="true">{{ post.author.username[0]|upper }}</span>
-              <span>{{ post.author.username }}</span>
-            </a>
-          </p>
-
-          <div class="post-tile__body">
-            {% if post.kind == "long" %}
-              {% if entry.body_html %}
-                {{ entry.body_html | safe }}
-              {% else %}
-                <p class="muted">Empty post body.</p>
-              {% endif %}
-            {% else %}
-              <p>{{ entry.body_html | safe }}</p>
+              <span class="post-tile__author-name">{{ post.author.username }}</span>
+            </p>
+            {% if post.title %}
+              <h2 class="post-tile__title">{{ post.title }}</h2>
             {% endif %}
-          </div>
+            <div class="post-tile__body">
+              {% if post.kind == "long" %}
+                {% if entry.body_html %}
+                  {{ entry.body_html | safe }}
+                {% else %}
+                  <p class="muted">Empty post body.</p>
+                {% endif %}
+              {% else %}
+                <p>{{ entry.body_html | safe }}</p>
+              {% endif %}
+            </div>
+          </a>
 
           {% if post.repo and entry.viewer_can_see_repo %}
             <p class="post-tile__repo">
@@ -71,46 +114,129 @@
             </p>
           {% endif %}
 
+          {# ───── Applied reactions: chips only ───── #}
           <div class="post-tile__reactions">
+            {% if entry.reaction_totals %}
+              {% if current_user %}
+                {# Each chip is a toggle form: clicking a chip POSTs the
+                   react route and returns the user to the feed. #}
+                {% for emoji, count in entry.reaction_totals.items() %}
+                  <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+                    <input type="hidden" name="next" value="feed">
+                    <input type="hidden" name="emoji" value="{{ emoji }}">
+                    <button type="submit"
+                            class="post-tile__chip {% if emoji in entry.viewer_reacted %}post-tile__chip--active{% endif %}"
+                            aria-label="Toggle reaction {{ emoji }}">
+                      <span class="post-tile__chip-glyph">{{ emoji }}</span>
+                      <span class="post-tile__chip-count">{{ count }}</span>
+                    </button>
+                  </form>
+                {% endfor %}
+              {% else %}
+                {# Anonymous viewers see the chips but cannot toggle them. #}
+                {% for emoji, count in entry.reaction_totals.items() %}
+                  <span class="pill post-tile__chip post-tile__chip--readonly">{{ emoji }} {{ count }}</span>
+                {% endfor %}
+              {% endif %}
+            {% endif %}
+
+            {# ───── Reaction picker modal: 26 toggle forms, 8/row ───── #}
             {% if current_user %}
-              {% for emoji in reaction_palette %}
-                <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
-                  <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
-                  <input type="hidden" name="emoji" value="{{ emoji }}">
-                  <button type="submit" class="post-tile__reaction {% if emoji in entry.viewer_reacted %}post-tile__reaction--active{% endif %}"
-                          aria-label="Toggle reaction {{ emoji }}">
-                    {{ emoji }}
-                    {% if entry.reaction_totals.get(emoji) %}
-                      <span class="post-tile__reaction-count">{{ entry.reaction_totals.get(emoji) }}</span>
-                    {% endif %}
-                  </button>
-                </form>
-              {% endfor %}
-            {% else %}
-              {% for emoji, count in entry.reaction_totals.items() %}
-                <span class="pill post-tile__reaction-count-pill">{{ emoji }} {{ count }}</span>
-              {% endfor %}
+              <details class="post-picker">
+                <summary class="post-tile__chip post-tile__chip--picker" aria-label="Add reaction">+</summary>
+                <div class="post-picker__overlay" role="dialog" aria-modal="true" aria-label="Pick a reaction">
+                  <div class="post-picker__card el-tile">
+                    <div class="post-picker__header">
+                      <h3>React</h3>
+                      <a class="post-modal__close" href="/posts#post-{{ post.id }}" aria-label="Close">&#x2715;</a>
+                    </div>
+                    <div class="post-picker__grid">
+                      {% for emoji in reaction_palette %}
+                        <form method="post" action="/posts/{{ post.id }}/react" class="form-inline">
+                          <input type="hidden" name="_csrf" value="{{ csrf_token or '' }}">
+                          <input type="hidden" name="next" value="feed">
+                          <input type="hidden" name="emoji" value="{{ emoji }}">
+                          <button type="submit"
+                                  class="post-picker__btn {% if emoji in entry.viewer_reacted %}post-picker__btn--active{% endif %}"
+                                  aria-label="Toggle reaction {{ emoji }}">{{ emoji }}</button>
+                        </form>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+              </details>
             {% endif %}
           </div>
 
-          <p class="post-tile__footer">
-            <a href="/posts/{{ post.id }}#comments">Read more</a>
-            <span class="muted">&middot;</span>
-            <a href="/posts/{{ post.id }}#comments">Comments</a>
-          </p>
+          {# ───── Comments modal: server-rendered list + composer ───── #}
+          {% if current_user %}
+            <details class="post-comments-modal"
+                     id="post-{{ post.id }}-comments"
+                     {% if entry.open_modal %}open{% endif %}>
+              <summary class="post-tile__chip post-tile__chip--action" aria-label="Open comments">
+                Comments {% if entry.comments %}<span class="post-tile__chip-count">{{ entry.comments|length }}</span>{% endif %}
+              </summary>
+              <div class="post-modal__overlay" role="dialog" aria-modal="true" aria-label="Comments on this post">
+                <div class="post-modal__card post-modal__card--wide el-tile">
+                  <div class="post-modal__header">
+                    <h2>Comments</h2>
+                    <a class="post-modal__close" href="/posts#post-{{ post.id }}" aria-label="Close">&#x2715;</a>
+                  </div>
+                  <p class="muted post-modal__hint">
+                    On
+                    <a href="/{{ post.author.username }}">{{ post.author.username }}</a>'s
+                    {% if post.title %}post <em>{{ post.title }}</em>{% else %}post{% endif %}.
+                  </p>
+                  {% if not entry.comments %}
+                    <p class="muted">No comments yet.</p>
+                  {% else %}
+                    <ul class="post-modal__comments">
+                      {% for comment in entry.comments %}
+                        <li class="post-modal__comment">
+                          <a class="post-modal__comment-author" href="/{{ comment.author.username }}">{{ comment.author.username }}</a>
+                          <time class="muted post-modal__comment-time" datetime="{{ comment.created_at.isoformat() if comment.created_at else '' }}">
+                            {{ comment.created_at.strftime("%Y-%m-%d %H:%M") if comment.created_at else "" }}
+                          </time>
+                          <p class="post-modal__comment-body">{{ comment.body }}</p>
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+                  <form method="post" action="/posts/{{ post.id }}/comments" class="post-modal__compose">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <input type="hidden" name="next" value="feed">
+                    <label for="comment-body-{{ post.id }}">Add a comment</label>
+                    <textarea id="comment-body-{{ post.id }}" name="body" rows="3" required maxlength="4000"></textarea>
+                    <p class="form-actions">
+                      <button type="submit" class="primary">Post comment</button>
+                    </p>
+                  </form>
+                </div>
+              </div>
+            </details>
+          {% else %}
+            {# Anonymous viewers still see the comment count, but no modal. #}
+            <span class="post-tile__chip post-tile__chip--readonly">Comments {{ entry.comments|length }}</span>
+          {% endif %}
         </article>
       {% endfor %}
     </div>
   {% endif %}
 
   <style>
-    /* BLP minimal-tile grid (디자인.md §7.3). Posts render in a
-     * 2-3 column auto-fill grid so the feed reads as a coherent tile
-     * surface next to the home mix. */
+    /* ============================================================
+     * Posts feed — 900px cap, square tiles, BLP design tokens
+     * (디자인.md §1.3, §7.3, §5.4). The feed posts surface is its own
+     * narrower column so the tile rhythm reads at a glance; the
+     * shared `bg-tile__inner` cap (1000px) stays as the outer shell.
+     * ============================================================ */
     .posts-feed {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--gap-tile);
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      max-width: 900px;
+      margin-inline: auto;
       margin-top: 16px;
     }
     .posts-header {
@@ -123,8 +249,9 @@
     }
     .posts-header h1 { margin: 0; }
     .posts-header__actions { display: flex; gap: 8px; align-items: center; }
+
     .post-tile {
-      gap: 8px;
+      gap: 12px;
     }
     .post-tile__header {
       display: flex;
@@ -138,22 +265,34 @@
       text-transform: uppercase;
       font-size: 11px;
     }
-    .post-tile__title {
-      font-weight: 600;
-      font-size: 14px;
-      color: var(--text);
-    }
     .post-tile__time { font-size: 12px; margin-left: auto; }
-    .post-tile__author { margin: 0; }
-    .post-tile__author-link {
-      display: inline-flex;
+
+    /* Block-link covering title + author + body — clicking any of those
+     * parts navigates to the post detail page; chips and modals stay
+     * outside the link so their forms remain interactive. */
+    .post-tile__link {
+      display: block;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .post-tile__link:hover { color: var(--text); text-decoration: none; }
+    .post-tile__link:hover .post-tile__title { color: var(--color-main); }
+    .post-tile__author {
+      display: flex;
       align-items: center;
       gap: 8px;
-      color: var(--text);
-      font-weight: 600;
+      margin: 0 0 4px;
     }
-    .post-tile__author-link:hover { color: var(--color-main); text-decoration: none; }
-    .post-tile__body p { margin: 0; }
+    .post-tile__author-name { font-weight: 600; }
+    .post-tile__title {
+      margin: 0 0 4px;
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--text);
+    }
+    .post-tile__body p { margin: 4px 0 0; }
+    .post-tile__body p:first-child { margin-top: 0; }
+
     .post-tile__repo {
       margin: 0;
       display: flex;
@@ -163,43 +302,205 @@
     }
     .post-tile__repo-link { font-weight: 600; color: var(--text); }
     .post-tile__repo-link:hover { color: var(--color-main); text-decoration: none; }
+
     .post-tile__reactions {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 6px;
+      align-items: center;
     }
-    .post-tile__reaction {
+
+    /* ============================================================
+     * Reaction chips — applied emojis as small capsule chips. Active
+     * (viewer reacted) chips carry the filled chip pattern from §7.4;
+     * inactive applied chips carry the empty-element pattern from §7.5
+     * so the two are visually distinct without colour swap.
+     * ============================================================ */
+    .post-tile__chip {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      height: 28px;
+      gap: 6px;
+      height: 26px;
       padding: 0 10px;
-      font-size: 13px;
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
       background: var(--tile-bg);
       border: var(--border-el) solid var(--color-inactive);
       border-radius: var(--radius-pill);
       cursor: pointer;
+      list-style: none;
       transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
     }
-    .post-tile__reaction:hover { border-color: var(--color-main); color: var(--color-main); }
-    .post-tile__reaction--active {
+    /* The picker trigger is a <summary> element which inherits the
+     * chip styles but also needs marker suppression. */
+    .post-tile__chip::-webkit-details-marker { display: none; }
+    .post-tile__chip::marker { display: none; content: ""; }
+    .post-tile__chip:hover {
+      border-color: var(--color-main);
+      color: var(--text);
+    }
+    .post-tile__chip:active,
+    .post-tile__chip:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .post-tile__chip--active {
       background: var(--blp-paper-blue);
       border-color: var(--color-main);
       color: var(--text);
     }
-    .post-tile__reaction-count {
+    .post-tile__chip--picker {
+      font-weight: 700;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .post-tile__chip--action {
+      color: var(--text);
+    }
+    .post-tile__chip--readonly {
+      cursor: default;
+    }
+    .post-tile__chip-count {
       font-weight: 600;
       font-size: 12px;
     }
-    .post-tile__reaction-count-pill {
-      font-size: 12px;
+
+    /* ============================================================
+     * Modal scaffolding — pure-CSS disclosure via <details>/<summary>.
+     * The trigger (the <summary>) is always the FIRST child of the
+     * <details>; the overlay is the body. The square 2px-border card
+     * follows 디자인.md §1.3 (no radius on tiles), the overlay uses
+     * color-mix on the inactive border so it stays in the BLP palette.
+     * No inline JS (CSP: script-src 'self'); clicking the same
+     * <summary> a second time closes the modal natively.
+     * ============================================================ */
+    .post-modal__overlay,
+    .post-picker__overlay {
+      position: fixed;
+      inset: 0;
+      background: color-mix(in srgb, var(--text) 40%, transparent);
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      z-index: 100;
     }
-    .post-tile__footer {
+    .post-modal__card,
+    .post-picker__card {
+      width: 100%;
+      max-width: 560px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .post-modal__card--wide { max-width: 720px; }
+    .post-modal__header,
+    .post-picker__header {
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .post-modal__header h2,
+    .post-picker__header h3 { margin: 0; }
+    .post-modal__hint { margin: 0; font-size: 13px; }
+    .post-modal__form,
+    .post-modal__compose { display: flex; flex-direction: column; gap: 6px; }
+    .post-modal__cancel {
+      display: inline-flex;
+      align-items: center;
+      height: 40px;
+      padding: 0 14px;
+      color: var(--text-sub);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      text-decoration: none;
+    }
+    .post-modal__cancel:hover {
+      color: var(--color-main);
+      border-color: var(--color-main);
+      text-decoration: none;
+    }
+    .post-modal__close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      color: var(--text-sub);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      font: 700 14px/1 'Pretendard', system-ui, sans-serif;
+      text-decoration: none;
+      transition: border-color var(--t-base), color var(--t-base);
+    }
+    .post-modal__close:hover {
+      color: var(--el-active);
+      border-color: var(--el-active);
+      text-decoration: none;
+    }
+
+    /* Comments list inside the modal. */
+    .post-modal__comments {
+      list-style: none;
+      padding: 0;
       margin: 0;
-      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .post-modal__comment {
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      border-radius: 0;
+      padding: 10px 12px;
+    }
+    .post-modal__comment:hover { border-color: var(--color-main); }
+    .post-modal__comment-author { font-weight: 600; color: var(--text); }
+    .post-modal__comment-author:hover { color: var(--color-main); text-decoration: none; }
+    .post-modal__comment-time { font-size: 12px; margin-left: 8px; }
+    .post-modal__comment-body {
+      margin: 6px 0 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    /* Picker grid — 8 buttons per row. */
+    .post-picker__grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+    }
+    .post-picker__btn {
+      width: 100%;
+      height: 40px;
+      font-size: 20px;
+      line-height: 1;
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: 0;
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base);
+    }
+    .post-picker__btn:hover { border-color: var(--color-main); }
+    .post-picker__btn:active,
+    .post-picker__btn:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+    .post-picker__btn--active {
+      background: var(--blp-paper-blue);
+      border-color: var(--color-main);
     }
     .form-inline { display: inline; }
   </style>

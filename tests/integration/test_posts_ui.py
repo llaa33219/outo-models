@@ -194,22 +194,140 @@ class TestPostsFeed:
             alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
             bob = (await session.execute(select(User).where(User.id == bob_id))).scalar_one()
             post_id = await _create_post(factory, author=alice, body="popular post")
-            # Two reactions (👍) — one from alice, one from bob.
             session.add(PostReaction(post_id=post_id, user_id=alice.id, emoji="\U0001f44d"))
             session.add(PostReaction(post_id=post_id, user_id=bob.id, emoji="\U0001f44d"))
             await session.commit()
 
-        # Log in as bob so his reaction is "active" in the tile.
         client.post(
             "/api/auth/login",
             json={"username": "bob", "password": "correct horse battery staple"},
         )
         response = client.get("/posts")
         body = response.text
-        # The total count "2" appears next to the 👍 button.
         assert "\U0001f44d" in body
-        # The active-class form button indicates the viewer reacted.
-        assert "post-tile__reaction--active" in body
+        assert 'class="post-tile__chip-count">2</span>' in body
+        assert "post-tile__chip--active" in body
+        assert 'class="post-picker"' in body
+        assert "post-picker__btn" in body
+
+    async def test_feed_no_full_emoji_button_row(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        """The 26-emoji *button row* is gone — only the picker (inside
+        its <details> modal) and the *applied* reaction chips remain."""
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/posts")
+        body = response.text
+        # The pre-v0.6.2 button-row class is retired.
+        assert "post-tile__reaction--active" not in body
+        assert "post-tile__chip" in body
+
+    async def test_feed_renders_block_link_to_detail(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(
+                factory, author=alice, kind="long", title="Linked title", body="body"
+            )
+        response = client.get("/posts")
+        body = response.text
+        assert f'<a class="post-tile__link" href="/posts/{post_id}">' in body
+
+    async def test_feed_comments_modal_present(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="discuss")
+            session.add(PostComment(post_id=post_id, author_id=alice.id, body="inline comment"))
+            await session.commit()
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/posts")
+        body = response.text
+        assert f'id="post-{post_id}-comments"' in body
+        assert "inline comment" in body
+        assert f'action="/posts/{post_id}/comments"' in body
+        assert 'name="next" value="feed"' in body
+
+    async def test_feed_comments_modal_opens_via_query_string(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        """`GET /posts?comments=<id>` opens the comments modal for that post."""
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get(f"/posts?comments={post_id}")
+        body = response.text
+        # Jinja2 preserves whitespace between attributes, so the open
+        # marker sits on its own line — regex anchors the contract.
+        pattern = (
+            r'<details\s+class="post-comments-modal"\s+'
+            r'id="post-' + str(post_id) + r'-comments"\s+open>'
+        )
+        assert re.search(pattern, body) is not None
+
+    async def test_feed_new_post_modal_renders_for_logged_in_user(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/posts")
+        body = response.text
+        # Class-name presence — the surrounding `<details ... >` keeps
+        # an internal space when the optional `open` attribute is absent.
+        assert re.search(r'<details\s+class="post-new-modal"', body) is not None
+        assert 'name="kind" value="short"' in body
+        assert 'href="/posts/new"' in body
+
+    async def test_feed_container_is_900px(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+    ) -> None:
+        """The feed's content column is capped at 900px (디자인.md cap)."""
+        client, _, _ = app
+        response = client.get("/posts")
+        assert response.status_code == 200
+        assert "max-width: 900px" in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -379,9 +497,18 @@ class TestPostsNew:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 200
-        assert "errors" in response.text
-        assert "2000" in response.text
+        # Short-post errors stay in the feed context — the modal
+        # reopens server-side via `?post_modal=new`.
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/posts?")
+        assert "post_modal=new" in response.headers["location"]
+        followed = client.get(response.headers["location"])
+        assert followed.status_code == 200
+        assert "errors" in followed.text
+        assert "2000" in followed.text
+        # The new-post <details> carries `open` so the modal stays
+        # visible after the redirect lands.
+        assert re.search(r'<details\s+class="post-new-modal"\s+open>', followed.text) is not None
 
     async def test_bad_repo_link_rerenders_with_error(
         self,
@@ -406,9 +533,12 @@ class TestPostsNew:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 200
-        assert "errors" in response.text
-        assert "owner/name" in response.text
+        assert response.status_code == 303
+        assert "post_modal=new" in response.headers["location"]
+        followed = client.get(response.headers["location"])
+        assert followed.status_code == 200
+        assert "errors" in followed.text
+        assert "owner/name" in followed.text
 
     async def test_post_with_repo_link_persists_repo_id(
         self,
@@ -472,9 +602,11 @@ class TestPostsNew:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 200
-        assert "errors" in response.text
-        assert "not found" in response.text.lower()
+        assert response.status_code == 303
+        followed = client.get(response.headers["location"])
+        assert followed.status_code == 200
+        assert "errors" in followed.text
+        assert "not found" in followed.text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -1115,6 +1247,283 @@ class TestFeedRepoChipPrivacy:
         assert "alice/hidden" not in body
 
 
+# ---------------------------------------------------------------------------
+# Long-form editor + /posts/preview (server-side markdown preview)
+# ---------------------------------------------------------------------------
+
+
+class TestPostsPreview:
+    """`GET /posts/preview` + `POST /posts/preview` render the editor and
+    a sanitized server-rendered markdown preview."""
+
+    async def test_anon_get_redirects_to_login(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/posts/preview", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/login")
+        assert "next=/posts/preview" in response.headers["location"]
+
+    async def test_anon_post_redirects_to_login(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.post(
+            "/posts/preview",
+            data={"_csrf": "x", "title": "x", "body": "x"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/login")
+
+    async def test_get_renders_empty_editor(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/posts/preview")
+        assert response.status_code == 200
+        body = response.text
+        # formaction is pure HTML, no JS needed to switch targets.
+        assert '<form method="post" action="/posts/preview"' in body
+        assert 'formaction="/posts/new"' in body
+        assert 'class="post-editor__preview"' not in body
+
+    async def test_post_renders_sanitized_preview(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, "/posts/preview")
+        response = client.post(
+            "/posts/preview",
+            data={
+                "_csrf": csrf,
+                "title": "My Title",
+                "body": "# Heading\n\n<script>alert('xss')</script>\n\nBody text.",
+            },
+        )
+        assert response.status_code == 200
+        body = response.text
+        assert "<script>" not in body
+        assert "My Title" in body
+        assert "Heading" in body
+        assert 'class="post-editor__preview"' in body
+        # Draft preservation — Publish reads the same inputs without JS.
+        assert 'value="My Title"' in body
+        assert "Body text." in body
+        # The preview pane (not the textarea draft) is sanitized —
+        # the sanitizer strips <script> + `alert` from the rendered
+        # markdown only; the textarea keeps the raw draft for editing.
+        preview_section = body.split('class="post-editor__preview"', 1)[1].split("</section>", 1)[0]
+        assert "<script>" not in preview_section
+        assert "alert" not in preview_section
+
+    async def test_post_without_csrf_is_rejected(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.post(
+            "/posts/preview",
+            data={"title": "x", "body": "y"},
+        )
+        assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Feed modal interactions (comment / reaction / new-post from feed context)
+# ---------------------------------------------------------------------------
+
+
+class TestPostsFeedModals:
+    """POST handlers invoked from the feed return the user to `/posts`."""
+
+    async def test_react_from_feed_redirects_back_to_feed(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, "/posts")
+        response = client.post(
+            f"/posts/{post_id}/react",
+            data={"_csrf": csrf, "emoji": "\U0001f44d", "next": "feed"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/posts"
+
+    async def test_react_from_detail_keeps_permalink_redirect(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, f"/posts/{post_id}")
+        response = client.post(
+            f"/posts/{post_id}/react",
+            data={"_csrf": csrf, "emoji": "\U0001f44d"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        # Detail-page path keeps the permalink (no `next` token).
+        assert response.headers["location"] == f"/posts/{post_id}"
+
+    async def test_comment_from_feed_reopens_modal(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        await seed_approved_user(username="bob")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="discuss")
+        client.post(
+            "/api/auth/login",
+            json={"username": "bob", "password": "correct horse battery staple"},
+        )
+        csrf = _form_csrf(client, "/posts")
+        response = client.post(
+            f"/posts/{post_id}/comments",
+            data={"_csrf": csrf, "body": "feed-context comment", "next": "feed"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/posts?comments={post_id}"
+        followed = client.get(response.headers["location"])
+        body = followed.text
+        assert (
+            re.search(
+                r'<details\s+class="post-comments-modal"\s+id="post-'
+                + str(post_id)
+                + r'-comments"\s+open>',
+                body,
+            )
+            is not None
+        )
+        assert "feed-context comment" in body
+
+    async def test_feed_modal_picker_contains_all_26_glyphs(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        from outo_models.db.models.posts import REACTION_PALETTE
+
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get("/posts")
+        body = response.text
+        for glyph in REACTION_PALETTE:
+            assert f'value="{glyph}"' in body, f"missing glyph: {glyph!r}"
+        picker_section = body.split('<details class="post-picker"', 1)[1].split("</details>", 1)[0]
+        for glyph in REACTION_PALETTE:
+            assert picker_section.count(f">{glyph}</button>") >= 1, (
+                f"picker missing glyph: {glyph!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Detail page chip + picker migration
+# ---------------------------------------------------------------------------
+
+
+class TestPostsDetailModals:
+    """Detail page adopts chips + picker; comments stay inline."""
+
+    async def test_detail_renders_chips_not_full_button_row(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="x")
+            session.add(PostReaction(post_id=post_id, user_id=alice.id, emoji="\U0001f44d"))
+            await session.commit()
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get(f"/posts/{post_id}")
+        body = response.text
+        assert "post-detail__chip" in body
+        assert "post-picker" in body
+        # The pre-v0.6.2 button-row class is retired.
+        assert "post-detail__reaction " not in body
+
+    async def test_detail_picker_carries_all_palette_glyphs(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        from outo_models.db.models.posts import REACTION_PALETTE
+
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            post_id = await _create_post(factory, author=alice, body="x")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+        response = client.get(f"/posts/{post_id}")
+        body = response.text
+        picker_section = body.split('<details class="post-picker"', 1)[1].split("</details>", 1)[0]
+        for glyph in REACTION_PALETTE:
+            assert picker_section.count(f">{glyph}</button>") >= 1, (
+                f"detail picker missing glyph: {glyph!r}"
+            )
+
+
 __all__ = [
     "TestFeedRepoChipPrivacy",
     "TestNavAndProfile",
@@ -1122,6 +1531,9 @@ __all__ = [
     "TestPostDelete",
     "TestPostReactions",
     "TestPostsDetail",
+    "TestPostsDetailModals",
     "TestPostsFeed",
+    "TestPostsFeedModals",
     "TestPostsNew",
+    "TestPostsPreview",
 ]

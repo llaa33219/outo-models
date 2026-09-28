@@ -7,10 +7,13 @@ stays in `ui.py` so the route-registration order remains stable.
 Routes (all UI / HTML, all CSRF-protected on POST, login-required for
 every write):
 
-    GET    /posts                          — feed (latest 50)
-    GET    /posts/new                      — composer (login required)
-    POST   /posts/new                      — create (login + CSRF)
-    GET    /posts/{post_id}                — detail + comments + reactions
+    GET    /posts                          — feed (latest 50, 900px wide)
+    GET    /posts/new                      — long-form editor (login required)
+    POST   /posts/new                      — create (short via feed modal,
+                                             long via editor)
+    GET    /posts/preview                  — empty long-form editor
+    POST   /posts/preview                  — render body as sanitized markdown
+    GET    /posts/{post_id}                — detail + reactions + comments
     POST   /posts/{post_id}/react          — toggle emoji reaction
     POST   /posts/{post_id}/comments       — add a flat comment
     POST   /posts/{post_id}/delete         — delete post (author or admin)
@@ -49,6 +52,8 @@ from outo_models.posts import (
     REACTION_PALETTE_SET,
     add_comment,
     aggregate_reactions,
+    comments_by_post,
+    create_post,
     delete_comment,
     delete_post,
     list_comments,
@@ -200,6 +205,34 @@ def _login_redirect_with_next(path: str) -> Response:
     return RedirectResponse(url=f"/login?next={path}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _post_redirect_after_action(*, post_id: int, next_token: str) -> Response:
+    """Pick the redirect target for a feed-vs-detail reaction.
+
+    `next_token == "feed"` → return to `/posts` so the chip count
+    refreshes in context. Any other value (including empty) keeps
+    the original permalink redirect so existing detail-page callers
+    — and the existing tests — keep working.
+    """
+    if next_token.strip().lower() == "feed":
+        return RedirectResponse(url="/posts", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/posts/{int(post_id)}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _comment_redirect_after_action(*, post_id: int, next_token: str) -> Response:
+    """Pick the redirect target for a feed-vs-detail comment.
+
+    `next_token == "feed"` → return to `/posts?comments=<id>` so the
+    comments modal re-opens with the freshly-posted comment visible.
+    Any other value keeps the original permalink redirect.
+    """
+    if next_token.strip().lower() == "feed":
+        return RedirectResponse(
+            url=f"/posts?comments={int(post_id)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(url=f"/posts/{int(post_id)}", status_code=status.HTTP_303_SEE_OTHER)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -211,14 +244,28 @@ async def posts_feed_page(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
 ) -> Response:
-    """Render the global posts feed (newest 50, mixed short + long)."""
+    """Render the global posts feed (newest 50, mixed short + long).
+
+    The feed surfaces the *applied* reactions per post as chips and
+    lazy-loads comments + the new-post composer inside native
+    `<details>` modals. Comments are eager-loaded in one query via
+    `comments_by_post` so the per-post modal can render without an N+1
+    round trip; the modal body is server-rendered when opened so a
+    disabled-script CSP stays intact.
+    """
     posts = list(await list_posts(db, limit=50))
     post_ids = [p.id for p in posts]
     reaction_totals = await aggregate_reactions(db, post_ids=post_ids)
     viewer_reactions = await viewer_reaction_set(db, viewer=user, post_ids=post_ids)
+    comments_map = await comments_by_post(db, post_ids=post_ids)
 
-    # Pre-compute the rendered body HTML + comment counts so the
-    # template never has to call a function.
+    open_comments_raw = request.query_params.get("comments")
+    open_comments_id: int | None = None
+    if open_comments_raw and open_comments_raw.isdigit():
+        candidate = int(open_comments_raw)
+        if candidate in post_ids:
+            open_comments_id = candidate
+
     rendered: list[dict[str, Any]] = []
     for post in posts:
         if post.kind == POST_KIND_LONG:
@@ -232,6 +279,8 @@ async def posts_feed_page(
                 "reaction_totals": reaction_totals.get(post.id, {}),
                 "viewer_reacted": {emoji for (pid, emoji) in viewer_reactions if pid == post.id},
                 "viewer_can_see_repo": _viewer_can_see_repo(post.repo, viewer=user),
+                "comments": comments_map.get(post.id, []),
+                "open_modal": open_comments_id is not None and open_comments_id == post.id,
             }
         )
 
@@ -240,7 +289,14 @@ async def posts_feed_page(
         "posts/feed.html",
         user=user,
         active_nav="posts",
-        context={"posts_rendered": rendered, "reaction_palette": REACTION_PALETTE},
+        context={
+            "posts_rendered": rendered,
+            "reaction_palette": REACTION_PALETTE,
+            "open_post_modal": request.query_params.get("post_modal") == "new",
+            "post_modal_error": request.query_params.get("post_modal_error") or None,
+            "post_modal_form_body": request.query_params.get("post_modal_body") or "",
+            "post_modal_form_repo": request.query_params.get("post_modal_repo") or "",
+        },
     )
 
 
@@ -250,7 +306,12 @@ async def posts_new_page(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User | None, Depends(get_current_user_optional)],
 ) -> Response:
-    """Render the post composer (login required)."""
+    """Render the long-form markdown editor page (login required).
+
+    The editor is dedicated to long posts (`kind=long`). The feed's
+    short-post modal POSTs straight to `/posts/new` with `kind=short`,
+    so this GET always serves the long editor.
+    """
     if user is None:
         return _login_redirect_with_next("/posts/new")
     return _form_page(
@@ -259,12 +320,77 @@ async def posts_new_page(
         user=user,
         active_nav="posts",
         context={
-            "form_kind": POST_KIND_SHORT,
+            "form_kind": POST_KIND_LONG,
             "form_title": "",
             "form_body": "",
             "form_repo_link": "",
             "reaction_palette": REACTION_PALETTE,
             "error": None,
+            "preview_html": None,
+        },
+    )
+
+
+@router.get("/posts/preview", response_class=HTMLResponse)
+async def posts_preview_page(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the empty long-form editor (login required)."""
+    if user is None:
+        return _login_redirect_with_next("/posts/preview")
+    return _form_page(
+        request,
+        "posts/new.html",
+        user=user,
+        active_nav="posts",
+        context={
+            "form_kind": POST_KIND_LONG,
+            "form_title": "",
+            "form_body": "",
+            "form_repo_link": "",
+            "reaction_palette": REACTION_PALETTE,
+            "error": None,
+            "preview_html": None,
+        },
+    )
+
+
+@router.post("/posts/preview", response_class=HTMLResponse)
+async def posts_preview_form(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User | None, Depends(get_current_user_optional)],
+    title: Annotated[str, Form()] = "",
+    body: Annotated[str, Form()] = "",
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Render the editor with the body re-rendered as sanitized markdown.
+
+    The publish form remains on the page so the user can Publish from
+    the preview state without a second round trip; the publish click
+    POSTs `/posts/new` with `kind=long`. Empty bodies yield an empty
+    preview string so the page does not show a misleading "Empty
+    post body." note.
+    """
+    if user is None:
+        return _login_redirect_with_next("/posts/preview")
+    verify_csrf(request, form_token=csrf)
+    preview_html = render_long_body(body) if (body or "").strip() else ""
+    return _form_page(
+        request,
+        "posts/new.html",
+        user=user,
+        active_nav="posts",
+        context={
+            "form_kind": POST_KIND_LONG,
+            "form_title": title,
+            "form_body": body,
+            "form_repo_link": "",
+            "reaction_palette": REACTION_PALETTE,
+            "error": None,
+            "preview_html": preview_html,
         },
     )
 
@@ -280,28 +406,64 @@ async def posts_new_form(
     repo_link: Annotated[str, Form()] = "",
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
 ) -> Response:
-    """Validate + create a post; re-render the composer on error."""
+    """Validate + create a post; re-render the composer on error.
+
+    The two call sites are visually distinct:
+
+    * **Long editor** (`GET /posts/new` page) submits with
+      `kind=long`. On error we re-render the editor page in place —
+      the user keeps the draft + sees the error banner on the page
+      they came from.
+    * **Short modal** (the feed's `<details>` new-post widget) submits
+      with `kind=short`. On error we re-render the feed page with
+      `?post_modal=new` so the new-post `<details>` stays open and the
+      error banner lives inside the modal — the user keeps the feed
+      context and the draft fields.
+
+    Success always redirects to the new post's permalink — that is the
+    user contract, never weaken it.
+    """
     if user is None:
         return _login_redirect_with_next("/posts/new")
     verify_csrf(request, form_token=csrf)
 
-    from outo_models.posts import create_post
+    resolved_kind = (kind or POST_KIND_SHORT).strip().lower()
+    if resolved_kind not in (POST_KIND_SHORT, POST_KIND_LONG):
+        resolved_kind = POST_KIND_SHORT
 
-    def _re_render(error_message: str) -> Response:
+    def _re_render_editor(error_message: str) -> Response:
         return _form_page(
             request,
             "posts/new.html",
             user=user,
             active_nav="posts",
             context={
-                "form_kind": kind,
+                "form_kind": resolved_kind,
                 "form_title": title,
                 "form_body": body,
                 "form_repo_link": repo_link,
                 "reaction_palette": REACTION_PALETTE,
                 "error": error_message,
+                "preview_html": None,
             },
         )
+
+    def _re_render_feed_modal(error_message: str) -> Response:
+        from urllib.parse import quote
+
+        params = {
+            "post_modal": "new",
+            "post_modal_error": error_message,
+            "post_modal_body": body,
+            "post_modal_repo": repo_link,
+        }
+        qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items() if v)
+        return RedirectResponse(url=f"/posts?{qs}", status_code=status.HTTP_303_SEE_OTHER)
+
+    def _re_render(error_message: str) -> Response:
+        if resolved_kind == POST_KIND_LONG:
+            return _re_render_editor(error_message)
+        return _re_render_feed_modal(error_message)
 
     try:
         repo = await resolve_repo_link(db, raw=repo_link, viewer=user)
@@ -312,7 +474,7 @@ async def posts_new_form(
         post = await create_post(
             db,
             author=user,
-            kind=kind,
+            kind=resolved_kind,
             title=title or None,
             body=body,
             repo=repo,
@@ -385,8 +547,15 @@ async def posts_react_form(
     user: Annotated[User | None, Depends(get_current_user_optional)],
     emoji: Annotated[str, Form()] = "",
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+    next: Annotated[str, Form()] = "",
 ) -> Response:
-    """Toggle the viewer's `emoji` reaction on `post_id` (login + CSRF)."""
+    """Toggle the viewer's `emoji` reaction on `post_id` (login + CSRF).
+
+    When invoked from the feed's picker modal (`next=feed`), the
+    redirect lands back on `/posts` so the updated chip counts render
+    in context. The detail-page case (no `next`) keeps the existing
+    redirect-to-permalink behaviour.
+    """
     if user is None:
         return _login_redirect_with_next(f"/posts/{post_id}")
     verify_csrf(request, form_token=csrf)
@@ -395,9 +564,9 @@ async def posts_react_form(
         await toggle_reaction(db, post=post, user=user, emoji=emoji)
     except Exception:
         await db.rollback()
-        return RedirectResponse(url=f"/posts/{post_id}", status_code=status.HTTP_303_SEE_OTHER)
+        return _post_redirect_after_action(post_id=post_id, next_token=next)
     await db.commit()
-    return RedirectResponse(url=f"/posts/{post_id}", status_code=status.HTTP_303_SEE_OTHER)
+    return _post_redirect_after_action(post_id=post_id, next_token=next)
 
 
 @router.post("/posts/{post_id}/comments")
@@ -408,8 +577,15 @@ async def posts_comments_form(
     user: Annotated[User | None, Depends(get_current_user_optional)],
     body: Annotated[str, Form()] = "",
     csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+    next: Annotated[str, Form()] = "",
 ) -> Response:
-    """Append a comment to `post_id` (login + CSRF)."""
+    """Append a comment to `post_id` (login + CSRF).
+
+    From the feed's comments modal (`next=feed`) the redirect lands on
+    `/posts?comments=<id>` so the modal re-opens with the new comment
+    visible. The detail-page case (no `next`) keeps the existing
+    redirect-to-permalink behaviour.
+    """
     if user is None:
         return _login_redirect_with_next(f"/posts/{post_id}")
     verify_csrf(request, form_token=csrf)
@@ -418,7 +594,7 @@ async def posts_comments_form(
         await add_comment(db, post=post, author=user, body=body)
     except Exception:
         await db.rollback()
-    return RedirectResponse(url=f"/posts/{post_id}", status_code=status.HTTP_303_SEE_OTHER)
+    return _comment_redirect_after_action(post_id=post_id, next_token=next)
 
 
 @router.post("/posts/{post_id}/delete")
