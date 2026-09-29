@@ -80,6 +80,14 @@ class TestStaticAssetClipboardJs:
         assert "execCommand" in response.text
         assert "navigator.clipboard" in response.text
 
+    def test_posts_js_served(self, app: tuple[TestClient, FastAPI, object]) -> None:
+        client, _, _ = app
+        response = client.get("/static/posts.js")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/javascript")
+        assert "data-modal-close" in response.text
+        assert "Escape" in response.text
+
 
 class TestStaticAssetAllowlist:
     """Extension allowlist + path traversal guards must hold for any

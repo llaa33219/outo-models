@@ -215,6 +215,34 @@ class TestPostsFeed:
         assert "overflow-wrap: anywhere" in detail
         assert "minmax(0, 1fr)" in detail
 
+    async def test_modals_close_via_scripted_close_buttons(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        factory: async_sessionmaker,
+    ) -> None:
+        client, _, _ = app
+        alice_id = await seed_approved_user(username="alice")
+        async with factory() as session:
+            alice = (await session.execute(select(User).where(User.id == alice_id))).scalar_one()
+            await _create_post(factory, author=alice, body="close probe")
+        client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+        )
+
+        feed = client.get("/posts").text
+        assert 'src="/static/posts.js"' in feed
+        assert feed.count('data-modal-close aria-label="Close"') == 3
+        assert '<details class="post-comments-modal" data-modal' in feed
+        assert '<details class="post-picker" data-modal>' in feed
+        assert '<details class="post-new-modal" data-modal' in feed
+        assert 'href="/posts#post-' not in feed
+
+        detail = client.get("/posts/1").text
+        assert 'src="/static/posts.js"' in detail
+        assert detail.count('data-modal-close aria-label="Close"') == 1
+
     async def test_feed_orders_newest_first(
         self,
         app: tuple[TestClient, FastAPI, object],
@@ -350,7 +378,7 @@ class TestPostsFeed:
         # Jinja2 preserves whitespace between attributes, so the open
         # marker sits on its own line — regex anchors the contract.
         pattern = (
-            r'<details\s+class="post-comments-modal"\s+'
+            r'<details\s+class="post-comments-modal"\s+data-modal\s+'
             r'id="post-' + str(post_id) + r'-comments"\s+open>'
         )
         assert re.search(pattern, body) is not None
@@ -563,7 +591,10 @@ class TestPostsNew:
         assert "2000" in followed.text
         # The new-post <details> carries `open` so the modal stays
         # visible after the redirect lands.
-        assert re.search(r'<details\s+class="post-new-modal"\s+open>', followed.text) is not None
+        new_modal_open = re.search(
+            r'<details\s+class="post-new-modal"\s+data-modal(\s+open)?>', followed.text
+        )
+        assert new_modal_open is not None
 
     async def test_bad_repo_link_rerenders_with_error(
         self,
@@ -1484,7 +1515,7 @@ class TestPostsFeedModals:
         body = followed.text
         assert (
             re.search(
-                r'<details\s+class="post-comments-modal"\s+id="post-'
+                r'<details\s+class="post-comments-modal"\s+data-modal\s+id="post-'
                 + str(post_id)
                 + r'-comments"\s+open>',
                 body,

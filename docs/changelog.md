@@ -4,6 +4,16 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.4 — Posts modals actually close
+
+### Fixed
+
+- The comments / picker / new-post modals could not be closed: the ✕
+  was a same-page fragment link, which performs no navigation, so the
+  `<details>` stayed open. A tiny self-hosted `posts.js` (same CSP
+  budget as clipboard.js) now closes any `details[data-modal]` via
+  the ✕ button, a click on the backdrop, or Escape.
+
 ## v0.6.3 — Posts overflow fixes, long-form feed excerpts
 
 ### Fixed

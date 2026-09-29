@@ -74,13 +74,13 @@
 
       {# Reaction picker: 26 toggle forms in a 8-column grid. #}
       {% if current_user %}
-        <details class="post-picker">
+        <details class="post-picker" data-modal>
           <summary class="post-detail__chip post-detail__chip--picker" aria-label="Add reaction">+</summary>
           <div class="post-picker__overlay" role="dialog" aria-modal="true" aria-label="Pick a reaction">
             <div class="post-picker__card el-tile">
               <div class="post-picker__header">
                 <h3>React</h3>
-                <a class="post-modal__close" href="/posts/{{ post.id }}#comments" aria-label="Close">&#x2715;</a>
+                <button type="button" class="post-modal__close" data-modal-close aria-label="Close">&#x2715;</button>
               </div>
               <div class="post-picker__grid">
                 {% for emoji in reaction_palette %}
@@ -344,6 +344,8 @@
       border-color: var(--color-main);
     }
     .post-modal__close {
+      cursor: pointer;
+      padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;

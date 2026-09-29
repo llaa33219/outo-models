@@ -9,13 +9,13 @@
            the navbar profile dropdown). The <summary> IS the visible
            trigger; the overlay below is rendered inside the same
            <details> so it can close naturally on the same click. #}
-        <details class="post-new-modal" {% if open_post_modal %}open{% endif %}>
+        <details class="post-new-modal" data-modal {% if open_post_modal %}open{% endif %}>
           <summary class="new-btn" aria-label="New short post">New post</summary>
           <div class="post-modal__overlay" role="dialog" aria-modal="true" aria-label="New short post">
             <div class="post-modal__card el-tile">
               <div class="post-modal__header">
                 <h2>New post</h2>
-                <a class="post-modal__close" href="/posts" aria-label="Close">&#x2715;</a>
+                <button type="button" class="post-modal__close" data-modal-close aria-label="Close">&#x2715;</button>
               </div>
               <p class="muted post-modal__hint">
                 Plain text, line breaks preserved. For markdown with a title,
@@ -146,13 +146,13 @@
 
             {# ───── Reaction picker modal: 26 toggle forms, 8/row ───── #}
             {% if current_user %}
-              <details class="post-picker">
+              <details class="post-picker" data-modal>
                 <summary class="post-tile__chip post-tile__chip--picker" aria-label="Add reaction">+</summary>
                 <div class="post-picker__overlay" role="dialog" aria-modal="true" aria-label="Pick a reaction">
                   <div class="post-picker__card el-tile">
                     <div class="post-picker__header">
                       <h3>React</h3>
-                      <a class="post-modal__close" href="/posts#post-{{ post.id }}" aria-label="Close">&#x2715;</a>
+                      <button type="button" class="post-modal__close" data-modal-close aria-label="Close">&#x2715;</button>
                     </div>
                     <div class="post-picker__grid">
                       {% for emoji in reaction_palette %}
@@ -174,7 +174,7 @@
 
           {# ───── Comments modal: server-rendered list + composer ───── #}
           {% if current_user %}
-            <details class="post-comments-modal"
+            <details class="post-comments-modal" data-modal
                      id="post-{{ post.id }}-comments"
                      {% if entry.open_modal %}open{% endif %}>
               <summary class="post-tile__chip post-tile__chip--action" aria-label="Open comments">
@@ -184,7 +184,7 @@
                 <div class="post-modal__card post-modal__card--wide el-tile">
                   <div class="post-modal__header">
                     <h2>Comments</h2>
-                    <a class="post-modal__close" href="/posts#post-{{ post.id }}" aria-label="Close">&#x2715;</a>
+                    <button type="button" class="post-modal__close" data-modal-close aria-label="Close">&#x2715;</button>
                   </div>
                   <p class="muted post-modal__hint">
                     On
@@ -455,6 +455,8 @@
       text-decoration: none;
     }
     .post-modal__close {
+      cursor: pointer;
+      padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
