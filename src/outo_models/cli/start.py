@@ -29,11 +29,12 @@ from outo_models.cli import (
     podman_base,
     print_status,
     render_error,
-    stream_subprocess,
+    run_capture,
     typer_exit,
 )
 from outo_models.config import Settings, get_settings
 from outo_models.exceptions import ConfigError, OutoError
+from outo_models.hostsys import HOST_LOW_PORTS_COMMAND, low_ports_blocked
 
 # The default location of the YAML the wizard writes. `OUTO_CONFIG`
 # overrides it for testing and for operators who vendor the file under
@@ -154,6 +155,68 @@ def _remove_container() -> None:
     )
 
 
+def _podman_is_rootless() -> bool | None:
+    """Whether podman runs rootless here, or None when it cannot be told.
+
+    Asks the engine itself (`podman info`) instead of guessing from the
+    environment: only the engine knows which mode it booted in. Fails OPEN —
+    every uncertain outcome (missing binary, non-zero exit, unexpected output,
+    timeout) returns None so a detection hiccup never blocks a start that
+    would otherwise work. The caller treats None as "assume rootful".
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            [*podman_base(), "info", "--format", "{{.Host.Security.Rootless}}"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    answer = (result.stdout or "").strip()
+    if answer == "true":
+        return True
+    if answer == "false":
+        return False
+    return None
+
+
+def _preflight_low_ports(ports: list[int]) -> None:
+    """Refuse to start when rootless podman cannot publish the low ports.
+
+    On a rootful engine the kernel lets `podman run` bind :80 itself, so the
+    threshold never matters; on a rootless one the HOST-side `rootlessport`
+    helper performs the bind and is subject to
+    `net.ipv4.ip_unprivileged_port_start`. Rather than let the run die with a
+    cryptic exit 126, fail here — before the existing container is touched —
+    with the exact host command that fixes it.
+
+    Raises:
+        OutoError(low_ports_blocked): rootless podman + a threshold above the
+            lowest configured port. The message carries
+            `HOST_LOW_PORTS_COMMAND` rendered for that port.
+    """
+    if not ports:
+        return
+    min_port = min(ports)
+    if not low_ports_blocked(min_port):
+        return
+    if _podman_is_rootless() is not True:
+        return
+    command = HOST_LOW_PORTS_COMMAND.replace("<min-port>", str(min_port))
+    raise OutoError(
+        f"podman is rootless and the host only allows unprivileged binds from "
+        f"net.ipv4.ip_unprivileged_port_start, so port {min_port} cannot be "
+        f"published: the host-side rootlessport helper has to bind it. Enable "
+        f"low ports on the host (the script asks for sudo itself):\n\n"
+        f"    {command}\n",
+        code="low_ports_blocked",
+    )
+
+
 def _probe(url: str) -> bool:
     """One HTTP probe against the health endpoint; True only on a 200."""
     import httpx
@@ -188,6 +251,19 @@ def _collect_logs() -> str:
 # specific signatures at the top. Every advice names the exact command an
 # operator can paste — no "see the docs" without a concrete first step.
 _DIAGNOSIS_RULES: tuple[tuple[str, str], ...] = (
+    (
+        "rootlessport cannot expose privileged port",
+        """\
+Podman could not publish the low port: the HOST-side rootlessport helper has
+to bind it, and the kernel only lets unprivileged binds start at
+net.ipv4.ip_unprivileged_port_start (1024). Note that `--cap-add
+NET_BIND_SERVICE` applies INSIDE the container — it cannot help the host-side
+rootlessport helper, which is the one failing here. Fix it once on the host:
+
+    /usr/local/share/outo-models/enable-low-ports.sh 80
+
+(it asks for sudo and applies a persistent sysctl). Then: outo-models start""",
+    ),
     (
         "listen tcp :",
         """\
@@ -243,19 +319,27 @@ this machine and ports 80/443 are reachable from the internet
 )
 
 
-def _print_diagnosis(logs: str, url: str) -> None:
-    """Turn the log tail into an actionable, plain-language next step."""
+def _print_diagnosis(logs: str, url: str = "") -> None:
+    """Turn a failure output into an actionable, plain-language next step.
+
+    `url` is the health-probe URL when one exists; failures raised before the
+    container ever serves (a rejected `podman run`) pass "" and the generic
+    fallback drops the probe clause rather than naming a URL nobody polled.
+    """
     lowered = logs.lower()
     for signature, advice in _DIAGNOSIS_RULES:
         if signature.lower() in lowered:
             print_status("\n[what to do] " + advice)
             return
-    print_status(
+    fallback = (
         "\n[what to do] no known failure pattern matched. The log above is the "
         "source of truth; docs/troubleshooting.md lists the common cases. "
-        f"If nothing applies, re-run with a longer window: outo-models start "
-        f"--verify-timeout 180 (probe was {url})"
+        "If nothing applies, re-run with a longer window: outo-models start "
+        "--verify-timeout 180"
     )
+    if url:
+        fallback += f" (probe was {url})"
+    print_status(fallback)
 
 
 def _verify_started(settings: Settings, ports: list[str], timeout: float) -> None:
@@ -319,7 +403,16 @@ def start(
             ConfigError(f"config file 'ports' must be a list (got {type(ports_raw).__name__})")
         )
         raise typer_exit(1)
-    ports = [str(int(p)) for p in ports_raw]
+    try:
+        port_numbers = [int(p) for p in ports_raw]
+    except (TypeError, ValueError) as exc:
+        render_error(
+            ConfigError(
+                f"config file 'ports' has an invalid entry ({ports_raw!r}): ports must be integers"
+            )
+        )
+        raise typer_exit(1) from exc
+    ports = [str(p) for p in port_numbers]
 
     # An existing container with this name blocks `podman run` (exit 125 in
     # the field). Running with the same image → nothing to do but verify.
@@ -337,6 +430,14 @@ def start(
                 render_error(exc)
                 raise typer_exit(1) from exc
         return
+    # Ordering invariant: preflight precedes every container manipulation, so
+    # an abort never destroys an existing (stopped) container the operator can
+    # still start by hand after fixing the host sysctl.
+    try:
+        _preflight_low_ports(port_numbers)
+    except OutoError as exc:
+        render_error(exc)
+        raise typer_exit(1) from exc
     if existing_state != "missing":
         print_status(f"[info] replacing existing container (state={existing_state})")
         _remove_container()
@@ -385,9 +486,16 @@ def start(
         argv.extend(["-p", f"{port}:{port}"])
     argv.append(image)
 
-    rc = stream_subprocess(argv)
+    # Capture instead of streaming: on a failed run podman's own message is
+    # the diagnosis input (e.g. the rootlessport low-port refusal), and
+    # inherited stderr would consume it.
+    rc, output = run_capture(argv)
     if rc != 0:
+        captured = output.strip()
+        if captured:
+            print_status(captured)
         print_status(f"[error] container failed to start (exit={rc})")
+        _print_diagnosis(output, "")
         raise typer_exit(1)
 
     if no_verify:

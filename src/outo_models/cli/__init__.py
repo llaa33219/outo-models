@@ -21,7 +21,15 @@ Three concerns live here:
    the message in red and exits with code 1 — never a Python traceback,
    since `AGENTS.md §2.1` forbids leaking secrets and tracebacks routinely do.
 
-3. **`container_script()` — locate bundled `assets/scripts/*.sh`.**
+3. **`run_capture()` — buffered `subprocess.run` for commands we must read.**
+
+   The twin of `stream_subprocess()`: same env-merge semantics, but stdout
+   and stderr come back as text instead of reaching the operator's terminal
+   unbuffered. Used where the *content* of a failure is the diagnosis input
+   (`podman run` refusing a low port) — inherited stderr would leave nothing
+   left to match against.
+
+4. **`container_script()` — locate bundled `assets/scripts/*.sh`.**
    Mirrors `firewall.open_ports._resolve_script_path` and
    `tls.caddy_manager._resolve_template_path` (both honor an `OUTO_*_SCRIPT`
    env override). The CLI uses it for `update.sh` / `reset.sh`; bundling
@@ -246,6 +254,29 @@ def stream_subprocess(argv: list[str], env: dict[str, str] | None = None) -> int
     return int(result.returncode)
 
 
+def run_capture(argv: list[str], env: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run `argv` with both streams captured; return `(exit_code, output)`.
+
+    The buffered twin of `stream_subprocess()`. Use it when the *text* a
+    command failed with is itself the diagnosis input (see `cli.start`): with
+    inherited stderr the message is gone once the child exits, and there is
+    nothing left to match a failure signature against. `output` is
+    `stdout + stderr`, so a message on either stream is matched either way.
+    `env`, when given, is merged over `os.environ` with the same semantics as
+    `stream_subprocess()`.
+    """
+    merged = None if env is None else {**os.environ, **env}
+    result = subprocess.run(  # noqa: S603 — argv is fixed
+        argv,
+        check=False,
+        shell=False,
+        env=merged,
+        capture_output=True,
+        text=True,
+    )
+    return int(result.returncode), (result.stdout or "") + (result.stderr or "")
+
+
 def podman_base() -> list[str]:
     """Base argv for a podman invocation, or [] when podman is unreachable.
 
@@ -379,6 +410,7 @@ __all__ = [
     "print_status",
     "prompts",
     "render_error",
+    "run_capture",
     "stream_subprocess",
     "typer_exit",
 ]

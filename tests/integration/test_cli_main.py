@@ -127,7 +127,12 @@ class TestStartCommand:
 
         captured: list[list[str]] = []
         monkeypatch.setattr(start_mod, "podman_available", lambda: True)
-        monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: captured.append(argv) or 0)
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(
+            start_mod,
+            "run_capture",
+            lambda argv: (captured.append(argv), (0, ""))[1],
+        )
         monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
         cfg = self._write_config(tmp_path)
         monkeypatch.setenv("OUTO_CONFIG", str(cfg))
@@ -151,6 +156,25 @@ class TestStartCommand:
         monkeypatch.setenv("OUTO_CONFIG", str(tmp_path / "absent.yaml"))
         result = runner.invoke(app, ["start"])
         assert result.exit_code == 1
+
+    def test_non_numeric_port_renders_config_error(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "image: ghcr.io/llaa33219/outo-models:dev\n"
+            "volume: outo-models-data\n"
+            'ports: ["eighty", 443]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert "invalid" in result.output.lower()
+        assert "Traceback" not in result.output
 
 
 class TestPodmanBase:
@@ -213,7 +237,8 @@ class TestStartVerification:
         from outo_models.cli import start as start_mod
 
         monkeypatch.setattr(start_mod, "podman_available", lambda: True)
-        monkeypatch.setattr(start_mod, "stream_subprocess", lambda argv: 0)
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(start_mod, "run_capture", lambda argv: (0, ""))
         monkeypatch.setattr(start_mod, "_collect_logs", lambda: "")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -290,12 +315,13 @@ class TestStartExistingContainer:
 
         calls: dict[str, list[str]] = {"rm": [], "run": []}
 
-        def _stream(argv: list[str]) -> int:
+        def _capture(argv: list[str]) -> tuple[int, str]:
             calls["run"].append(" ".join(argv))
-            return 0
+            return (0, "")
 
         monkeypatch.setattr(start_mod, "podman_available", lambda: True)
-        monkeypatch.setattr(start_mod, "stream_subprocess", _stream)
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(start_mod, "run_capture", _capture)
         monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
         monkeypatch.setattr(start_mod, "_remove_container", lambda: calls["rm"].append("rm"))
         cfg = tmp_path / "config.yaml"
@@ -384,6 +410,41 @@ class TestStartDiagnosis:
         start_mod._print_diagnosis(logs, "http://127.0.0.1:80/healthz")
         return "\n".join(printed)
 
+    def _advice_without_probe(self, logs: str, monkeypatch: pytest.MonkeyPatch) -> str:
+        from outo_models.cli import start as start_mod
+
+        printed: list[str] = []
+        monkeypatch.setattr(start_mod, "print_status", lambda msg: printed.append(str(msg)))
+        start_mod._print_diagnosis(logs)
+        return "\n".join(printed)
+
+    def test_rootlessport_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Verbatim shape of the field failure: podman refuses before the
+        # container is ever created, so `podman logs` stays empty and only the
+        # captured run output can identify it.
+        advice = self._advice(
+            "Error: rootlessport cannot expose privileged port 80 in container: "
+            "listen tcp 0.0.0.0:80: bind: permission denied",
+            monkeypatch,
+        )
+        assert "enable-low-ports.sh 80" in advice
+        assert "--cap-add NET_BIND_SERVICE" in " ".join(advice.split())
+
+    def test_rootlessport_rule_wins_over_listen_tcp(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        advice = self._advice(
+            "rootlessport cannot expose privileged port 80: listen tcp 0.0.0.0:80: "
+            "bind: permission denied",
+            monkeypatch,
+        )
+        assert "rootlessport helper" in " ".join(advice.split())
+
+    def test_generic_fallback_without_probe_omits_probe_clause(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        advice = self._advice_without_probe("podman exploded", monkeypatch)
+        assert "no known failure pattern" in advice
+        assert "probe was" not in advice
+
     def test_low_port_signature(self, monkeypatch: pytest.MonkeyPatch) -> None:
         advice = self._advice("Error: listen tcp :80: bind: permission denied", monkeypatch)
         assert "enable-low-ports.sh 80" in advice
@@ -410,3 +471,294 @@ class TestStartDiagnosis:
         advice = self._advice("something entirely novel exploded", monkeypatch)
         assert "no known failure pattern" in advice
         assert "troubleshooting.md" in advice
+
+
+class TestStartLowPortsPreflight:
+    """Rootless podman + a host threshold above port 80 must abort cleanly.
+
+    The field failure this pins: on a rootless engine the HOST-side
+    rootlessport helper performs the port bind and the kernel refuses, so
+    `podman run` exits 126 without ever creating the container. Catching it
+    before the run keeps the diagnosis (and the existing container) intact.
+    """
+
+    def _setup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        ports: str = "[80, 443]",
+        state: str = "missing",
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: state)
+        monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f"image: ghcr.io/llaa33219/outo-models:dev\nvolume: outo-models-data\nports: {ports}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+
+    def test_rootless_blocked_aborts_before_podman_run(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch)
+
+        def _forbidden(*_a: object, **_k: object) -> tuple[int, str]:
+            raise AssertionError("podman run must not be attempted on a blocked host")
+
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", lambda: True)
+        monkeypatch.setattr(start_mod, "run_capture", _forbidden)
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert "low_ports_blocked" in result.output
+        assert "/usr/local/share/outo-models/enable-low-ports.sh 80" in result.output
+
+    def test_message_uses_lowest_configured_port(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch, ports="[8080, 8443]")
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", lambda: True)
+        monkeypatch.setattr(start_mod, "run_capture", _forbidden_run)
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert "enable-low-ports.sh 8080" in result.output
+        assert "low_ports_blocked" in result.output
+
+    def test_unblocked_host_skips_the_podman_probe(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch)
+        probed: list[bool] = []
+        runs: list[list[str]] = []
+
+        def _rootless() -> bool:
+            probed.append(True)
+            return True
+
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", _rootless)
+        monkeypatch.setattr(start_mod, "run_capture", lambda argv: (runs.append(argv), (0, ""))[1])
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert probed == []
+        assert len(runs) == 1
+
+    def test_rootful_podman_proceeds_despite_blocked_threshold(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch)
+        runs: list[list[str]] = []
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", lambda: False)
+        monkeypatch.setattr(start_mod, "run_capture", lambda argv: (runs.append(argv), (0, ""))[1])
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert len(runs) == 1
+        assert "low_ports_blocked" not in result.output
+
+    def test_unknown_rootless_mode_proceeds(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch)
+        runs: list[list[str]] = []
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", lambda: None)
+        monkeypatch.setattr(start_mod, "run_capture", lambda argv: (runs.append(argv), (0, ""))[1])
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert len(runs) == 1
+
+    def test_preflight_precedes_container_removal(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch, state="exited")
+        removed: list[bool] = []
+        monkeypatch.setattr(start_mod, "_remove_container", lambda: removed.append(True))
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(start_mod, "_podman_is_rootless", lambda: True)
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert removed == []
+
+    def test_running_container_short_circuits_preflight(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch, state="running")
+        monkeypatch.setattr(start_mod, "_container_image_matches", lambda _img: True)
+        monkeypatch.setattr(start_mod, "_probe", lambda _url: True)
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: True)
+        monkeypatch.setattr(
+            start_mod,
+            "_podman_is_rootless",
+            lambda: pytest.fail("preflight must not run for an already-running container"),
+        )
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert "already running" in result.output
+
+
+def _forbidden_run(argv: list[str]) -> tuple[int, str]:
+    raise AssertionError("podman run must not be attempted on a blocked host")
+
+
+class _Completed:
+    """Minimal `subprocess.Completed` stand-in for the probe tests."""
+
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+
+class TestPodmanRootlessProbe:
+    """`_podman_is_rootless` reports the engine mode, failing open on doubt."""
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch, runner_: object) -> list[list[str]]:
+        from outo_models.cli import start as start_mod
+
+        calls: list[list[str]] = []
+
+        def _run(argv: list[str], **_kwargs: object) -> object:
+            calls.append(list(argv))
+            return runner_
+
+        monkeypatch.setattr(start_mod.subprocess, "run", _run)
+        return calls
+
+    def test_true_output_is_rootless(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._patch(monkeypatch, _Completed(0, "true\n"))
+        assert start_mod._podman_is_rootless() is True
+
+    def test_false_output_is_rootful(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._patch(monkeypatch, _Completed(0, "false\n"))
+        assert start_mod._podman_is_rootless() is False
+
+    def test_nonzero_exit_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._patch(monkeypatch, _Completed(125, "true\n"))
+        assert start_mod._podman_is_rootless() is None
+
+    def test_timeout_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        from outo_models.cli import start as start_mod
+
+        def _boom(*_a: object, **_k: object) -> object:
+            raise subprocess.TimeoutExpired(cmd="podman", timeout=5.0)
+
+        monkeypatch.setattr(start_mod.subprocess, "run", _boom)
+        assert start_mod._podman_is_rootless() is None
+
+    def test_os_error_is_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        def _boom(*_a: object, **_k: object) -> object:
+            raise FileNotFoundError("podman")
+
+        monkeypatch.setattr(start_mod.subprocess, "run", _boom)
+        assert start_mod._podman_is_rootless() is None
+
+    def test_uses_the_podman_base_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from outo_models.cli import start as start_mod
+
+        calls = self._patch(monkeypatch, _Completed(0, "true\n"))
+        monkeypatch.setattr(
+            start_mod,
+            "podman_base",
+            lambda: ["podman-remote", "--url", "unix:///run/podman/podman.sock"],
+        )
+        assert start_mod._podman_is_rootless() is True
+        assert calls[0][:3] == [
+            "podman-remote",
+            "--url",
+            "unix:///run/podman/podman.sock",
+        ]
+        assert calls[0][3:] == ["info", "--format", "{{.Host.Security.Rootless}}"]
+
+
+class TestStartRunFailure:
+    """A failed `podman run` surfaces podman's own message plus advice."""
+
+    def _setup(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        result: tuple[int, str],
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: "missing")
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(start_mod, "run_capture", lambda _argv: result)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "image: ghcr.io/llaa33219/outo-models:dev\n"
+            "volume: outo-models-data\n"
+            "ports: [80, 443]\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTO_CONFIG", str(cfg))
+
+    def test_nonzero_exit_prints_podman_output(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._setup(tmp_path, monkeypatch, (126, "Error: name is in use"))
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert "Error: name is in use" in result.output
+        assert "container failed to start (exit=126)" in result.output
+
+    def test_rootlessport_output_gets_low_port_advice(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._setup(
+            tmp_path,
+            monkeypatch,
+            (
+                126,
+                "Error: rootlessport cannot expose privileged port 80 in container: "
+                "listen tcp 0.0.0.0:80: bind: permission denied",
+            ),
+        )
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+        assert "enable-low-ports.sh 80" in result.output
+
+    def test_zero_exit_with_container_id_succeeds(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        self._setup(tmp_path, monkeypatch, (0, "9f1c2b3a4d5e\n"))
+        states = iter(["missing", "running"])
+        monkeypatch.setattr(start_mod, "_inspect_state", lambda: next(states, "running"))
+        monkeypatch.setattr(start_mod, "_probe", lambda _url: True)
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert "server is up" in result.output
+        assert "failed to start" not in result.output
