@@ -134,8 +134,11 @@ the host script can react to the result.
 ## start
 
 ```bash
-sudo outo-models start
+outo-models start
 ```
+
+The shim runs rootless (`--userns=keep-id`) — do **not** prefix it with
+`sudo`.
 
 Reads the `image`, `volume`, and `ports` keys from
 `/etc/outo-models/config.yaml` and runs:
@@ -153,6 +156,39 @@ podman run -d --name outo-models \
 If `podman` is missing from `PATH`, an English message is printed to
 stderr — "this command must run on the server host" — and the process
 exits with code 1.
+
+### Low-port preflight
+
+Before touching any container — before removing a stopped one and before
+`podman run` — `start` checks whether rootless Podman can publish the
+configured ports. The check triggers when BOTH hold:
+
+- a configured port is below the host's
+  `net.ipv4.ip_unprivileged_port_start`, and
+- `podman info --format {{.Host.Security.Rootless}}` reports `true`.
+
+It then aborts with exit code 1 and the error code `low_ports_blocked`,
+printing the exact host command that fixes it (`<min-port>` is the lowest
+configured port):
+
+```
+podman is rootless and the host only allows unprivileged binds from net.ipv4.ip_unprivileged_port_start, so port 80 cannot be published: the host-side rootlessport helper has to bind it. Enable low ports on the host (the script asks for sudo itself):
+
+    /usr/local/share/outo-models/enable-low-ports.sh 80
+```
+
+Detection **fails open**: if `podman info` errors, times out, or returns
+anything unexpected, `start` proceeds rather than blocking on a detection
+failure. The check adds no CLI flags and no environment variables.
+
+### Failed `podman run`
+
+When `podman run` exits non-zero, `start` echoes podman's captured output
+verbatim, then `[error] container failed to start (exit=N)`, then the
+diagnosis block (matched against the signature rules described under
+*Startup verification*), before exiting 1. Podman's own message is the
+diagnosis input, so the `rootlessport cannot expose privileged port`
+refusal now resolves to the host-side sysctl fix.
 
 ### Startup verification
 

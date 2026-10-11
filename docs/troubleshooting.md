@@ -81,37 +81,109 @@ finish without firewall ports being touched from inside the container.
 
 ## 2. Port 80 / 443 binding failures
 
-Binding 80 / 443 from a non-root process requires the `NET_BIND_SERVICE`
-capability. The entrypoint warns ahead of time when run inside the
-container
-([container/rootfs/usr/local/bin/outo-entrypoint.sh](../container/rootfs/usr/local/bin/outo-entrypoint.sh)):
+Getting 80 / 443 onto the wire involves **two independent binds**, and only
+one of them is fixable from inside the container:
+
+1. **Inside the container network namespace** — Caddy (running as uid 1000)
+   binds `:80` and `:443`. This is what `--cap-add NET_BIND_SERVICE` solves.
+2. **On the host** — rootless Podman publishes the container port through
+   the HOST-side `rootlessport` helper, and *that* helper is subject to
+   `net.ipv4.ip_unprivileged_port_start`. `--cap-add NET_BIND_SERVICE`
+   does **not** help here; the capability only applies inside the
+   container.
+
+Layer 2 is what actually breaks on a default rootless host, and it is what
+the rest of this section is about.
+
+### Layer 1 — in-container bind
+
+`outo-models start` always attaches `--cap-add NET_BIND_SERVICE`, so this
+layer is fixed automatically. Add the same option when launching the
+container by hand:
+
+```bash
+podman run --cap-add NET_BIND_SERVICE ...
+```
+
+The entrypoint prints a warning when it detects that the container-side
+bind may be refused
+([container/rootfs/usr/local/bin/outo-entrypoint.sh](../container/rootfs/usr/local/bin/outo-entrypoint.sh)).
+Note that this warning is a heuristic about the *container* namespace and
+can still fire on a fresh netns even when the host is configured
+correctly — a known false positive. Judge by whether the server actually
+comes up, not by the warning alone.
+
+### Layer 2 — host publication (rootless Podman)
+
+`outo-models start` preflights this **before touching any container** —
+before it removes a stopped container and before it runs `podman run`. If
+rootless Podman is in use *and* a configured port sits below the kernel's
+`net.ipv4.ip_unprivileged_port_start`, it aborts with exit code 1 and the
+error code `low_ports_blocked`:
 
 ```
-[warn] container is running as a non-root user (uid=1000) and the kernel
-       does not permit unprivileged binds to ports below 80 (i.e.
-       net.ipv4.ip_unprivileged_port_start > 80). Caddy is likely to fail
-       with a permission error on startup.
+podman is rootless and the host only allows unprivileged binds from net.ipv4.ip_unprivileged_port_start, so port 80 cannot be published: the host-side rootlessport helper has to bind it. Enable low ports on the host (the script asks for sudo itself):
 
-       Fix one of the following:
-         1) podman run --cap-add NET_BIND_SERVICE ...   # recommended
-         2) host port remap: -p 8080:80 -p 8443:443  # TLS termination must be handled elsewhere
+    /usr/local/share/outo-models/enable-low-ports.sh 80
 ```
 
-### Recommended fix
+The detection **fails open**: if `podman info` errors, times out, or
+returns something unexpected, `start` proceeds rather than blocking you
+on a detection glitch. No new flags or environment variables are involved.
 
-`outo-models start` always attaches `--cap-add NET_BIND_SERVICE`, so
-most installs are fixed automatically. Add the same option when launching
-the container by hand.
+If `podman run` itself fails, `start` echoes podman's own captured output
+verbatim, then `[error] container failed to start (exit=N)`, then a
+diagnosis block. A `rootlessport cannot expose privileged port` signature
+matches this rule:
 
-### Host sysctl tuning
+```
+Podman could not publish the low port: the HOST-side rootlessport helper has
+to bind it, and the kernel only lets unprivileged binds start at
+net.ipv4.ip_unprivileged_port_start (1024). Note that `--cap-add
+NET_BIND_SERVICE` applies INSIDE the container — it cannot help the host-side
+rootlessport helper, which is the one failing here. Fix it once on the host:
 
-Since v0.2.0 the setup wizard checks this automatically: when the chosen
-ports sit below the kernel threshold it runs
-`/usr/local/share/outo-models/enable-low-ports.sh <min-port>` on the host
-(the script self-elevates with sudo, writes a persistent
-`/etc/sysctl.d/90-outo-models-low-ports.conf` drop-in, and applies it).
-When the wizard runs through the container shim it cannot touch the host
-kernel and instead prints that command for you to run by hand.
+    /usr/local/share/outo-models/enable-low-ports.sh 80
+
+(it asks for sudo and applies a persistent sysctl). Then: outo-models start
+```
+
+### Automatic remediation at install time
+
+`scripts/install-cli.sh` reads
+`/proc/sys/net/ipv4/ip_unprivileged_port_start` after installing the host
+helper scripts. **Only when the value is exactly the kernel default
+`1024`** does it run
+`bash /usr/local/share/outo-models/enable-low-ports.sh 80`. A host that
+already lowered the threshold by hand is never touched again. Its output
+tells you which path was taken:
+
+- threshold `1024`, applied:
+  `[ok] net.ipv4.ip_unprivileged_port_start=80 applied on the host (persistent)`
+- threshold `1024`, failed:
+  `[warn] could not apply the low-port sysctl; ports 80/443 may fail to publish.`
+  followed by `       run it manually: sudo bash /usr/local/share/outo-models/enable-low-ports.sh 80`
+- threshold already ≤ 80:
+  `[ok] unprivileged low ports already allowed (threshold <value>)`
+- any other non-empty value (e.g. `1023`) — left as-is:
+  `[note] net.ipv4.ip_unprivileged_port_start is <value> (not the default 1024) — left as-is.`
+  followed by `       to lower it: sudo bash /usr/local/share/outo-models/enable-low-ports.sh 80`
+
+An empty read (no procfs) is silent.
+
+### Manual fix
+
+If the installer skipped or failed, run the helper once by hand. It asks
+for sudo itself and writes a persistent
+`/etc/sysctl.d/90-outo-models-low-ports.conf` drop-in:
+
+```bash
+/usr/local/share/outo-models/enable-low-ports.sh 80
+```
+
+The `outo-models` shim itself runs rootless (`--userns=keep-id`), so do
+**not** prefix CLI invocations with `sudo` — the elevated step is the host
+helper script, nothing else.
 
 To do it fully manually instead (the value should be your lowest exposed
 port — `80` in a typical install; `0` allows binding every port and is not
@@ -123,6 +195,17 @@ sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
 
 # Persistent
 echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf
+```
+
+### Quadlet users
+
+The [quadlet example](../container/examples/quadlet/outo-models.container)
+bypasses `install-cli.sh` entirely — nothing installs the helper and
+nothing applies the sysctl for you. A rootless quadlet deployment must run
+the host command once itself:
+
+```bash
+/usr/local/share/outo-models/enable-low-ports.sh 80
 ```
 
 ### Host port remapping
@@ -415,7 +498,7 @@ podman inspect outo-models --format '{{.Config.Env}}' | tr ',' '\n' | grep OUTO_
 # If OUTO_SPACES_RUNTIME_ENABLED is missing or false, inject it and restart
 sudo podman stop outo-models
 sudo podman rm outo-models
-sudo outo-models start
+outo-models start
 # or set spaces_runtime_enabled: true in config.yaml
 ```
 
