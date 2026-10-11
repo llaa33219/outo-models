@@ -76,9 +76,28 @@ if [[ "${1:-serve}" == "serve" ]] && [[ "$(id -u)" != "0" ]]; then
        net.ipv4.ip_unprivileged_port_start > 80). Caddy is likely to fail
        with a permission error on startup.
 
-       Fix one of the following:
-         1) podman run --cap-add NET_BIND_SERVICE ...   # recommended
-         2) host port remap: -p 8080:80 -p 8443:443  # TLS termination must be handled elsewhere
+       Two separate layers are involved here:
+
+         1) Binding 80/443 INSIDE the container network namespace.
+            This is what `--cap-add NET_BIND_SERVICE` solves.
+
+         2) Publishing the port on the HOST. On rootless Podman this is
+            done by the rootlessport helper, which lives in the host's
+            network namespace and cannot bind a privileged port while
+            net.ipv4.ip_unprivileged_port_start > 80.
+
+       `--cap-add NET_BIND_SERVICE` does NOT unblock (2): it grants the
+       capability inside the container only, and has no effect on the
+       host-side rootlessport helper.
+
+       Real fix — run this ON THE HOST once (persistent, writes
+       /etc/sysctl.d/90-outo-models-low-ports.conf):
+         /usr/local/share/outo-models/enable-low-ports.sh 80
+       Temporary alternative (until the next reboot):
+         sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
+       Or publish high host ports and terminate TLS elsewhere:
+         -p 8080:80 -p 8443:443
+
        See docs/troubleshooting.md for details.
 EOF
     fi

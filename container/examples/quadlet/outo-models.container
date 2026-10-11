@@ -29,9 +29,19 @@ Wants=network-online.target
 Image=localhost/outo-models:stable
 
 # Public ports. The container itself binds 80/443 inside, so this pairs
-# with EXPOSE. If the container runs as non-root, you also need
-# --cap-add NET_BIND_SERVICE — uncomment the AddCapability line in the
-# SecurityOpt section below.
+# with EXPOSE. Publishing these privileged host ports involves two
+# separate layers:
+#   1) Binding 80/443 INSIDE the container network namespace — grant
+#      the capability via AddCapability=NET_BIND_SERVICE (see the
+#      SecurityOpt section below).
+#   2) Publishing the port on the HOST. On rootless Podman this is done
+#      by the rootlessport helper, which lives in the host's network
+#      namespace and cannot bind a privileged port while
+#      net.ipv4.ip_unprivileged_port_start > 80.
+# NET_BIND_SERVICE only covers (1); it does NOT fix (2). A rootless
+# deployment publishing privileged host ports needs this one-time command
+# on the host:
+#   /usr/local/share/outo-models/enable-low-ports.sh 80
 PublishPort=80:80
 PublishPort=443:443
 
@@ -54,8 +64,10 @@ AutoUpdate=registry
 SecurityOpt=no-new-privileges:true
 SecurityOpt=label=type:container_runtime_t
 
-# By default the container runs without NET_BIND_SERVICE — uncomment
-# the next line to grant the capability explicitly when binding 80/443.
+# NET_BIND_SERVICE grants the capability to bind 80/443 INSIDE the
+# container; uncomment the next line to enable it. It has no effect on
+# host-side port publication on rootless Podman — for that, run
+# /usr/local/share/outo-models/enable-low-ports.sh 80 on the host.
 # AddCapability=NET_BIND_SERVICE
 
 # ReadOnly=false: there is no writable area outside the data volume, so
