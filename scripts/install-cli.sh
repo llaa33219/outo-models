@@ -361,6 +361,37 @@ OUTO_LOW_PORTS_HEREDOC_END
 
 chmod 0755 "${low_ports_dest}"
 
+# Apply the low-port sysctl automatically. Rootless Podman's host-side
+# `rootlessport` helper binds the published port, and the kernel only lets
+# unprivileged binds start at net.ipv4.ip_unprivileged_port_start (1024), so
+# a fresh host fails with "rootlessport cannot expose privileged port 80".
+# The in-container CLI cannot fix this (hostsys.py raises
+# low_ports_host_required when in_container()); this installer already runs as
+# root on the host, so it is the one place allowed to (AGENTS.md §2.3).
+#
+# Auto-apply ONLY on a pristine host: the gate is the untouched kernel default
+# 1024. Any other value is a deliberate operator setting we must not clobber —
+# it gets a [note] with the manual command instead. A missing procfs (non-Linux
+# host) stays silent, and a failure warns and continues: the install must never
+# die here. The helper no-ops once the threshold is low enough, so re-running
+# this installer is idempotent.
+low_ports_threshold="$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null || true)"
+if [[ -z "${low_ports_threshold}" ]]; then
+    :
+elif [[ "${low_ports_threshold}" == "1024" ]]; then
+    if bash "${low_ports_dest}" 80; then
+        echo "[ok] net.ipv4.ip_unprivileged_port_start=80 applied on the host (persistent)"
+    else
+        echo "[warn] could not apply the low-port sysctl; ports 80/443 may fail to publish." >&2
+        echo "       run it manually: sudo bash ${low_ports_dest} 80" >&2
+    fi
+elif [[ "${low_ports_threshold}" =~ ^[0-9]+$ ]] && (( 10#${low_ports_threshold} <= 80 )); then
+    echo "[ok] unprivileged low ports already allowed (threshold ${low_ports_threshold})"
+else
+    echo "[note] net.ipv4.ip_unprivileged_port_start is ${low_ports_threshold} (not the default 1024) — left as-is."
+    echo "       to lower it: sudo bash ${low_ports_dest} 80"
+fi
+
 echo "[done] installed ${dest} (default image: ${image})"
 echo "       installed ${firewall_dest} (host firewall script)"
 echo "       installed ${low_ports_dest} (host low-port sysctl script)"

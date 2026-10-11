@@ -160,6 +160,70 @@ class TestInstallCliScript:
         assert "command -v sudo" in body
 
 
+class TestInstallerAppliesLowPortSysctl:
+    """The installer must apply net.ipv4.ip_unprivileged_port_start itself.
+
+    Field failure: rootless Podman's host-side `rootlessport` helper cannot
+    bind host port 80 while the threshold is still the kernel default 1024
+    ("rootlessport cannot expose privileged port 80"). The in-container CLI
+    cannot fix this — `hostsys.py` deliberately raises `low_ports_host_required`
+    inside a container — and the installer already runs as root on the host,
+    so it is the one sanctioned place to do it (AGENTS.md §2.3).
+
+    Contract (see also the tests below):
+      * gated on the untouched kernel default 1024 — a deliberate operator
+        value must never be clobbered;
+      * `if ...; then ... else ...` guarded so `set -euo pipefail` cannot kill
+        the install;
+      * silent when procfs is unavailable (non-Linux host);
+      * idempotent — the helper itself no-ops when the threshold is low enough.
+    """
+
+    # The literal invocation, pinned by contract (not a variable, not 0, not 443).
+    APPLY = 'if bash "${low_ports_dest}" 80; then'
+    CHMOD = 'chmod 0755 "${low_ports_dest}"'
+
+    def _apply_index(self) -> int:
+        idx = INSTALL_TEXT.index(self.APPLY)
+        return idx
+
+    def test_applies_after_installing_the_helper(self) -> None:
+        # The helper must exist and be executable before it is run.
+        assert INSTALL_TEXT.index(self.CHMOD) < self._apply_index()
+
+    def test_apply_is_set_e_safe_and_warns_without_failing(self) -> None:
+        # `set -euo pipefail` is on: a bare `bash "${low_ports_dest}" 80` would
+        # abort the whole install on failure. The if/else form is the guard.
+        assert self.APPLY in INSTALL_TEXT
+        apply_block = INSTALL_TEXT[self._apply_index() : self._apply_index() + 600]
+        assert "else" in apply_block.split("fi", 1)[0]
+        assert "[warn]" in apply_block
+        # The warn branch points at the same command so the operator can retry.
+        assert "low_ports_dest" in apply_block
+
+    def test_gated_on_the_untouched_kernel_default(self) -> None:
+        # Only 1024 (the kernel default) triggers an automatic apply; any other
+        # operator-chosen value must be left alone.
+        gate_block = INSTALL_TEXT[
+            INSTALL_TEXT.index("ip_unprivileged_port_start") : self._apply_index()
+        ]
+        assert '"${low_ports_threshold}" == "1024"' in gate_block
+        # The left-as-is branch exists for deliberate values.
+        assert "[note]" in gate_block
+
+    def test_threshold_read_is_guarded_and_non_empty_gated(self) -> None:
+        # No procfs (non-Linux host) → the read must not fail the install, and
+        # the whole block must stay conditional on a non-empty threshold.
+        assert (
+            "cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null || true" in INSTALL_TEXT
+        )
+        assert '-z "${low_ports_threshold}"' in INSTALL_TEXT
+
+    def test_argument_is_the_literal_product_port(self) -> None:
+        invocations = re.findall(r'bash "\$\{low_ports_dest\}" ([^;\s]+)', INSTALL_TEXT)
+        assert invocations == ["80"], f"unexpected low-ports invocations: {invocations}"
+
+
 def _render_wrapper(tmp_path: Path, default_tag: str = "stable") -> Path:
     """Reproduce the wrapper the installer would write.
 

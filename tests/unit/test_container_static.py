@@ -51,9 +51,19 @@ SHARED_VOLUME_NAME = "outo-models-data"
 # entrypoint (inside the image) and the host-side helpers.
 ALL_SHELL_SCRIPTS: tuple[Path, ...] = (
     SCRIPTS_DIR / "firewall-open.sh",
+    SCRIPTS_DIR / "enable-low-ports.sh",
     SCRIPTS_DIR / "update.sh",
     SCRIPTS_DIR / "reset.sh",
     ENTRYPOINT,
+)
+
+# Host-side helpers the installer invokes directly; they must be executable
+# for `bash <path>` / sudo invocation to behave the same on every host.
+HOST_SIDECAR_SCRIPTS: tuple[Path, ...] = (
+    SCRIPTS_DIR / "firewall-open.sh",
+    SCRIPTS_DIR / "enable-low-ports.sh",
+    SCRIPTS_DIR / "update.sh",
+    SCRIPTS_DIR / "reset.sh",
 )
 
 # File contents read once for the whole test session. Each file is small
@@ -314,6 +324,17 @@ class TestShellScriptsSyntax:
         assert result.returncode == 0, (
             f"bash -n {script_path.name} failed: stderr={result.stderr!r}"
         )
+
+    @pytest.mark.parametrize(
+        "script_path",
+        HOST_SIDECAR_SCRIPTS,
+        ids=lambda p: p.name,
+    )
+    def test_host_script_is_executable(self, script_path: Path) -> None:
+        # The installer writes these to /usr/local/share and the CLI spawns
+        # them; a 0644 sibling would break direct execution on hosts that do
+        # not go through the installer.
+        assert script_path.stat().st_mode & 0o111, f"{script_path.name} is not executable"
 
 
 # ---------------------------------------------------------------------------
