@@ -4,6 +4,43 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.5 — Rootless low ports actually work
+
+### Fixed
+
+- **Rootless port-80 publication is now handled in all three places it
+  can fail.** Previously `--cap-add NET_BIND_SERVICE` was documented as
+  the fix, but it only covers Caddy's bind *inside* the container
+  namespace — publishing the host port is done by the HOST-side
+  `rootlessport` helper, which the capability cannot help.
+  - `scripts/install-cli.sh` now reads
+    `/proc/sys/net/ipv4/ip_unprivileged_port_start` after installing the
+    helper scripts and, **only when the value is exactly the kernel
+    default `1024`**, runs
+    `/usr/local/share/outo-models/enable-low-ports.sh 80`. It reports
+    which path it took; an empty read (no procfs) stays silent.
+  - `outo-models start` preflights the condition before it touches any
+    container and aborts with exit 1 and the error code
+    `low_ports_blocked`, printing the exact host command. Detection
+    **fails open**: a `podman info` error or timeout never blocks the
+    start. No new flags or environment variables.
+  - When `podman run` fails anyway, `start` echoes podman's captured
+    output verbatim before the diagnosis block, so the
+    `rootlessport cannot expose privileged port` signature now matches a
+    first diagnosis rule pointing at the host sysctl.
+- The container entrypoint advice and the quadlet example comments were
+  corrected to describe the two layers explicitly (in-container bind vs.
+  host publication). They previously implied `--cap-add
+  NET_BIND_SERVICE` solved both. Quadlet deployments bypass
+  `install-cli.sh` entirely and need the one-time host command themselves.
+
+### Notes
+
+- The entrypoint's container-side low-port warning is a heuristic about
+  the container namespace and can still fire spuriously on a fresh netns.
+  Known false positive; behavior unchanged. Judge by whether the server
+  actually comes up.
+
 ## v0.6.4 — Posts modals actually close
 
 ### Fixed
