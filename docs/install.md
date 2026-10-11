@@ -357,8 +357,11 @@ internet in this mode ships no transport-layer encryption. See
 Once setup completes, start the container with one host-side command:
 
 ```bash
-sudo outo-models start
+outo-models start
 ```
+
+The CLI shim runs rootless (`--userns=keep-id`) — do **not** prefix it
+with `sudo`.
 
 Internally this runs:
 
@@ -374,6 +377,16 @@ podman run -d --name outo-models \
   -p 80:80 -p 443:443 \
   outo-models:stable
 ```
+
+`--cap-add NET_BIND_SERVICE` covers **only the in-container bind** — Caddy
+binding `:80` / `:443` inside the container network namespace. On
+rootless Podman, publishing the host port is done by the HOST-side
+`rootlessport` helper, which the capability cannot help; that additionally
+needs the host sysctl `net.ipv4.ip_unprivileged_port_start` lowered. The
+installer (`scripts/install-cli.sh`) applies it automatically when the
+kernel is still at its default `1024`, and `outo-models start` preflights
+it (error code `low_ports_blocked`). See
+[troubleshooting.md §2](troubleshooting.md#2-port-80--443-binding-failures).
 
 `start` reads the `image`, `volume`, and `ports` keys from
 `/etc/outo-models/config.yaml` and forwards them. The in-container

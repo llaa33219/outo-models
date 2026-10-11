@@ -222,10 +222,40 @@ The container runs as uid/gid 1000 (`app`) per the
 - Anything that requires host privileges — firewall, DNS, certificate
   renewal — is done by **host-side scripts** (`src/outo_models/assets/scripts/*.sh`),
   not from inside the container
-- Caddy needs `--cap-add NET_BIND_SERVICE` to bind 80 / 443 when running
-  non-root; the `start` command attaches it automatically
+- Caddy needs `--cap-add NET_BIND_SERVICE` to bind 80 / 443 **inside the
+  container network namespace** when running non-root; the `start`
+  command attaches it automatically. It does **not** help rootless
+  Podman publish the host port — that is done by the HOST-side
+  `rootlessport` helper and needs `net.ipv4.ip_unprivileged_port_start`
+  lowered on the host (see the sysctl note below)
 - After root-only steps (e.g. `pip install`), the entrypoint drops back to
   the non-root user immediately
+
+### Sysctl: low ports on the host
+
+Rootless Podman publishes port 80 / 443 through the HOST-side
+`rootlessport` helper, which the kernel only permits when
+`net.ipv4.ip_unprivileged_port_start` is low enough. Raising access to
+low ports is a real privilege trade-off, so:
+
+- Lowering the threshold lets **any local unprivileged user** bind host
+  ports 80 and above. outo-models only ever writes `80` — never `0`,
+  which would allow binding every port.
+- The installer applies it **automatically only when the kernel is still
+  at the default `1024`**. A host that already tuned the value by hand is
+  left untouched.
+- Operators can revert it:
+
+  ```bash
+  sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1024
+  sudo rm /etc/sysctl.d/90-outo-models-low-ports.conf
+  ```
+
+  (Removing the drop-in stops the value from coming back on reboot.)
+- The alternative — publishing high host ports (`-p 8080:80 -p 8443:443`)
+  — needs no sysctl change but makes the service unreachable on standard
+  HTTPS and breaks ACME HTTP-01 (DNS-01 only). See
+  [troubleshooting.md §2](troubleshooting.md#2-port-80--443-binding-failures).
 
 ## 11. Host firewall boundary
 
