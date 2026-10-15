@@ -2421,3 +2421,75 @@ class TestFilesViewerMedia:
         body = response.text
         assert "<img" in body
         assert 'src="/alice/f-lfsimg/raw/main/lfs-image.png"' in body
+
+
+class TestMainClassPerTab:
+    """`<main>`'s wide-mode class is tab-scoped, never global.
+
+    `main--space-runtime` lifts the 1000 px cap on the Space Runtime
+    tab and `main--files-view` does the same for the files viewer
+    split. They are mutually exclusive, and a model/dataset repo (whose
+    bare URL is the card tab) must keep the empty default — otherwise
+    `main--space-runtime` would leak onto every page.
+    """
+
+    async def test_space_runtime_tab_is_full_bleed_and_excludes_the_files_view_mode(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        created = client.post(
+            "/api/spaces",
+            json={"name": "wide-space", "sdk": "static", "visibility": "public"},
+        )
+        assert created.status_code == 201, created.text
+        client.post("/api/auth/logout")
+
+        runtime_body = client.get("/alice/wide-space").text
+        assert '<main class="main--space-runtime">' in runtime_body
+        assert '<main class="main--files-view">' not in runtime_body
+
+        # The same space on the files tab goes back to the default cap —
+        # the runtime class is gated on `tab_runtime_active`, so a space
+        # with an open file viewer can never stack both.
+        files_body = client.get("/alice/wide-space/files").text
+        assert '<main class="main--space-runtime">' not in files_body
+        assert '<main class="main--files-view">' not in files_body
+        assert "<main>" in files_body
+
+    async def test_model_repo_keeps_the_default_main_class_on_every_tab(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        tmp_data_dir: Path,
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        assert (
+            client.post(
+                "/api/repos",
+                json={"name": "mainclass-model", "kind": "model", "visibility": "public"},
+            ).status_code
+            == 201
+        )
+        _seed_bare_repo_with_readme(
+            tmp_data_dir,
+            owner="alice",
+            name="mainclass-model",
+            files={"README.md": "x"},
+        )
+        for url in (
+            "/alice/mainclass-model",
+            "/alice/mainclass-model/card",
+            "/alice/mainclass-model/files",
+            "/alice/mainclass-model/community",
+        ):
+            body = client.get(url).text
+            assert "<main>" in body, url
+            assert '<main class="main--space-runtime">' not in body, url
+            # No Runtime tab on a model repo.
+            assert ">Runtime</a>" not in body, url

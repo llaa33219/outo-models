@@ -3,8 +3,11 @@
 {# When a file is being viewed, widen the page container beyond the
    default 1000 px cap so the split layout (tree + viewer) gets real
    horizontal room instead of being squeezed into the narrow card tab
-   width. Every other page inherits the empty default in base.html. #}
-{% block main_class %}{% if tab_files_active and files_viewer_path %}main--files-view{% endif %}{% endblock %}
+   width. The Runtime tab goes full-bleed for the same reason — the
+   Space app area fills the viewport — and it is emitted
+   UNCONDITIONALLY on that tab (never gated on a sub-state). Every
+   other page inherits the empty default in base.html. #}
+{% block main_class %}{% if tab_runtime_active %}main--space-runtime{% elif tab_files_active and files_viewer_path %}main--files-view{% endif %}{% endblock %}
 {% block content %}
   {# ------------------------------------------------------------------------
    * Header row: owner/name + copy button + like + follow capsules.
@@ -66,30 +69,131 @@
 
   {# ------------------------------------------------------------------------
    * Tabs — capsules; the active one uses the permanent-selection
-   * filled style (BLP spec §3.4 exception). The Settings tab is
-   * owner/admin-only — hidden for everyone else so visitors don't see
-   * a dead link. Adding the tab here keeps the URL canonical
-   * (`/{owner}/{name}/settings`) and lets the active state live in
-   * the path the same way as the other three tabs.
+   * filled style (BLP spec §3.4 exception). Spaces lead with Runtime
+   * (their landing view); models/datasets keep the card first. The
+   * Settings tab is owner/admin-only — hidden for everyone else so
+   * visitors don't see a dead link. Adding the tab here keeps the URL
+   * canonical and lets the active state live in the path the same way
+   * as the other tabs.
    * ------------------------------------------------------------------------ #}
   <nav class="repo-tabs" aria-label="Repository sections">
-    <a href="/{{ owner }}/{{ repo.name }}" class="tabs__link{% if tab_card_active %} tabs__link--active{% endif %}">{{ tab_card_label }}</a>
-    <a href="/{{ owner }}/{{ repo.name }}/files" class="tabs__link{% if tab_files_active %} tabs__link--active{% endif %}">Files</a>
-    <a href="/{{ owner }}/{{ repo.name }}/community" class="tabs__link{% if tab_community_active %} tabs__link--active{% endif %}">Community</a>
+    {% if repo.kind == 'space' %}
+      <a href="{{ tab_runtime_url }}" class="tabs__link{% if tab_runtime_active %} tabs__link--active{% endif %}">Runtime</a>
+    {% endif %}
+    <a href="{{ tab_card_url }}" class="tabs__link{% if tab_card_active %} tabs__link--active{% endif %}">{{ tab_card_label }}</a>
+    <a href="{{ tab_files_url }}" class="tabs__link{% if tab_files_active %} tabs__link--active{% endif %}">Files</a>
+    <a href="{{ tab_community_url }}" class="tabs__link{% if tab_community_active %} tabs__link--active{% endif %}">Community</a>
     {% if viewer_is_owner or (current_user and current_user.role == 'admin') %}
-      <a href="/{{ owner }}/{{ repo.name }}/settings" class="tabs__link{% if tab_settings_active %} tabs__link--active{% endif %}">Settings</a>
+      <a href="{{ tab_settings_url }}" class="tabs__link{% if tab_settings_active %} tabs__link--active{% endif %}">Settings</a>
     {% endif %}
   </nav>
 
   {# ------------------------------------------------------------------------
    * Two-column layout: main panel + right sidebar. Sidebar stacks below
    * on narrow screens via media query (page-local CSS at the bottom).
+   * The Runtime tab collapses to a single full-bleed column — the app
+   * area owns the viewport and the metadata sidebar steps aside.
    * ------------------------------------------------------------------------ #}
-  <div class="repo-layout">
+  <div class="repo-layout{% if tab_runtime_active %} repo-layout--runtime{% endif %}">
     <div class="repo-layout__main">
 
+      {# ============== RUNTIME TAB (spaces only) ============== #}
+      {% if tab_runtime_active and space_runtime %}
+        {# HF Spaces parity: the app owns the tab. A slim status/action
+           strip sits on top, then ONE full-area panel — the embedded app
+           when it runs, otherwise a large centered state panel carrying
+           the message and the primary Start/Stop action. The Runtime
+           state is deliberately NOT the sidebar tile's job; the tile
+           only survives on the other tabs as a compact reminder. #}
+        {% set runtime_can_control = space_runtime.runtime_enabled and (viewer_is_owner or (current_user and current_user.role == 'admin')) %}
+        {% macro runtime_action(extra_class) %}
+          {% if space_runtime.state == 'running' %}
+            <form method="post" action="/{{ owner }}/{{ repo.name }}/space/stop" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="space-runtime__btn space-runtime__btn--stop{{ extra_class }}">Stop</button>
+            </form>
+          {% else %}
+            <form method="post" action="/{{ owner }}/{{ repo.name }}/space/start" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="space-runtime__btn space-runtime__btn--start{{ extra_class }}">Start</button>
+            </form>
+          {% endif %}
+        {% endmacro %}
+
+        <section class="space-runtime" aria-label="Space runtime">
+          <div class="space-runtime__bar">
+            <p class="space-runtime__state">
+              <span class="space-runtime__chip space-runtime__chip--{{ space_runtime.state }}">{{ space_runtime.state }}</span>
+              <span class="space-runtime__sdk">sdk: {{ space_runtime.sdk }}</span>
+            </p>
+            <div class="space-runtime__actions">
+              {% if space_runtime.state == 'running' and space_runtime.url %}
+                <a class="space-runtime__external" href="{{ space_runtime.url }}" target="_blank" rel="noopener noreferrer">Open the Space</a>
+              {% endif %}
+              {% if runtime_can_control %}{{ runtime_action('') }}{% endif %}
+            </div>
+          </div>
+
+          {% if runtime_started or runtime_stopped %}
+            <p class="space-runtime__flash space-runtime__flash--ok" role="status">
+              {% if runtime_started %}
+                Start requested. The status chip above shows the current runtime state.
+              {% else %}
+                Stop requested. The status chip above shows the current runtime state.
+              {% endif %}
+            </p>
+          {% endif %}
+
+          {% if runtime_error or space_runtime.state == 'failed' %}
+            <div class="space-runtime__panel space-runtime__panel--error" role="alert">
+              <p class="space-runtime__panel-title">This Space could not start</p>
+              <p class="space-runtime__panel-message">
+                {%- if runtime_message %}{{ runtime_message }}{% else %}{{ space_runtime.message }}{% endif -%}
+              </p>
+              <p class="space-runtime__panel-code">error code: {{ runtime_error if runtime_error else 'runtime_failed' }}</p>
+              {% if runtime_can_control %}{{ runtime_action(' space-runtime__btn--lg') }}{% endif %}
+            </div>
+          {% elif not space_runtime.runtime_enabled %}
+            <div class="space-runtime__panel space-runtime__panel--notice">
+              <p class="space-runtime__panel-title">The Space runtime is disabled</p>
+              <p class="space-runtime__panel-message">
+                An operator must set <code>OUTO_SPACES_RUNTIME_ENABLED=true</code> on the server
+                and restart it before this Space can run.
+              </p>
+            </div>
+          {% elif space_runtime.state == 'running' %}
+            {# Path-relative src on purpose: an absolute URL breaks behind
+               a reverse proxy and on internal/IP installs. #}
+            <iframe
+              class="space-runtime__frame"
+              title="Running app of {{ owner }}/{{ repo.name }}"
+              src="{{ space_runtime.path }}"
+              loading="eager"
+              referrerpolicy="no-referrer"></iframe>
+          {% elif space_runtime.state == 'building' %}
+            <div class="space-runtime__panel space-runtime__panel--building">
+              <p class="space-runtime__panel-title">Starting up</p>
+              <p class="space-runtime__panel-message">
+                The container is being built and started. Reload this page in a moment.
+              </p>
+            </div>
+          {% else %}
+            <div class="space-runtime__panel space-runtime__panel--stopped">
+              <p class="space-runtime__panel-title">This Space is currently stopped</p>
+              <p class="space-runtime__panel-message">
+                {% if runtime_can_control %}
+                  Start the Space to load the app here.
+                {% else %}
+                  The app is not running. Log in as the owner, or ask {{ owner }} to start it.
+                {% endif %}
+              </p>
+              {% if runtime_can_control %}{{ runtime_action(' space-runtime__btn--lg') }}{% endif %}
+            </div>
+          {% endif %}
+        </section>
+
       {# ============== CARD TAB ============== #}
-      {% if tab_card_active %}
+      {% elif tab_card_active %}
         {% if card_empty %}
           <article class="empty-state">
             <p>This {{ repo.kind }} does not have a <code>README.md</code> yet.</p>
@@ -516,7 +620,11 @@
         <p class="muted">all-time git clones + fetches</p>
       </section>
 
-      {% if space_runtime %}
+      {# Compact reminder only. The embedded app, the status chip and
+         the primary Start/Stop action live in the Runtime tab, so this
+         tile drops the iframe and links across instead. Hidden entirely
+         on the Runtime tab itself (the layout collapses there). #}
+      {% if space_runtime and not tab_runtime_active %}
         <section class="repo-sidebar__tile repo-sidebar__tile--runtime" aria-label="Space runtime status">
           <h3>Runtime</h3>
           <p class="repo-sidebar__runtime-state">
@@ -529,15 +637,6 @@
               <a class="new-btn repo-sidebar__runtime-open-link" href="{{ space_runtime.url }}" target="_blank" rel="noopener noreferrer">
                 Open the Space
               </a>
-            </p>
-            <p class="repo-sidebar__runtime-iframe-wrap">
-              <iframe
-                class="repo-sidebar__runtime-iframe"
-                title="Embedded preview of {{ owner }}/{{ repo.name }}"
-                src="{{ space_runtime.url }}"
-                loading="lazy"
-                referrerpolicy="no-referrer">
-              </iframe>
             </p>
           {% endif %}
           {% if space_runtime.runtime_enabled and (viewer_is_owner or current_user and current_user.role == 'admin') %}
@@ -1219,7 +1318,8 @@
       gap: 8px;
       flex-wrap: wrap;
     }
-    .repo-sidebar__runtime-chip {
+    .repo-sidebar__runtime-chip,
+    .space-runtime__chip {
       display: inline-flex;
       align-items: center;
       height: 22px;
@@ -1232,11 +1332,22 @@
       border-radius: 0;
       color: var(--text);
     }
-    .repo-sidebar__runtime-chip--running { background: var(--blp-paper-green); border-color: var(--blp-green); color: var(--blp-deep-dark); }
-    .repo-sidebar__runtime-chip--building { background: var(--blp-paper-blue); border-color: var(--blp-sky); }
-    .repo-sidebar__runtime-chip--stopped { background: var(--blp-paper-blue-2); border-color: var(--blp-light-dark); color: var(--text-sub); }
-    .repo-sidebar__runtime-chip--failed { background: var(--blp-paper-blue-2); border-color: var(--blp-soft-red); color: var(--blp-deep-red); }
-    .repo-sidebar__runtime-chip--disabled { background: var(--blp-paper-blue-2); border-color: var(--color-inactive); color: var(--text-sub); }
+    .space-runtime__chip {
+      height: 28px;
+      padding: 0 12px;
+      font-size: 13px;
+      letter-spacing: 0.06em;
+    }
+    .repo-sidebar__runtime-chip--running,
+    .space-runtime__chip--running { background: var(--blp-paper-green); border-color: var(--blp-green); color: var(--blp-deep-dark); }
+    .repo-sidebar__runtime-chip--building,
+    .space-runtime__chip--building { background: var(--blp-paper-blue); border-color: var(--blp-sky); }
+    .repo-sidebar__runtime-chip--stopped,
+    .space-runtime__chip--stopped { background: var(--blp-paper-blue-2); border-color: var(--blp-light-dark); color: var(--text-sub); }
+    .repo-sidebar__runtime-chip--failed,
+    .space-runtime__chip--failed { background: var(--blp-paper-orange); border-color: var(--blp-soft-red); color: var(--blp-deep-red); }
+    .repo-sidebar__runtime-chip--disabled,
+    .space-runtime__chip--disabled { background: var(--blp-paper-blue-2); border-color: var(--color-inactive); color: var(--text-sub); }
     .repo-sidebar__runtime-sdk {
       font: 500 12px/1 'Pretendard', system-ui, sans-serif;
       color: var(--text-sub);
@@ -1244,21 +1355,6 @@
     .repo-sidebar__runtime-message { margin: 0 0 12px; font-size: 13px; }
     .repo-sidebar__runtime-open { margin: 8px 0; }
     .repo-sidebar__runtime-open-link { width: 100%; }
-    .repo-sidebar__runtime-iframe-wrap {
-      margin: 12px 0 0;
-      border: var(--border-el) solid var(--color-inactive);
-      border-radius: 0;
-      background: var(--blp-paper-blue-2);
-      height: 220px;
-      overflow: hidden;
-    }
-    .repo-sidebar__runtime-iframe {
-      width: 100%;
-      height: 100%;
-      border: 0;
-      display: block;
-      background: var(--tile-bg);
-    }
     .repo-sidebar__runtime-actions {
       margin: 12px 0 0;
       display: flex;
@@ -1312,6 +1408,215 @@
       border-color: var(--blp-deep-red);
       color: var(--blp-deep-red);
       outline: none;
+    }
+
+    /* ============================================================
+     * Runtime tab — the Space landing view (HF Spaces parity).
+     * Full-bleed: the 1000px content cap is lifted and the metadata
+     * sidebar steps aside, so the app area (or its state panel) owns
+     * the viewport width. `main--space-runtime` is emitted by the
+     * `main_class` block UNCONDITIONALLY on this tab, so the cap is
+     * lifted even for a space whose files-viewer state is empty.
+     * ============================================================ */
+    main.main--space-runtime .bg-tile__inner { max-width: none; padding: 0; }
+    main.main--space-runtime .repo-header,
+    main.main--space-runtime .repo-tabs { padding-left: 16px; padding-right: 16px; }
+    .repo-layout--runtime { grid-template-columns: minmax(0, 1fr); margin-top: var(--gap-tile); }
+    .repo-layout--runtime .repo-sidebar { display: none; }
+
+    .space-runtime { display: flex; flex-direction: column; }
+
+    /* Slim status/action strip — deliberately light: status on the
+     * left, the primary control on the right (HF Spaces header). */
+    .space-runtime__bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      transition: border-color var(--t-tile);
+    }
+    .space-runtime__bar:hover { border-color: var(--color-main); }
+    .space-runtime__state {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .space-runtime__sdk {
+      font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text-sub);
+    }
+    .space-runtime__actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .space-runtime__external {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 44px;
+      padding: 0 18px;
+      font: 600 15px/1 'Pretendard', system-ui, sans-serif;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--color-inactive);
+      border-radius: var(--radius-pill);
+      text-decoration: none;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .space-runtime__external:hover {
+      border-color: var(--color-main);
+      color: var(--color-main);
+      text-decoration: none;
+    }
+    .space-runtime__external:active,
+    .space-runtime__external:focus-visible {
+      border-color: var(--el-active);
+      background: var(--blp-light-dark-blue);
+      outline: none;
+    }
+
+    /* Primary CTA — the `run-btn` capsule scaled to a real button
+     * (44px control row), and `--lg` for the panel-level action. */
+    .space-runtime__btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 132px;
+      height: 44px;
+      padding: 0 26px;
+      font: 700 15px/1 'Pretendard', system-ui, sans-serif;
+      letter-spacing: 0.01em;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+    }
+    .space-runtime__btn--lg {
+      min-width: 200px;
+      height: 64px;
+      padding: 0 44px;
+      font-size: 22px;
+    }
+    .space-runtime__btn--start {
+      background: var(--color-main);
+      border: var(--border-el) solid var(--color-main);
+      color: var(--tile-bg);
+    }
+    .space-runtime__btn--start:hover { background: var(--el-hover); border-color: var(--el-hover); }
+    .space-runtime__btn--start:active,
+    .space-runtime__btn--start:focus-visible {
+      background: var(--el-active);
+      border-color: var(--el-active);
+      outline: none;
+    }
+    .space-runtime__btn--stop {
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--blp-red);
+      color: var(--blp-red);
+    }
+    .space-runtime__btn--stop:hover,
+    .space-runtime__btn--stop:active,
+    .space-runtime__btn--stop:focus-visible {
+      background: var(--blp-paper-orange);
+      border-color: var(--blp-deep-red);
+      color: var(--blp-deep-red);
+      outline: none;
+    }
+
+    .space-runtime__flash {
+      margin: 0;
+      padding: 12px 16px;
+      font-size: 14px;
+      color: var(--blp-deep-green);
+      background: var(--blp-paper-lime);
+      border: var(--border-tile) solid var(--blp-paper-green);
+    }
+
+    /* One full-area panel per state. The error panel is the loud one:
+     * a 2px error border, an error surface, and a monospace code line
+     * so the operator can match it against the server log. */
+    .space-runtime__panel {
+      flex: 1;
+      min-height: 70vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: var(--gap-tile);
+      padding: 48px 24px;
+      text-align: center;
+      background: var(--tile-bg);
+      border: var(--border-tile) solid var(--color-inactive);
+      transition: border-color var(--t-tile);
+    }
+    .space-runtime__panel:hover { border-color: var(--color-main); }
+    .space-runtime__panel--error {
+      border-color: var(--blp-deep-red);
+      background: var(--blp-paper-orange);
+    }
+    .space-runtime__panel--error:hover { border-color: var(--blp-deep-red); }
+    .space-runtime__panel--building { min-height: 40vh; }
+    .space-runtime__panel-title {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+    .space-runtime__panel--error .space-runtime__panel-title { color: var(--blp-deep-red); }
+    .space-runtime__panel-message {
+      margin: 0;
+      max-width: 60ch;
+      font-size: 16px;
+      line-height: 1.6;
+      color: var(--text-sub);
+    }
+    .space-runtime__panel-message code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--tile-bg);
+      border: var(--border-el) solid var(--blp-light-dark);
+      padding: 2px 6px;
+    }
+    .space-runtime__panel-code {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: var(--blp-deep-red);
+    }
+    .space-runtime__panel .inline { display: inline-flex; margin-top: 4px; }
+
+    /* The embedded app — the whole content area, never a sidebar-sized
+     * thumbnail. `loading="eager"`: the app IS the page here. */
+    .space-runtime__frame {
+      width: 100%;
+      height: 72vh;
+      min-height: 520px;
+      margin-top: var(--gap-tile);
+      border: var(--border-tile) solid var(--color-inactive);
+      background: var(--tile-bg);
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .space-runtime__panel { min-height: 60vh; padding: 32px 16px; }
+      .space-runtime__panel-title { font-size: 22px; }
+      .space-runtime__panel-message { font-size: 15px; }
+      .space-runtime__frame { height: 64vh; min-height: 420px; }
+      .space-runtime__bar { align-items: flex-start; flex-direction: column; }
+      .space-runtime__actions { width: 100%; }
+      .space-runtime__actions form.inline { flex: 1 1 auto; }
+      .space-runtime__actions .space-runtime__btn { width: 100%; }
     }
 
     /* Relative-positioning helper for the hidden clone-url source. */

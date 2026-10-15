@@ -7,13 +7,16 @@ Covers:
   like counts).
 * Empty-state tile when filters exclude every repo.
 * Shareable URLs (query string) — Clear link returns to default sort.
-* Space runtime tile on the repo page (state chip + owner-only Start /
-  Stop capsules). Disabled branch surfaces an admin hint instead of
-  buttons. The "Open the Space" link + iframe only render when the
-  runtime reports `running` and a URL.
+* Space Runtime tab — the landing view for spaces (HF Spaces
+  parity): `/{owner}/{name}` and `/{owner}/{name}/runtime` render it,
+  `/{owner}/{name}/card` holds the card, and the tab strip leads with
+  Runtime. The tab carries the status chip, the primary Start/Stop
+  control, the full-area app iframe (path-relative `src`) or one large
+  state panel — stopped / failed / building / runtime-disabled.
 * Owner-only POSTs for start/stop (anonymous → 303 /login, stranger →
-  403, missing CSRF → 403). When `spaces_runtime_enabled` is False the
-  handler just re-renders (no 503, no Podman call).
+  403, missing CSRF → 403). Success redirects carry `?started=1` /
+  `?stopped=1`; a domain failure carries `?runtime_error=<code>` and
+  an unexpected exception is logged and reported as `internal_error`.
 """
 
 from __future__ import annotations
@@ -44,6 +47,11 @@ def _form_csrf(client: TestClient, path: str) -> str:
     match = re.search(r'name="_csrf" value="([^"]+)"', response.text)
     assert match is not None, path
     return cookie_token
+
+
+def _tab_labels(body: str) -> list[str]:
+    """Label of every tab link, in document order."""
+    return re.findall(r'class="tabs__link[^"]*">([^<]+)</a>', body)
 
 
 def _seed_bare_repo_with_readme(
@@ -274,138 +282,189 @@ class TestCatalogFilterPanel:
 
 
 # ---------------------------------------------------------------------------
-# Space runtime tile + start/stop POSTs.
+# Space Runtime tab — the Space landing view (HF Spaces parity).
+#
+# URL mapping pinned here: a space's bare URL is the Runtime tab, the
+# card tab moved to `/{owner}/{name}/card`, and `/runtime` is the
+# explicit alias of the bare URL (spaces only).
 # ---------------------------------------------------------------------------
 
 
-class TestSpaceRuntimeTile:
-    """The Space page adds a Runtime sidebar tile (state chip + owner POSTs)."""
+class TestSpaceRuntimeTab:
+    """Runtime is the default Space tab; models/datasets are untouched."""
 
-    async def _seed_anon_space(
-        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    async def _seed_space(
+        self,
+        app: tuple[TestClient, FastAPI, object],
+        seed_approved_user,
+        *,
+        name: str,
+        sdk: str = "static",
+        logout: bool = True,
     ) -> TestClient:
         client, _, _ = app
         await seed_approved_user(username="alice")
         _login(client, "alice")
         created = client.post(
             "/api/spaces",
-            json={"name": "demo-space", "sdk": "static", "visibility": "public"},
+            json={"name": name, "sdk": sdk, "visibility": "public"},
         )
         assert created.status_code == 201, created.text
-        client.post("/api/auth/logout")
+        if logout:
+            client.post("/api/auth/logout")
         return client
 
-    async def test_runtime_tile_renders_when_runtime_unreachable(
+    async def test_static_space_without_podman_renders_stopped_state(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
-        # v0.5.6: settings.spaces_runtime_enabled defaults True; in CI
-        # the Podman socket is not mounted, so the dispatcher reports
-        # `failed` with the runtime manager hint. No iframe, no start /
-        # stop capsules (owner can't start without Podman).
-        client = await self._seed_anon_space(app, seed_approved_user)
+        """Frozen contract: `static` is answered from the exported site
+        dir, never from Podman. No site dir -> `stopped` (never
+        `failed`), so a missing Podman socket cannot produce an error
+        panel for a static Space.
+        """
+        client = await self._seed_space(app, seed_approved_user, name="demo-space")
         response = client.get("/alice/demo-space")
         assert response.status_code == 200
         body = response.text
-        assert "repo-sidebar__tile--runtime" in body
-        # State chip shows "failed" (or "stopped" when the dispatcher
-        # reports the runtime is enabled but no container is running).
-        assert (
-            "repo-sidebar__runtime-chip--failed" in body
-            or "repo-sidebar__runtime-chip--stopped" in body
-        )
-        # Without a running container: no iframe, no "Open the Space" link.
+        assert 'class="space-runtime__chip space-runtime__chip--stopped"' in body
+        assert 'class="space-runtime__panel space-runtime__panel--stopped"' in body
+        assert "This Space is currently stopped" in body
         assert "<iframe" not in body
         assert "Open the Space" not in body
+        # The Runtime tab owns the runtime state — no sidebar tile, and
+        # the metadata sidebar is collapsed out of the way.
+        assert '<section class="repo-sidebar__tile repo-sidebar__tile--runtime"' not in body
+        assert 'class="repo-layout repo-layout--runtime"' in body
 
-    async def test_runtime_tile_renders_when_runtime_explicitly_disabled(
-        self,
-        app: tuple[TestClient, FastAPI, object],
-        seed_approved_user,
-        monkeypatch,
+    async def test_container_space_with_unreachable_podman_renders_failed_state(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
-        # The "disabled" branch now fires only when an operator sets
-        # OUTO_SPACES_RUNTIME_ENABLED=false explicitly (the default is
-        # ON). Verify the chip + admin hint still appear in that path.
-        client, app_obj, _ = app  # type: ignore[misc]
-        from copy import deepcopy
-
-        live_settings = deepcopy(app_obj.state.settings)
-        live_settings.spaces_runtime_enabled = False
-        app_obj.state.settings = live_settings
-
-        client = await self._seed_anon_space(app, seed_approved_user)
-        response = client.get("/alice/demo-space")
+        """Frozen contract: a non-static Space with no reachable Podman
+        reports `failed` with the runtime-manager message, and the
+        Runtime tab turns that into the big error panel.
+        """
+        client = await self._seed_space(app, seed_approved_user, name="podman-space", sdk="docker")
+        response = client.get("/alice/podman-space")
         assert response.status_code == 200
         body = response.text
-        assert "repo-sidebar__tile--runtime" in body
-        assert "repo-sidebar__runtime-chip--disabled" in body
-        assert "disabled" in body
-        # The disabled branch shows the OUTO_SPACES_RUNTIME_ENABLED hint,
-        # NOT start/stop capsules.
-        assert "OUTO_SPACES_RUNTIME_ENABLED" in body
-        assert 'action="/alice/demo-space/space/start"' not in body
-        assert 'action="/alice/demo-space/space/stop"' not in body
+        assert 'class="space-runtime__chip space-runtime__chip--failed"' in body
+        assert 'class="space-runtime__panel space-runtime__panel--error"' in body
+        assert "This Space could not start" in body
+        assert 'role="alert"' in body
+        assert "error code: runtime_failed" in body
         assert "<iframe" not in body
 
-    async def test_runtime_enabled_shows_owner_start_button(
-        self,
-        app: tuple[TestClient, FastAPI, object],
-        seed_approved_user,
-        monkeypatch,
+    async def test_runtime_error_query_param_renders_the_error_panel(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
-        client, app_obj, _ = app  # type: ignore[misc]
-        # Flip the runtime flag on the live app + stub runtime_status.
-        from copy import deepcopy
-
-        live_settings = deepcopy(app_obj.state.settings)
-        live_settings.spaces_runtime_enabled = True
-        app_obj.state.settings = live_settings
-
-        await seed_approved_user(username="alice")
-        _login(client, "alice")
-        created = client.post(
-            "/api/spaces",
-            json={"name": "demo-run", "sdk": "static", "visibility": "public"},
+        """A failed Start/Stop POST redirects back with
+        `?runtime_error=<code>&message=<text>`; the panel shows both
+        even when the runtime status itself reads `stopped`.
+        """
+        client = await self._seed_space(app, seed_approved_user, name="queryerr-space")
+        response = client.get(
+            "/alice/queryerr-space",
+            params={
+                "runtime_error": "space_start_failed",
+                "message": "podman socket /run/podman/podman.sock is missing",
+            },
         )
-        assert created.status_code == 201, created.text
-
-        import outo_models.server.routers.ui as _ui_mod
-        from outo_models.spaces.runtime import RuntimeState, RuntimeStatus
-
-        class _StubAsync:
-            async def __call__(self, *args, **kwargs):
-                return RuntimeStatus(state=RuntimeState.STOPPED, message="stopped", url=None)
-
-        monkeypatch.setattr(_ui_mod, "runtime_status_async", _StubAsync())
-        response = client.get("/alice/demo-run")
         assert response.status_code == 200
         body = response.text
-        assert "repo-sidebar__tile--runtime" in body
-        assert "stopped" in body
-        assert 'action="/alice/demo-run/space/start"' in body
-        assert "OUTO_SPACES_RUNTIME_ENABLED" not in body
-        client.post("/api/auth/logout")
+        assert 'class="space-runtime__panel space-runtime__panel--error"' in body
+        assert "error code: space_start_failed" in body
+        assert "podman socket" in body
+        # The form outcome replaces the stopped panel, it does not
+        # stack a second Start button next to it.
+        assert 'class="space-runtime__panel space-runtime__panel--stopped"' not in body
 
-    async def test_runtime_running_renders_open_link_and_iframe(
-        self,
-        app: tuple[TestClient, FastAPI, object],
-        seed_approved_user,
-        monkeypatch,
+    async def test_bare_space_url_is_the_runtime_tab_and_card_moves_to_card_url(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
     ) -> None:
-        client, app_obj, _ = app  # type: ignore[misc]
-        from copy import deepcopy
+        client = await self._seed_space(app, seed_approved_user, name="landing-space")
 
-        live_settings = deepcopy(app_obj.state.settings)
-        live_settings.spaces_runtime_enabled = True
-        app_obj.state.settings = live_settings
+        bare = client.get("/alice/landing-space")
+        assert bare.status_code == 200
+        bare_body = bare.text
+        assert '<main class="main--space-runtime">' in bare_body
+        assert 'class="space-runtime__bar"' in bare_body
+        assert 'tabs__link--active">Runtime</a>' in bare_body
 
+        alias = client.get("/alice/landing-space/runtime")
+        assert alias.status_code == 200
+        assert '<main class="main--space-runtime">' in alias.text
+
+        card = client.get("/alice/landing-space/card")
+        assert card.status_code == 200
+        card_body = card.text
+        assert 'class="space-runtime__bar"' not in card_body
+        assert '<main class="main--space-runtime">' not in card_body
+        assert 'class="tabs__link tabs__link--active">Space card</a>' in card_body
+
+    async def test_space_tab_order_leads_with_runtime_and_model_tab_order_is_unchanged(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
         await seed_approved_user(username="alice")
         _login(client, "alice")
-        created = client.post(
-            "/api/spaces",
-            json={"name": "running-demo", "sdk": "static", "visibility": "public"},
+        assert (
+            client.post(
+                "/api/spaces",
+                json={"name": "tab-order-space", "sdk": "static", "visibility": "public"},
+            ).status_code
+            == 201
         )
-        assert created.status_code == 201, created.text
+        assert (
+            client.post(
+                "/api/repos",
+                json={"name": "tab-order-model", "kind": "model", "visibility": "public"},
+            ).status_code
+            == 201
+        )
+        client.post("/api/auth/logout")
+
+        space = client.get("/alice/tab-order-space/card").text
+        model = client.get("/alice/tab-order-model").text
+
+        assert [label for label in _tab_labels(space)] == [
+            "Runtime",
+            "Space card",
+            "Files",
+            "Community",
+        ]
+        # Non-space repos keep the four original tabs in the original
+        # order and the bare URL as their card tab.
+        assert [label for label in _tab_labels(model)] == [
+            "Model card",
+            "Files",
+            "Community",
+        ]
+        assert 'href="/alice/tab-order-model" class="tabs__link tabs__link--active"' in model
+
+    async def test_runtime_url_is_404_for_models_and_datasets(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        for name, kind in (("rt-model", "model"), ("rt-dataset", "dataset")):
+            assert (
+                client.post(
+                    "/api/repos",
+                    json={"name": name, "kind": kind, "visibility": "public"},
+                ).status_code
+                == 201
+            )
+        client.post("/api/auth/logout")
+        for name in ("rt-model", "rt-dataset"):
+            assert client.get(f"/alice/{name}/runtime").status_code == 404
+            # ... while the bare URL still renders the card tab.
+            assert client.get(f"/alice/{name}").status_code == 200
+
+    async def test_running_space_renders_full_area_iframe_with_relative_src(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        client = await self._seed_space(app, seed_approved_user, name="running-demo", logout=False)
 
         import outo_models.server.routers.ui as _ui_mod
         from outo_models.spaces.runtime import RuntimeState, RuntimeStatus
@@ -415,20 +474,182 @@ class TestSpaceRuntimeTile:
                 return RuntimeStatus(
                     state=RuntimeState.RUNNING,
                     message="running",
-                    url="http://localhost/spaces/alice/running-demo/run/",
+                    url="https://models.example.com/spaces/alice/running-demo/run/",
                 )
 
         monkeypatch.setattr(_ui_mod, "runtime_status_async", _RunningStub())
         response = client.get("/alice/running-demo")
         assert response.status_code == 200
         body = response.text
-        assert "repo-sidebar__runtime-chip--running" in body
-        assert "running" in body
+        assert 'class="space-runtime__chip space-runtime__chip--running"' in body
+        assert 'class="space-runtime__frame"' in body
+        # The iframe MUST take the path-relative run URL; the absolute
+        # `url` only backs the new-tab link (reverse-proxy safe).
+        assert 'src="/spaces/alice/running-demo/run/"' in body
+        assert 'loading="eager"' in body
+        assert 'referrerpolicy="no-referrer"' in body
+        assert "https://models.example.com/spaces/alice/running-demo/run/" in body
         assert "Open the Space" in body
-        assert "running-demo/run/" in body
-        assert "<iframe" in body
         assert 'action="/alice/running-demo/space/stop"' in body
+        assert 'action="/alice/running-demo/space/start"' not in body
         client.post("/api/auth/logout")
+
+    async def test_owner_sees_the_big_start_button_on_the_stopped_panel(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client = await self._seed_space(app, seed_approved_user, name="demo-run", logout=False)
+        response = client.get("/alice/demo-run")
+        assert response.status_code == 200
+        body = response.text
+        # Big CTA in the stopped panel AND the slim header strip.
+        assert 'class="space-runtime__btn space-runtime__btn--start space-runtime__btn--lg"' in body
+        assert 'class="space-runtime__btn space-runtime__btn--start"' in body
+        assert 'action="/alice/demo-run/space/start"' in body
+        assert "OUTO_SPACES_RUNTIME_ENABLED" not in body
+        client.post("/api/auth/logout")
+
+    async def test_anonymous_viewer_gets_no_start_action(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client = await self._seed_space(app, seed_approved_user, name="anon-view-space")
+        body = client.get("/alice/anon-view-space").text
+        assert 'class="space-runtime__panel space-runtime__panel--stopped"' in body
+        assert 'action="/alice/anon-view-space/space/start"' not in body
+        assert 'action="/alice/anon-view-space/space/stop"' not in body
+        # Settings stays owner/admin-only, Runtime stays public.
+        assert ">Settings</a>" not in body
+
+    async def test_runtime_disabled_renders_the_operator_notice(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client, app_obj, _ = app  # type: ignore[misc]
+        from copy import deepcopy
+
+        live_settings = deepcopy(app_obj.state.settings)
+        live_settings.spaces_runtime_enabled = False
+        app_obj.state.settings = live_settings
+
+        client = await self._seed_space(app, seed_approved_user, name="disabled-space")
+        response = client.get("/alice/disabled-space")
+        assert response.status_code == 200
+        body = response.text
+        assert 'class="space-runtime__panel space-runtime__panel--notice"' in body
+        assert "OUTO_SPACES_RUNTIME_ENABLED" in body
+        assert 'class="space-runtime__chip space-runtime__chip--disabled"' in body
+        assert 'action="/alice/disabled-space/space/start"' not in body
+        assert 'action="/alice/disabled-space/space/stop"' not in body
+        assert "<iframe" not in body
+
+    async def test_sidebar_runtime_tile_stays_on_the_other_tabs_without_the_iframe(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user
+    ) -> None:
+        client = await self._seed_space(app, seed_approved_user, name="tile-space")
+        body = client.get("/alice/tile-space/card").text
+        assert '<section class="repo-sidebar__tile repo-sidebar__tile--runtime"' in body
+        assert 'class="repo-sidebar__runtime-chip repo-sidebar__runtime-chip--stopped"' in body
+        # The 220px sidebar preview is gone; the app lives on Runtime.
+        assert "<iframe" not in body
+
+
+class TestSpaceRuntimeFormOutcomes:
+    """Start/Stop POSTs report the outcome on the redirect query."""
+
+    async def _owner_with_space(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, name: str
+    ) -> TestClient:
+        client, _, _ = app
+        await seed_approved_user(username="alice")
+        _login(client, "alice")
+        assert (
+            client.post(
+                "/api/spaces",
+                json={"name": name, "sdk": "static", "visibility": "public"},
+            ).status_code
+            == 201
+        )
+        return client
+
+    async def test_success_redirect_carries_started(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        client = await self._owner_with_space(app, seed_approved_user, "ok-start-space")
+        import outo_models.server.routers.spaces as _spaces_mod
+
+        async def _ok(**kwargs):
+            return None
+
+        monkeypatch.setattr(_spaces_mod, "_run_lifecycle", _ok)
+        csrf = _form_csrf(client, "/alice/ok-start-space")
+        posted = client.post(
+            "/alice/ok-start-space/space/start",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        assert posted.headers["location"] == "/alice/ok-start-space?started=1"
+
+    async def test_success_redirect_carries_stopped(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        client = await self._owner_with_space(app, seed_approved_user, "ok-stop-space")
+        import outo_models.server.routers.spaces as _spaces_mod
+
+        async def _ok(**kwargs):
+            return None
+
+        monkeypatch.setattr(_spaces_mod, "_run_lifecycle", _ok)
+        csrf = _form_csrf(client, "/alice/ok-stop-space")
+        posted = client.post(
+            "/alice/ok-stop-space/space/stop",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        assert posted.headers["location"] == "/alice/ok-stop-space?stopped=1"
+
+    async def test_domain_failure_redirect_carries_the_error_code(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        client = await self._owner_with_space(app, seed_approved_user, "boom-space")
+        import outo_models.server.routers.spaces as _spaces_mod
+        from outo_models.exceptions import OutoError
+
+        async def _boom(**kwargs):
+            raise OutoError("podman refused to start the container", code="space_start_failed")
+
+        monkeypatch.setattr(_spaces_mod, "_run_lifecycle", _boom)
+        csrf = _form_csrf(client, "/alice/boom-space")
+        posted = client.post(
+            "/alice/boom-space/space/start",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        location = posted.headers["location"]
+        assert location.startswith("/alice/boom-space?runtime_error=space_start_failed")
+        assert "message=podman%20refused%20to%20start%20the%20container" in location
+
+    async def test_unexpected_failure_redirects_as_internal_error(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        client = await self._owner_with_space(app, seed_approved_user, "crash-space")
+        import outo_models.server.routers.spaces as _spaces_mod
+
+        async def _boom(**kwargs):
+            raise ValueError("secret token sk-abcdef must not leak")
+
+        monkeypatch.setattr(_spaces_mod, "_run_lifecycle", _boom)
+        csrf = _form_csrf(client, "/alice/crash-space")
+        posted = client.post(
+            "/alice/crash-space/space/start",
+            data={"_csrf": csrf},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303
+        location = posted.headers["location"]
+        assert "runtime_error=internal_error" in location
+        assert "secret" not in location
+        assert "ValueError" not in location
 
     async def test_start_post_anonymous_redirects_to_login(
         self, app: tuple[TestClient, FastAPI, object], seed_approved_user
@@ -465,7 +686,9 @@ class TestSpaceRuntimeTile:
         )
         client.post("/api/auth/logout")
         _login(client, "bob")
-        csrf = _form_csrf(client, "/alice/private-space")
+        # A stranger gets no Start form on the Runtime tab, so the CSRF
+        # pair is minted from a page that does render one for them.
+        csrf = _form_csrf(client, "/alice/private-space/card")
         posted = client.post(
             "/alice/private-space/space/start",
             data={"_csrf": csrf},
@@ -503,7 +726,7 @@ class TestSpaceRuntimeTile:
         )
         client.post("/api/auth/logout")
         _login(client, "bob")
-        csrf = _form_csrf(client, "/alice/stopx-space")
+        csrf = _form_csrf(client, "/alice/stopx-space/card")
         posted = client.post(
             "/alice/stopx-space/space/stop",
             data={"_csrf": csrf},

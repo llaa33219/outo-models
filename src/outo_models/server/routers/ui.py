@@ -23,7 +23,6 @@ so the navbar context (current user, active section) is uniform.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import re
 import secrets
@@ -31,6 +30,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from fastapi.responses import (
@@ -60,10 +60,12 @@ from outo_models.exceptions import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    OutoError,
     QuotaExceededError,
     UnauthorizedError,
     ValidationFailedError,
 )
+from outo_models.logging import get_logger
 from outo_models.repos.card import CardMetadata, read_card
 from outo_models.repos.commit import commit_files
 from outo_models.repos.create import create_repo
@@ -139,6 +141,8 @@ from outo_models.utils.git_url import clone_url
 from outo_models.utils.slug import validate_slug
 
 router = APIRouter(tags=["ui"], include_in_schema=False)
+
+_LOGGER = get_logger(__name__)
 
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -475,13 +479,32 @@ async def _render_kind_list(
 # ---------------------------------------------------------------------------
 # Repo-page helpers (header + sidebar + per-tab panel).
 #
-# The HF-style repo page is a single Jinja template with three sub-views
-# (`tab` ∈ {"card", "files", "community"}). Tabs are SEPARATE URLS so the
-# active state lives in the path, not in a query string or a hash — a
-# viewer's "Files" view is shareable as `/{owner}/{name}/files`. The
-# helper below is shared by all three GET routes; the form POST routes
-# also reuse `_safe_redirect_target` to pick a referrer-aware redirect.
+# The HF-style repo page is a single Jinja template with per-kind
+# sub-views (`tab` ∈ {"runtime", "card", "files", "community",
+# "settings"}). Tabs are SEPARATE URLS so the active state lives in the
+# path, not in a query string or a hash — a viewer's "Files" view is
+# shareable as `/{owner}/{name}/files`. The helper below is shared by
+# every GET route; the form POST routes also reuse
+# `_safe_redirect_target` to pick a referrer-aware redirect.
+#
+# URL mapping (v2 — the Runtime tab is the Space landing view):
+#
+#   /{owner}/{name}            -> tab="default" -> "runtime" for spaces,
+#                                 "card" for models/datasets
+#   /{owner}/{name}/runtime    -> tab="runtime" (404 for non-spaces)
+#   /{owner}/{name}/card       -> tab="card"
+#   /{owner}/{name}/files      -> tab="files"
+#   /{owner}/{name}/community  -> tab="community"
+#   /{owner}/{name}/settings   -> tab="settings" (owner/admin only)
+#
+# Opening a Space URL therefore lands on Runtime (HF parity), while
+# models and datasets keep the bare URL as their card tab. `/card`
+# exists so the space card stays reachable at a shareable URL.
 # ---------------------------------------------------------------------------
+
+#: Tabs that only make sense for `Repo.kind == "space"`. A GET on one
+#: of these for a model/dataset is a 404, not an empty panel.
+_SPACE_ONLY_TABS = frozenset({"runtime"})
 
 
 def _kind_tab_label(repo_kind: str) -> str:
@@ -553,7 +576,10 @@ async def _render_repo_page(
 ) -> Response:
     """Render the HF-style repo page for `<owner>/<name>` at `tab`.
 
-    `tab` is one of `"card"`, `"files"`, `"community"`, `"settings"`.
+    `tab` is one of `"default"`, `"runtime"`, `"card"`, `"files"`,
+    `"community"`, `"settings"`. `"default"` resolves to `"runtime"`
+    for spaces and `"card"` for models/datasets, so the bare URL is the
+    kind's landing view; `"runtime"` on a non-space is a 404.
     The helper loads the repo + tab-specific data once and lets the
     Jinja template pick the right panel. 404s on missing repos, private
     repos the viewer cannot see, and invalid slugs (same contract as
@@ -582,6 +608,13 @@ async def _render_repo_page(
         )
     ).scalar_one_or_none()
     if repo is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "not found"},
+        )
+    if tab == "default":
+        tab = "runtime" if repo.kind == "space" else "card"
+    elif tab in _SPACE_ONLY_TABS and repo.kind != "space":
         return JSONResponse(
             status_code=404,
             content={"error": "not_found", "message": "not found"},
@@ -734,6 +767,11 @@ async def _render_repo_page(
             "state": rs.state.value,
             "message": rs.message,
             "url": rs.url,
+            # Path-relative run URL for the embed iframe: an absolute
+            # `url` breaks behind a reverse proxy and in internal/IP
+            # installs, so the iframe only ever gets the path and
+            # `url` stays reserved for the "Open the Space" new-tab link.
+            "path": f"/spaces/{owner}/{name}/run/",
             "container_id": rs.container_id,
             "port": rs.port,
             "sdk": read_space_meta(owner, name).sdk,
@@ -749,6 +787,15 @@ async def _render_repo_page(
         "tab": tab,
         "tab_card_label": _kind_tab_label(repo.kind),
         "tab_card_active": tab == "card",
+        "tab_runtime_active": tab == "runtime",
+        # Tab hrefs. Spaces put the card on `/card` because their bare
+        # URL is the Runtime landing view; models/datasets keep the bare
+        # URL as their card tab, so their tab strip is unchanged.
+        "tab_runtime_url": f"/{owner}/{name}",
+        "tab_card_url": f"/{owner}/{name}/card" if repo.kind == "space" else f"/{owner}/{name}",
+        "tab_files_url": f"/{owner}/{name}/files",
+        "tab_community_url": f"/{owner}/{name}/community",
+        "tab_settings_url": f"/{owner}/{name}/settings",
         "tab_files_active": tab == "files",
         "tab_community_active": tab == "community",
         "tab_settings_active": tab == "settings",
@@ -781,6 +828,13 @@ async def _render_repo_page(
         # Spaces runtime tile (None for non-space repos; populated by
         # the dispatcher above for kind="space").
         "space_runtime": space_runtime,
+        # Start/Stop form outcome, carried on the redirect query string.
+        # `runtime_error` is a machine code (`OutoError.code`, or
+        # "internal_error"); `runtime_message` is its human text.
+        "runtime_error": request.query_params.get("runtime_error"),
+        "runtime_message": request.query_params.get("message") or "",
+        "runtime_started": request.query_params.get("started") == "1",
+        "runtime_stopped": request.query_params.get("stopped") == "1",
         # Settings tab (populated lazily so the other tabs stay lean).
         "form_visibility": repo.visibility,
         "form_description": repo.description or "",
@@ -1642,6 +1696,38 @@ async def user_usage_page(
 
 
 @router.get("/{owner}/{name}", response_class=HTMLResponse)
+async def repo_default_page(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the repo landing view.
+
+    `tab="default"` resolves to Runtime for spaces (HF parity: opening a
+    Space URL shows the app) and to the card tab for models/datasets.
+    """
+    return await _render_repo_page(request, db, viewer, owner=owner, name=name, tab="default")
+
+
+@router.get("/{owner}/{name}/runtime", response_class=HTMLResponse)
+async def repo_runtime_page(
+    request: Request,
+    owner: str,
+    name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_current_user_optional)],
+) -> Response:
+    """Render the Space *Runtime* tab (`spaces` only — 404 otherwise).
+
+    Same view as a space's bare URL; the explicit segment exists so the
+    runtime view is shareable and bookmarkable on its own.
+    """
+    return await _render_repo_page(request, db, viewer, owner=owner, name=name, tab="runtime")
+
+
+@router.get("/{owner}/{name}/card", response_class=HTMLResponse)
 async def repo_card_page(
     request: Request,
     owner: str,
@@ -1649,7 +1735,12 @@ async def repo_card_page(
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User | None, Depends(get_current_user_optional)],
 ) -> Response:
-    """Render the repo page with the *card* tab selected."""
+    """Render the repo page with the *card* tab selected.
+
+    For models/datasets this is the same view as the bare URL (their tab
+    strip still points at it); spaces reach it here because their bare
+    URL is the Runtime tab.
+    """
     return await _render_repo_page(request, db, viewer, owner=owner, name=name, tab="card")
 
 
@@ -2159,8 +2250,9 @@ async def new_repo_form(
 # Spaces runtime UI POSTs — owner-only start/stop form targets. They
 # delegate to `_run_lifecycle` in `routers/spaces.py` so the JSON API
 # and the HTML form stay behaviour-aligned (audit log, Podman call,
-# error semantics). Failures are swallowed so the next GET surfaces
-# the `RuntimeStatus.message` instead of a 500.
+# error semantics). A failure redirects back with `?runtime_error=<code>`
+# so the Runtime tab can show it; an unexpected exception is logged and
+# reported as `internal_error` (never 500, never a repr in the URL).
 
 
 async def _owner_or_403(repo: Repo, user: User | None) -> User:
@@ -2173,6 +2265,40 @@ async def _owner_or_403(repo: Repo, user: User | None) -> User:
 
 def _space_runtime_redirect_target(request: Request, owner: str, name: str) -> str:
     return _safe_redirect_target(request, owner=owner, name=name, default_tab="")
+
+
+#: Cap on the human message echoed back through the redirect query
+#: string. Keeps a Podman/docker error from blowing up the URL length
+#: and the rendered panel.
+_RUNTIME_MESSAGE_MAX = 240
+
+_RUNTIME_INTERNAL_ERROR = (
+    "The runtime failed to run this action. Check the server logs for details."
+)
+
+
+def _runtime_query(code: str, message: str) -> str:
+    """Build the `?runtime_error=…&message=…` query for a failed POST.
+
+    `message` comes from the domain layer (`OutoError`), which is
+    user-facing prose by construction. Anything unexpected is logged
+    server-side instead and reaches the browser as a fixed string.
+    """
+    collapsed = " ".join(message.split())[:_RUNTIME_MESSAGE_MAX]
+    return f"runtime_error={quote(code, safe='')}&message={quote(collapsed, safe='')}"
+
+
+def _space_runtime_redirect(
+    request: Request, owner: str, name: str, *, query: str = ""
+) -> RedirectResponse:
+    """303 back to the repo page, optionally with an outcome query.
+
+    `_space_runtime_redirect_target` already strips any query string
+    from the referrer, so appending here cannot stack onto a stale one.
+    """
+    target = _space_runtime_redirect_target(request, owner, name)
+    url = f"{target}?{query}" if query else target
+    return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{owner}/{name}/space/start")
@@ -2210,13 +2336,12 @@ async def space_start_form(
     await _owner_or_403(repo, user)
     settings: Settings = request.app.state.settings
     if not bool(getattr(settings, "spaces_runtime_enabled", False)):
-        target = _space_runtime_redirect_target(request, owner, name)
-        return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+        return _space_runtime_redirect(request, owner, name)
 
     from outo_models.server.routers.spaces import _load_owner_gpu_ids, _run_lifecycle
 
     owner_username = repo.owner.username if repo.owner is not None else owner
-    with contextlib.suppress(Exception):
+    try:
         await _run_lifecycle(
             db=db,
             user=user,
@@ -2227,8 +2352,16 @@ async def space_start_form(
             audit_target_id=str(repo.id),
             gpu_ids=await _load_owner_gpu_ids(db, owner_username),
         )
-    target = _space_runtime_redirect_target(request, owner, name)
-    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+    except OutoError as exc:
+        return _space_runtime_redirect(
+            request, owner, name, query=_runtime_query(exc.code, str(exc))
+        )
+    except Exception:
+        _LOGGER.exception("space_start_failed", owner=owner, name=name)
+        return _space_runtime_redirect(
+            request, owner, name, query=_runtime_query("internal_error", _RUNTIME_INTERNAL_ERROR)
+        )
+    return _space_runtime_redirect(request, owner, name, query="started=1")
 
 
 @router.post("/{owner}/{name}/space/stop")
@@ -2266,12 +2399,11 @@ async def space_stop_form(
     await _owner_or_403(repo, user)
     settings: Settings = request.app.state.settings
     if not bool(getattr(settings, "spaces_runtime_enabled", False)):
-        target = _space_runtime_redirect_target(request, owner, name)
-        return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+        return _space_runtime_redirect(request, owner, name)
 
     from outo_models.server.routers.spaces import _run_lifecycle
 
-    with contextlib.suppress(Exception):
+    try:
         await _run_lifecycle(
             db=db,
             user=user,
@@ -2282,8 +2414,16 @@ async def space_stop_form(
             audit_target_id=str(repo.id),
             gpu_ids=[],
         )
-    target = _space_runtime_redirect_target(request, owner, name)
-    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
+    except OutoError as exc:
+        return _space_runtime_redirect(
+            request, owner, name, query=_runtime_query(exc.code, str(exc))
+        )
+    except Exception:
+        _LOGGER.exception("space_stop_failed", owner=owner, name=name)
+        return _space_runtime_redirect(
+            request, owner, name, query=_runtime_query("internal_error", _RUNTIME_INTERNAL_ERROR)
+        )
+    return _space_runtime_redirect(request, owner, name, query="stopped=1")
 
 
 # ---------------------------------------------------------------------------
