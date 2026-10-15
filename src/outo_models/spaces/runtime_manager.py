@@ -93,8 +93,10 @@ def image_tag(owner: str, name: str) -> str:
 def _podman_socket_hint() -> str:
     """Return the operator-facing hint appended to `podman_unreachable` errors."""
     return (
-        "Cannot connect to the Podman socket. Check that "
-        "/run/podman/podman.sock from the host is mounted into the container."
+        "Cannot connect to the Podman socket. `outo-models start` mounts it "
+        "automatically; quadlet and other deployments must mount the host "
+        "socket themselves (OUTO_PODMAN_SOCKET, default "
+        "/run/podman/podman.sock)."
     )
 
 

@@ -10,6 +10,7 @@ Covers the small but security-critical surface of the CLI root:
 
 from __future__ import annotations
 
+import socket as socket_mod
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
@@ -147,6 +148,87 @@ class TestStartCommand:
         # The wizard's Caddyfile + config.yaml reach the server read-only.
         assert "/etc/outo-models:/etc/outo-models:ro" in argv
 
+    def _run_start_capture_argv(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> list[str]:
+        from outo_models.cli import start as start_mod
+
+        captured: list[list[str]] = []
+        monkeypatch.setattr(start_mod, "podman_available", lambda: True)
+        monkeypatch.setattr(start_mod, "low_ports_blocked", lambda *_a, **_k: False)
+        monkeypatch.setattr(
+            start_mod,
+            "run_capture",
+            lambda argv: (captured.append(argv), (0, ""))[1],
+        )
+        monkeypatch.setattr(start_mod, "_verify_started", lambda *_a, **_k: None)
+        monkeypatch.setenv("OUTO_CONFIG", str(self._write_config(tmp_path)))
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 1
+        return captured[0]
+
+    def test_argv_mounts_socket_from_host_env_override(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The shim passes the HOST socket path in OUTO_PODMAN_SOCK; the host
+        # podman resolves the `-v` source, so the path is used verbatim even
+        # when it is not visible from inside the CLI container.
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "in_container", lambda: True)
+        monkeypatch.setattr(
+            start_mod, "_probe_host_podman_sockets", lambda: ("/should/not/be/used.sock",)
+        )
+        monkeypatch.setenv("OUTO_PODMAN_SOCK", "/host-only/podman.sock")
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        pairs = [argv[i : i + 2] for i in range(len(argv) - 1)]
+        assert ["-v", "/host-only/podman.sock:/run/podman/podman.sock:ro"] in pairs
+        assert ["-e", "OUTO_PODMAN_SOCKET=/run/podman/podman.sock"] in pairs
+
+    def test_argv_mounts_probe_discovered_socket(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.delenv("OUTO_PODMAN_SOCK", raising=False)
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+        probed = tmp_path / "probed.sock"
+        probed.write_text("", encoding="utf-8")
+        monkeypatch.setattr(start_mod, "_probe_host_podman_sockets", lambda: (str(probed),))
+        monkeypatch.setattr(Path, "is_socket", lambda self: self == probed)
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert f"{probed}:/run/podman/podman.sock:ro" in argv
+        assert "OUTO_PODMAN_SOCKET=/run/podman/podman.sock" in argv
+
+    def test_argv_omits_socket_inside_cli_container_without_host_env(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # In the CLI container every visible path is the container's own mount
+        # point; passing it as a `-v` SOURCE would fail on the host.
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.delenv("OUTO_PODMAN_SOCK", raising=False)
+        monkeypatch.setattr(start_mod, "in_container", lambda: True)
+        monkeypatch.setattr(Path, "is_socket", lambda self: True)
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert not [a for a in argv if "podman.sock" in a]
+        assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"
+
+    def test_argv_omits_socket_when_none_discoverable(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.delenv("OUTO_PODMAN_SOCK", raising=False)
+        monkeypatch.setattr(
+            start_mod, "_probe_host_podman_sockets", lambda: ("/absent/a.sock", "/absent/b.sock")
+        )
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert not [a for a in argv if "podman.sock" in a]
+        assert not [a for a in argv if "OUTO_PODMAN_SOCKET" in a]
+        assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"  # start still succeeds
+
     def test_missing_config_refuses(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -193,15 +275,20 @@ class TestPodmanBase:
         from outo_models import cli as cli_pkg
 
         sock = tmp_path / "podman.sock"
-        sock.touch()
-        monkeypatch.setattr(
-            cli_pkg.shutil,
-            "which",
-            lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
-        )
-        monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
-        assert cli_pkg.podman_base() == ["/usr/local/bin/podman-remote", "--url", f"unix://{sock}"]
-        assert cli_pkg.podman_available() is True
+        with socket_mod.socket(socket_mod.AF_UNIX) as listener:
+            listener.bind(str(sock))
+            monkeypatch.setattr(
+                cli_pkg.shutil,
+                "which",
+                lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
+            )
+            monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
+            assert cli_pkg.podman_base() == [
+                "/usr/local/bin/podman-remote",
+                "--url",
+                f"unix://{sock}",
+            ]
+            assert cli_pkg.podman_available() is True
 
     def test_remote_without_socket_is_unavailable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -219,14 +306,15 @@ class TestPodmanBase:
         from outo_models import cli as cli_pkg
 
         sock = tmp_path / "podman.sock"
-        sock.touch()
-        monkeypatch.setattr(
-            cli_pkg.shutil,
-            "which",
-            lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
-        )
-        monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
-        env = cli_pkg.podman_script_env()
+        with socket_mod.socket(socket_mod.AF_UNIX) as listener:
+            listener.bind(str(sock))
+            monkeypatch.setattr(
+                cli_pkg.shutil,
+                "which",
+                lambda name: None if name == "podman" else "/usr/local/bin/podman-remote",
+            )
+            monkeypatch.setenv("OUTO_PODMAN_SOCKET", str(sock))
+            env = cli_pkg.podman_script_env()
         assert env == {"PODMAN_BIN": "/usr/local/bin/podman-remote", "PODMAN_URL": f"unix://{sock}"}
 
 

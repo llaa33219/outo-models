@@ -34,6 +34,7 @@ from outo_models.cli import (
 )
 from outo_models.config import Settings, get_settings
 from outo_models.exceptions import ConfigError, OutoError
+from outo_models.firewall.open_ports import in_container
 from outo_models.hostsys import HOST_LOW_PORTS_COMMAND, low_ports_blocked
 
 # The default location of the YAML the wizard writes. `OUTO_CONFIG`
@@ -49,6 +50,43 @@ _KEY_IMAGE = "image"
 _KEY_VOLUME = "volume"
 _KEY_PORTS = "ports"
 _REQUIRED_KEYS: tuple[str, ...] = (_KEY_IMAGE, _KEY_VOLUME, _KEY_PORTS)
+
+# Where the host's Podman API socket is mounted INSIDE the server container.
+# Same default as config.py's `podman_socket`, stated explicitly here so the
+# mount and the env var can never drift apart.
+_CONTAINER_PODMAN_SOCKET = "/run/podman/podman.sock"
+
+
+def _probe_host_podman_sockets() -> tuple[str, ...]:
+    """Return host socket candidates to probe, rootless candidate first.
+
+    The server container runs as uid 1000, so a rootful `root:root 0660`
+    socket is not connectable; the rootless user socket is the supported path.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return (f"{runtime_dir}/podman/podman.sock", _CONTAINER_PODMAN_SOCKET)
+
+
+def _host_podman_socket() -> str | None:
+    """Return the host Podman socket path to mount, or None when there is none.
+
+    `OUTO_PODMAN_SOCK` (set by the install-cli.sh shim) is the host path and is
+    used verbatim even when it is not visible from this process: the HOST
+    podman resolves the `-v` source, not the CLI container.
+
+    Without it, only a host shell may probe — inside the CLI container every
+    path we can see is the container's own mount point, and passing that as a
+    host source would make `podman run` fail on a nonexistent host path.
+    """
+    override = os.environ.get("OUTO_PODMAN_SOCK")
+    if override:
+        return override
+    if in_container():
+        return None
+    for candidate in _probe_host_podman_sockets():
+        if Path(candidate).is_socket():
+            return candidate
+    return None
 
 
 def _config_path() -> Path:
@@ -463,6 +501,17 @@ def start(
     if cf_token:
         env_args.extend(["-e", f"CLOUDFLARE_API_TOKEN={cf_token}"])
 
+    # Spaces container SDKs talk to the host Podman API through this socket.
+    # Mounting it here is what makes a default install able to run them.
+    podman_sock = _host_podman_socket()
+    if podman_sock:
+        env_args.extend(["-e", f"OUTO_PODMAN_SOCKET={_CONTAINER_PODMAN_SOCKET}"])
+    else:
+        print_status(
+            "[note] no Podman socket found — Spaces container SDKs (docker/gradio/streamlit) "
+            "stay unavailable until a Podman socket is mounted."
+        )
+
     argv: list[str] = [
         *podman_base(),
         "run",
@@ -479,6 +528,8 @@ def start(
         # The wizard's Caddyfile + config.yaml live here; read-only.
         "-v",
         "/etc/outo-models:/etc/outo-models:ro",
+        # Read-only: the server only needs to talk to Podman, never write it.
+        *(["-v", f"{podman_sock}:{_CONTAINER_PODMAN_SOCKET}:ro"] if podman_sock else []),
         "--cap-add",
         "NET_BIND_SERVICE",
     ]

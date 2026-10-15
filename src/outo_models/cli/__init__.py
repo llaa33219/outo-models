@@ -292,7 +292,7 @@ def podman_base() -> list[str]:
     if not remote:
         return []
     sock = os.environ.get("OUTO_PODMAN_SOCKET", "/run/podman/podman.sock")
-    if Path(sock).exists():
+    if Path(sock).is_socket():
         return [remote, "--url", f"unix://{sock}"]
     return []
 
