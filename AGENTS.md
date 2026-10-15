@@ -83,13 +83,18 @@ working in this repository **must** follow.
      page surfaces the operator hint) when the Podman API socket is
      unreachable, so the default-on posture does not break installs without
      Podman mounted. Operators can opt out explicitly with
-     `OUTO_SPACES_RUNTIME_ENABLED=false`. The container must be able to
-     reach the Podman API socket (`OUTO_PODMAN_SOCKET`, default
-     `/run/podman/podman.sock`) for runtime calls to actually work.
-   - The container runs **non-root** (uid 1000), so mount the Podman socket
-     from the host (e.g.
-     `-v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro`).
-     That's the standard location of a rootless Podman user socket.
+     `OUTO_SPACES_RUNTIME_ENABLED=false`. Runtime calls need the Podman API
+     socket reachable at `OUTO_PODMAN_SOCKET` (default
+     `/run/podman/podman.sock`).
+   - `outo-models start` mounts the host Podman socket into the server
+     container automatically (`-v <host-socket>:/run/podman/podman.sock:ro`
+     plus `-e OUTO_PODMAN_SOCKET=...`); the host path comes from
+     `OUTO_PODMAN_SOCK` or a rootless-first probe. Deployments that launch
+     the container themselves (quadlet, bare `podman run`) must mount it
+     themselves. The rootless socket (e.g.
+     `/run/user/1000/podman/podman.sock`) is the supported path, because the
+     container runs **non-root** (uid 1000) and cannot connect to a rootful
+     socket.
    - Host ports are allocated sequentially from
      `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` after an occupancy check
      via `list_managed()`. Only the in-container port `8000/tcp` is exposed

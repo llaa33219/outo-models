@@ -147,6 +147,12 @@ The CSP allows `'unsafe-inline'` for `style-src` only — the bundled Jinja
 templates use inline `<style>` blocks. `script-src` stays `'self'`; no
 inline script is ever shipped.
 
+The Space run proxy path `/spaces/{owner}/{name}/run/**` is the one scoped
+exception: it sends `X-Frame-Options: SAMEORIGIN` and a CSP of
+`frame-ancestors 'self'` only, because the framed document is user-supplied
+application content whose own scripts must run. See
+[§The Podman socket mount is the trust boundary](#the-podman-socket-mount-is-the-trust-boundary).
+
 ## 7. Audit log
 
 Storage: the `audit_logs` table.
@@ -375,20 +381,29 @@ create/delete rights — that is the trust boundary.
 
 Mounting the host's Podman API socket
 (`/run/podman/podman.sock` or a rootless socket at
-`/run/user/<uid>/podman/podman.sock`) into the container is equivalent to
-delegating root-equivalent rights over the entire host.
+`/run/user/<uid>/podman/podman.sock`) into the container delegates
+container create/delete rights over the entire host. With a rootless socket
+that is host-root-equivalent inside the invoking user's namespace.
 
-Recommended pattern:
+`outo-models start` does this mount automatically, so a default install
+already carries it. The host path is taken from `OUTO_PODMAN_SOCK` (set by
+the CLI shim) or probed rootless-first; the in-container path is
+`OUTO_PODMAN_SOCKET` (default `/run/podman/podman.sock`). Deployments that
+launch the container themselves — quadlet, systemd units, a bare
+`podman run` — must mount it themselves:
 
 ```bash
 # rootless Podman (user 1000) user socket
 -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro
+-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock
 ```
+
+`:ro` is **not** a security control for a Unix socket — the read-only flag
+governs the file system, not socket permissions, and Podman would refuse the
+write operations anyway. Keep it for tidiness, not for isolation.
 
 Additional recommendations:
 
-- Prefer `:ro` when possible. `SpaceRuntimeManager` only issues HTTP POST
-  calls, so a read-only mount still works.
 - On the host, run `podman system connection ls` to verify the user socket
   permissions, and lock them to `0660` with the `podman` group.
 - In the systemd unit, grant only our container access to the user socket
@@ -396,6 +411,34 @@ Additional recommendations:
 - Networking: host Podman's container network defaults to `bridge`, but
   you should add host-side `iptables` / `nftables` rules so external
   traffic cannot reach the container's `8000/tcp` directly.
+
+### Scoped framing relaxation on the Space run proxy
+
+Every page served by `outo-models` sends `X-Frame-Options: DENY` and a CSP
+whose `frame-ancestors 'none'` forbids framing. There is exactly one scoped
+exception: the Space run proxy path `/spaces/{owner}/{name}/run/**`.
+
+Responses under that path send `X-Frame-Options: SAMEORIGIN` and a CSP
+containing only:
+
+```
+frame-ancestors 'self'
+```
+
+No `default-src`, no `script-src`. The document behind that path is
+user-supplied application content rendered by the user's own container, and
+its scripts have to execute; a site-wide script policy would break every
+Space. `frame-ancestors 'self'` still blocks any third-party site from
+framing a Space.
+
+This is deliberate: the code in a Space container is already arbitrary,
+trusted-at-that-level user code that the owner chose to run. The relaxation
+adds no new capability, it only stops the site-wide framing policy from
+crippling user apps. Upstream framing headers (`X-Frame-Options`,
+`Content-Security-Policy`, and the other hop-by-hop headers) are stripped
+from the proxied response before it reaches the browser, so the container's
+own policies cannot be used to loosen ours and ours cannot be used to
+tighten theirs.
 
 ### `docker` SDK Dockerfile / Containerfile enforcement
 

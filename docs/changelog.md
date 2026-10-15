@@ -4,6 +4,58 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.6 — Spaces Runtime tab, automatic Podman socket mount
+
+### Added
+
+- **The Space Runtime tab is now the default Space view.** Opening
+  `/{owner}/{name}` for a `kind=space` repo lands on a Hugging Face
+  Spaces-style **Runtime** tab: a full-viewport iframe of the
+  path-relative `/spaces/{owner}/{name}/run/`, a big Start / Stop button,
+  and a large error panel that takes over the run area when the state is
+  `failed`. The old right-sidebar runtime tile is gone from that tab; a
+  compact status tile stays on the card / files / community tabs.
+- **Two new routes.** `GET /{owner}/{name}/runtime` (Spaces only; a model
+  or dataset repo gets `404`) and `GET /{owner}/{name}/card` (the README
+  card tab for a Space). Tab order for a Space is
+  `Runtime | Space card | Files | Community | Settings`; non-space repos
+  keep `Model card | Files | Community | Settings`.
+- **Start / stop form outcomes are no longer swallowed.** Both forms
+  redirect back with query parameters instead: `?started=1` / `?stopped=1`
+  on success, and `?runtime_error=<code>&message=<url-quoted>` on failure.
+  `<code>` is the `OutoError` `.code` (e.g. `podman_unreachable`,
+  `space_build_failed`, `runtime_disabled`) or `internal_error`.
+- **`outo-models start` now mounts the host Podman socket into the server
+  container automatically** — `-v <host-socket>:/run/podman/podman.sock:ro`
+  and `-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock`. The host path comes
+  from the new `OUTO_PODMAN_SOCK` (forwarded by the `install-cli.sh` shim)
+  or a rootless-first probe. This fixes
+  `Podman API call failed: [Errno 2] No such file or directory` on default
+  installs and makes the container SDKs (`docker` / `gradio` /
+  `streamlit`) work out of the box. When nothing is found, `start` prints
+  `[note] no Podman socket found — Spaces container SDKs (docker/gradio/streamlit) stay unavailable until a Podman socket is mounted.`
+  and the shim warns when only a rootful socket exists. Deployments that
+  launch the container themselves (quadlet, bare `podman run`) must mount
+  the socket themselves.
+- **A scoped framing relaxation for the Space run proxy.** The whole site
+  keeps `X-Frame-Options: DENY` and `frame-ancestors 'none'`; only
+  `/spaces/{owner}/{name}/run/**` is exempt, sending
+  `X-Frame-Options: SAMEORIGIN` and a CSP of `frame-ancestors 'self'` with
+  no script directives. The framed document is user-supplied app content
+  whose scripts must run, and its container code is already trusted at
+  that level. Upstream framing headers are stripped from proxied
+  responses. See [security.md](security.md).
+
+### Fixed
+
+- **`sdk: static` Spaces no longer report a bogus `failed` state.** They
+  never consult Podman: the site is exported → `running`, otherwise
+  `stopped`. `POST /api/spaces/{owner}/{name}/stop` on a static Space
+  returns `stopped` without touching Podman and without re-exporting.
+- **A directory-style run URL falls back to `index.html`.** An empty
+  trailing-slash `path` on the `static` SDK proxy now serves the exported
+  `index.html` instead of erroring.
+
 ## v0.6.5 — Rootless low ports actually work
 
 ### Fixed
