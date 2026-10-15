@@ -229,6 +229,35 @@ class TestStartCommand:
         assert not [a for a in argv if "OUTO_PODMAN_SOCKET" in a]
         assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"  # start still succeeds
 
+    def test_probe_skips_unreadable_candidates_instead_of_crashing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Path.is_socket() raises PermissionError on Python 3.12 when a parent
+        # directory denies search (seen on CI runners under /run/user/<uid>).
+        # An unreadable candidate is simply not usable — never a crash.
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.delenv("OUTO_PODMAN_SOCK", raising=False)
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+
+        def denied_or_good(path: Path) -> bool:
+            if "denied" in str(path):
+                raise PermissionError(13, "Permission denied")
+            return "good" in str(path)
+
+        monkeypatch.setattr(Path, "is_socket", denied_or_good)
+        monkeypatch.setattr(
+            start_mod, "_probe_host_podman_sockets", lambda: ("/denied/podman.sock",)
+        )
+        assert start_mod._host_podman_socket() is None
+
+        monkeypatch.setattr(
+            start_mod,
+            "_probe_host_podman_sockets",
+            lambda: ("/denied/podman.sock", "/good/podman.sock"),
+        )
+        assert start_mod._host_podman_socket() == "/good/podman.sock"
+
     def test_missing_config_refuses(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

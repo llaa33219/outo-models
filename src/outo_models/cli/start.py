@@ -84,7 +84,11 @@ def _host_podman_socket() -> str | None:
     if in_container():
         return None
     for candidate in _probe_host_podman_sockets():
-        if Path(candidate).is_socket():
+        try:
+            is_socket = Path(candidate).is_socket()
+        except OSError:
+            continue
+        if is_socket:
             return candidate
     return None
 
