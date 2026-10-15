@@ -119,46 +119,98 @@ only.
 
 ### Space runtime UI surface
 
-The web UI for a Space surfaces the runtime in a **sidebar tile**
-(`/repos/view.html`, rendered for `kind=space`) — it is the same tile
-shape as the existing sidebar info / downloads / collections / owner
-tiles, so it inherits the BLP Minimal Tile chrome (square 2px border,
-0 radius, instant border hover).
+The Space page follows the Hugging Face Spaces layout: the **Runtime tab is
+the default and first view**. Opening `/{owner}/{name}` for a `kind=space`
+repo lands on `/{owner}/{name}/runtime`.
 
-The tile carries:
+Tab order for a Space:
 
-1. A **state chip** in the running/stopped/building/failed/disabled
-   palette (see CSS classes in `repos/view.html`):
-   - `stopped`     → paper-blue-2 background, muted text
-   - `building`    → paper-blue background, sky border
-   - `running`     → paper-green background, green border, deep-dark text
-   - `failed`      → soft-red border, deep-red text
-   - `disabled`    → muted, inactive border
-2. The SDK label (`sdk: <value>`) next to the state chip.
-3. The `RuntimeStatus.message` from
-   [`runtime_status(...)`](../src/outo_models/spaces/runtime.py).
-4. When `state == running` AND a URL is set: a primary "Open the Space"
-   capsule (open in a new tab) plus an embedded **preview iframe**
-   (`<iframe src="{run_url}" loading="lazy" referrerpolicy="no-referrer">`).
-5. Owner-only Start / Stop capsules when
-   `settings.spaces_runtime_enabled` is `True`. Each one is a form POST
-   on the same Space page:
-   - `POST /{owner}/{name}/space/start`
-   - `POST /{owner}/{name}/space/stop`
-   - Both are CSRF-protected (`_csrf` cookie), login-required
-     (anonymous → `303 /login?next=...`), and 403 for non-owners
-     (including other logged-in users — same domain check the JSON
-     API uses).
-   - Both delegate to the JSON API's `_run_lifecycle` helper, so
-     audit logs and the Podman call path are identical.
-6. When the runtime is **disabled**, the tile surfaces a
-   `OUTO_SPACES_RUNTIME_ENABLED=true` admin hint instead of any
-   buttons — the operator's hint stays visible to all viewers.
+```
+Runtime | Space card | Files | Community | Settings
+```
+
+`Settings` is owner/admin only. Non-space repos keep the old order and are
+unaffected: `Model card | Files | Community | Settings`.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /{owner}/{name}/runtime` | The Runtime tab. Spaces only; a model or dataset repo gets `404` |
+| `GET /{owner}/{name}/card` | The README card tab for a Space (the `Space card` tab above) |
+| `GET /{owner}/{name}` | Runtime tab for a Space, the card for everything else |
+
+The Runtime tab carries:
+
+1. A **full-viewport run iframe** of the path-relative
+   `/spaces/{owner}/{name}/run/` — the Space gets the whole panel, not a
+   sidebar tile. The old right-sidebar runtime tile is gone from this tab.
+2. A **big Start / Stop button** (owner-only, and only when
+   `settings.spaces_runtime_enabled` is `True`).
+3. A **large error panel** that takes over the run area when the state is
+   `failed`, or when a form failure redirected back (see the query
+   parameters below).
+4. On the *other* tabs (card, files, community) a **compact status tile**
+   stays in the sidebar, in the same BLP Minimal Tile chrome as the other
+   info / downloads / collections / owner tiles (square 2px border, 0
+   radius, instant border hover).
+
+The compact status tile still shows a state chip, the SDK label
+(`sdk: <value>`), and the `RuntimeStatus.message` from
+[`runtime_status(...)`](../src/outo_models/spaces/runtime.py):
+
+- `stopped`  → paper-blue-2 background, muted text
+- `building` → paper-blue background, sky border
+- `running`  → paper-green background, green border, deep-dark text
+- `failed`   → soft-red border, deep-red text
+- `disabled` → muted, inactive border
+
+When the runtime is **disabled**, the page surfaces an
+`OUTO_SPACES_RUNTIME_ENABLED=true` admin hint instead of any buttons — the
+operator's hint stays visible to all viewers.
+
+### Start / stop forms
+
+Start and stop are form POSTs on the Space page:
+
+- `POST /{owner}/{name}/space/start`
+- `POST /{owner}/{name}/space/stop`
+
+Both are CSRF-protected (`_csrf` cookie), login-required (anonymous →
+`303 /login?next=...`), and 403 for non-owners (including other logged-in
+users — same domain check the JSON API uses). Both delegate to the JSON
+API's `_run_lifecycle` helper, so audit logs and the Podman call path are
+identical.
 
 > The form POSTs are intentionally separate from the JSON API POSTs
 > at `/api/spaces/.../start` because the page form needs CSRF
 > protection and same-tab redirect semantics, while the JSON API
 > stays stateless + token-friendly.
+
+### Form outcomes in the URL
+
+A form POST always redirects back to the page, and the outcome rides in the
+query string instead of being swallowed:
+
+| Query | Meaning |
+| --- | --- |
+| `?started=1` | `start` succeeded |
+| `?stopped=1` | `stop` succeeded |
+| `?runtime_error=<code>&message=<url-quoted>` | The action failed; the Runtime tab renders the large error panel with `message` |
+
+`<code>` is the `OutoError` `.code` — for example `podman_unreachable`,
+`space_build_failed`, `runtime_disabled` — or `internal_error`. Codes are
+the stable contract; the message text is a human-readable detail.
+
+### `static` SDK status
+
+A `sdk: static` Space never consults Podman. The status is derived from the
+exported site only:
+
+- site exported → `running`
+- site not exported → `stopped`
+
+So a static Space can no longer report `failed` because of a Podman
+connection error, and `POST /api/spaces/{owner}/{name}/stop` returns
+`stopped` without touching Podman and without re-exporting the site.
 
 Each action:
 
@@ -250,24 +302,61 @@ Permissions / quota / LFS policies are identical to
 | Environment variable | Meaning | Default |
 | --- | --- | --- |
 | `OUTO_SPACES_RUNTIME_ENABLED` | Enable the runtime | `true` |
-| `OUTO_PODMAN_SOCKET` | Podman REST API Unix socket path | `/run/podman/podman.sock` |
+| `OUTO_PODMAN_SOCK` | **Host** path to the Podman socket, read by the host shim and used by `outo-models start` as the mount source. The rootless user socket is preferred. | (auto-detected) |
+| `OUTO_PODMAN_SOCKET` | Podman socket path **inside the container**, consumed by the server (Spaces runtime) and by the CLI's `podman-remote` | `/run/podman/podman.sock` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | Start of host port range | `20000` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | End of host port range | `21000` |
 
-In production, mount the host Podman socket when launching the container:
+### The socket is mounted for you
+
+`outo-models start` probes the host for a Podman socket and mounts it into
+the server container automatically. Its `podman run` gains:
 
 ```bash
-# rootless Podman (user 1000) user socket
-podman run -d --name outo-models \
-  -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro \
-  -e OUTO_SPACES_RUNTIME_ENABLED=true \
-  ...
+-v <host-socket-path>:/run/podman/podman.sock:ro
+-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock
 ```
 
+The host path comes from `OUTO_PODMAN_SOCK` when set (the shim forwards the
+host path through it), otherwise from probing `$XDG_RUNTIME_DIR/podman/podman.sock`
+first and `/run/podman/podman.sock` second. Rootless-first matters: the
+server container runs as uid 1000 and cannot connect to a rootful
+`root:root 0660` socket. When no socket is found at all, `start` prints:
+
+```
+[note] no Podman socket found — Spaces container SDKs (docker/gradio/streamlit) stay unavailable until a Podman socket is mounted.
+```
+
+When only a rootful socket exists, the shim warns:
+
+```
+[warn] only a rootful Podman socket was found; the server container (uid 1000) may get EACCES.
+       enable the rootless user socket: systemctl --user enable --now podman.socket
+```
+
+Deployments that bypass `outo-models start` — quadlet and anything else that
+launches the container itself — must mount the socket themselves:
+
+```ini
+Volume=%t/podman/podman.sock:/run/podman/podman.sock:ro
+Environment=OUTO_PODMAN_SOCKET=/run/podman/podman.sock
+```
+
+`%t` is the invoking user's runtime dir (`/run/user/<uid>`), i.e. the
+rootless socket. The
+[quadlet example](../container/examples/quadlet/outo-models.container)
+carries both lines.
+
 > **The socket mount is the trust boundary.** The host Podman daemon grants
-> the in-container process full container create/delete rights. The
-> minimum safety baseline is a non-root container, a read-only mount, and
-> host-side namespace isolation (userns). See
+> the in-container process full container create/delete rights — for a
+> rootless socket that is effectively host-root-equivalent within that
+> user's namespace. This is inherent to running user-supplied app
+> containers; there is no safe way to grant `docker` / `gradio` /
+> `streamlit` Spaces without it. Note that `:ro` on a Unix socket is
+> **not** a security control (the flag does not apply to socket
+> permissions); it is there for tidiness only. The real controls are the
+> non-root uid, the read-only root filesystem, and host-side namespace
+> isolation. See
 > [security.md §Spaces runtime isolation](security.md#spaces-runtime-isolation).
 
 ## Podman REST paths
