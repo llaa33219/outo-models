@@ -60,6 +60,7 @@ packages = ["src/outo_models"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+extend-exclude = [".omo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "S", "ASYNC", "RUF"]
