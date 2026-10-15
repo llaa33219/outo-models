@@ -71,6 +71,11 @@ _HOP_BY_HOP: frozenset[str] = frozenset(
     }
 )
 
+# Framing headers are also stripped from proxied responses: an upstream app
+# that sets its own `X-Frame-Options` / `CSP` would otherwise kill the
+# preview, since the run proxy is framed by the Space page.
+_STRIPPED_UPSTREAM: frozenset[str] = frozenset({"x-frame-options", "content-security-policy"})
+
 
 class CreateSpaceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=63)
@@ -338,6 +343,12 @@ async def _run_lifecycle(
 
     async def _do_action() -> RuntimeStatus:
         if action == "stop":
+            if sdk == "static":
+                return RuntimeStatus(
+                    state=RuntimeState.STOPPED,
+                    message="The Space is stopped.",
+                    url=None,
+                )
             await manager.stop(owner_name, space_name)
             return await runtime_status_async(repo, settings=settings, manager=manager)
         if action == "restart":
@@ -549,10 +560,14 @@ def _safe_site_path(base: Path, requested: str) -> Path | None:
 def _file_response_for_static(site_root: Path, path: str) -> Response | None:
     if not site_root.exists():
         return None
-    if not path or path.endswith("/"):
-        path = "index.html"
+    # Order matters: the index rewrite must precede `_safe_site_path`, whose
+    # directory rejection is why `docs/` needs resolving to `docs/index.html`.
     if path.startswith("/"):
         path = path[1:]
+    if not path:
+        path = "index.html"
+    elif path.endswith("/"):
+        path = f"{path}index.html"
     target = _safe_site_path(site_root, path)
     if target is None:
         return None
@@ -560,7 +575,8 @@ def _file_response_for_static(site_root: Path, path: str) -> Response | None:
 
 
 def _strip_hop_headers(headers: httpx.Headers) -> dict[str, str]:
-    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP}
+    blocked = _HOP_BY_HOP | _STRIPPED_UPSTREAM
+    return {k: v for k, v in headers.items() if k.lower() not in blocked}
 
 
 async def _stream_proxy_response(

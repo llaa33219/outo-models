@@ -7,12 +7,15 @@ from enum import StrEnum
 
 from outo_models.config import Settings
 from outo_models.db import Repo
+from outo_models.exceptions import OutoError
+from outo_models.spaces.registry import read_space_meta
 from outo_models.spaces.runtime_manager import (
     SpaceRuntimeManager,
 )
 from outo_models.spaces.runtime_manager import (
     container_name as _container_name,
 )
+from outo_models.utils.paths import spaces_dir
 
 
 class RuntimeState(StrEnum):
@@ -53,6 +56,22 @@ def _make_disabled(_settings: Settings) -> RuntimeStatus:
 
 def _run_url(settings: Settings, owner: str, name: str) -> str:
     return f"{settings.base_url}/spaces/{owner}/{name}/run/"
+
+
+def _static_status(owner: str, name: str, settings: Settings) -> RuntimeStatus:
+    """Answer a `static` Space from its exported site dir, never Podman.
+
+    The path is composed inline instead of importing
+    `spaces.build.static_site_dir`, which pulls `repos.storage` into the
+    runtime module's import graph for a single join.
+    """
+    if (spaces_dir() / owner / name / "site").is_dir():
+        return RuntimeStatus(
+            state=RuntimeState.RUNNING,
+            message=_RUNNING,
+            url=_run_url(settings, owner, name),
+        )
+    return RuntimeStatus(state=RuntimeState.STOPPED, message=_STOPPED, url=None)
 
 
 def _podman_state(podman_status: str | None) -> RuntimeState:
@@ -111,9 +130,11 @@ async def runtime_status(
     owner_name = space.owner.username if space.owner is not None else ""
     if not settings.spaces_runtime_enabled:
         return _make_disabled(settings)
+    if read_space_meta(owner_name, space.name).sdk == "static":
+        return _static_status(owner_name, space.name, settings)
     try:
         inspect = await manager.inspect(owner_name, space.name)
-    except Exception as exc:
+    except OutoError as exc:
         return RuntimeStatus(
             state=RuntimeState.FAILED,
             message=f"{_FAILED_PREFIX}{exc}",
@@ -135,15 +156,6 @@ async def runtime_status(
     port = _podman_host_port(inspect)
     container_id = _podman_container_id(inspect)
     url = _run_url(settings, owner_name, space.name) if mapped is RuntimeState.RUNNING else None
-    if mapped is RuntimeState.FAILED:
-        message = f"{_FAILED_PREFIX}{failed_reason}" if failed_reason else "Last run failed."
-        return RuntimeStatus(
-            state=RuntimeState.FAILED,
-            message=message,
-            url=None,
-            container_id=container_id,
-            port=port,
-        )
     if mapped is RuntimeState.RUNNING:
         return RuntimeStatus(
             state=RuntimeState.RUNNING,

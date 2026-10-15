@@ -7,7 +7,10 @@ must report one of five `RuntimeState` values for every codepath:
     STOPPED   — no container exists for the Space.
     BUILDING  — podman reports `building`.
     RUNNING   — podman reports `running`; URL is populated.
-    FAILED    — manager raised an error.
+    FAILED    — the manager raised an `OutoError` (e.g. podman_unreachable).
+
+A `static` Space never reaches Podman at all: its state is derived from
+the exported site directory (see `test_spaces_static_fixes.py`).
 
 The tests below pin each transition with a small `SpaceRuntimeManager`
 fake: we do not mock httpx here because the unit under test is the
@@ -18,12 +21,15 @@ covered exhaustively in `test_spaces_runtime_manager.py`.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from outo_models.config import Settings, get_settings
+from outo_models.exceptions import OutoError
 from outo_models.spaces import runtime as runtime_mod
+from outo_models.spaces.registry import SpaceMeta, write_space_meta
 from outo_models.spaces.runtime import (
     RuntimeState,
     RuntimeStatus,
@@ -56,6 +62,20 @@ def _settings(runtime_enabled: bool = True) -> Settings:
     settings = get_settings()
     object.__setattr__(settings, "spaces_runtime_enabled", runtime_enabled)
     return settings
+
+
+def _container_space(
+    tmp_data_dir: Path,
+    owner_username: str = "alice",
+    name: str = "demo",
+) -> SimpleNamespace:
+    """Return a `docker` Space so the Podman branch of the dispatcher runs.
+
+    `static` Spaces short-circuit to a site-dir lookup and never reach
+    Podman — these cases cover the container path exclusively.
+    """
+    write_space_meta(owner_username, name, SpaceMeta(sdk="docker"))
+    return _space(owner_username, name)
 
 
 def _space(owner_username: str = "alice", name: str = "demo") -> SimpleNamespace:
@@ -120,25 +140,29 @@ class TestRuntimeStatusShape:
 
 
 class TestDispatcher:
-    async def test_disabled_when_runtime_off(self) -> None:
+    async def test_disabled_when_runtime_off(self, tmp_data_dir: Path) -> None:
         settings = _settings(runtime_enabled=False)
         manager = _FakeManager(inspect_return={"State": {"Status": "running"}})
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.DISABLED
         assert status.url is None
         assert "disabled" in status.message.lower()
         assert "OUTO_SPACES_RUNTIME_ENABLED" in status.message
         assert manager.calls == []
 
-    async def test_stopped_when_manager_returns_none(self) -> None:
+    async def test_stopped_when_manager_returns_none(self, tmp_data_dir: Path) -> None:
         settings = _settings()
         manager = _FakeManager(inspect_return=None)
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.STOPPED
         assert status.url is None
         assert "stopped" in status.message.lower()
 
-    async def test_running_state_carries_url_and_port(self) -> None:
+    async def test_running_state_carries_url_and_port(self, tmp_data_dir: Path) -> None:
         settings = _settings()
         payload = {
             "Id": "abc123",
@@ -146,43 +170,59 @@ class TestDispatcher:
             "NetworkSettings": {"Ports": {"8000/tcp": [{"HostPort": "20123"}]}},
         }
         manager = _FakeManager(inspect_return=payload)
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.RUNNING
         assert status.container_id == "abc123"
         assert status.port == 20123
         assert status.url is not None
         assert status.url.endswith("/spaces/alice/demo/run/")
 
-    async def test_building_state_maps_to_runtime_state_building(self) -> None:
+    async def test_building_state_maps_to_runtime_state_building(self, tmp_data_dir: Path) -> None:
         settings = _settings()
         payload = {"State": {"Status": "building"}}
         manager = _FakeManager(inspect_return=payload)
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.BUILDING
         assert status.url is None
 
-    async def test_stopped_state_for_exited_container(self) -> None:
+    async def test_stopped_state_for_exited_container(self, tmp_data_dir: Path) -> None:
         settings = _settings()
         payload = {"State": {"Status": "exited"}}
         manager = _FakeManager(inspect_return=payload)
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.STOPPED
 
-    async def test_failed_state_when_manager_raises(self) -> None:
+    async def test_failed_state_when_manager_raises(self, tmp_data_dir: Path) -> None:
         settings = _settings()
-        manager = _FakeManager(inspect_exc=RuntimeError("container inspect failed"))
-        status = await runtime_status(_space(), settings=settings, manager=manager)
+        manager = _FakeManager(inspect_exc=OutoError("container inspect failed"))
+        status = await runtime_status(
+            _container_space(tmp_data_dir), settings=settings, manager=manager
+        )
         assert status.state is RuntimeState.FAILED
         assert "container inspect failed" in status.message
 
-    async def test_failed_state_includes_passed_reason(self) -> None:
+    async def test_failed_state_surfaces_the_outo_error_message(self, tmp_data_dir: Path) -> None:
         settings = _settings()
-        manager = _FakeManager(inspect_exc=RuntimeError("boom"))
+        manager = _FakeManager(
+            inspect_exc=OutoError("podman socket unreachable", code="podman_unreachable")
+        )
         status = await runtime_status(
-            _space(),
+            _container_space(tmp_data_dir),
             settings=settings,
             manager=manager,
             failed_reason="port-range exhausted",
         )
         assert status.state is RuntimeState.FAILED
-        assert "boom" in status.message
+        assert status.message == "Last run failed: podman socket unreachable"
+
+    async def test_unexpected_error_is_not_labeled_as_failed(self, tmp_data_dir: Path) -> None:
+        settings = _settings()
+        manager = _FakeManager(inspect_exc=RuntimeError("bug in the manager"))
+        with pytest.raises(RuntimeError):
+            await runtime_status(_container_space(tmp_data_dir), settings=settings, manager=manager)
