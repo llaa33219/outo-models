@@ -83,10 +83,19 @@ if [[ -z "\${image}" && -f "\${config_file}" ]]; then
 fi
 image="\${image:-${image}}"
 
-sock="\${OUTO_PODMAN_SOCK:-/run/podman/podman.sock}"
-if [[ ! -S "\${sock}" ]]; then
-    user_sock="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/podman/podman.sock"
-    [[ -S "\${user_sock}" ]] && sock="\${user_sock}"
+# Rootless-first: the server container runs uid 1000 and cannot connect to a
+# rootful root:root 0660 socket. A rootful-only host still works for the CLI
+# itself, but Spaces containers may get EACCES.
+sock="\${OUTO_PODMAN_SOCK:-}"
+user_sock="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/podman/podman.sock"
+if [[ -z "\${sock}" ]]; then
+    if [[ -S "\${user_sock}" ]]; then
+        sock="\${user_sock}"
+    elif [[ -S /run/podman/podman.sock ]]; then
+        sock="/run/podman/podman.sock"
+        echo "[warn] only a rootful Podman socket was found; the server container (uid 1000) may get EACCES." >&2
+        echo "       enable the rootless user socket: systemctl --user enable --now podman.socket" >&2
+    fi
 fi
 
 args=(run --rm --network=host
@@ -108,6 +117,9 @@ fi
 # cannot work; the CLI reports that cleanly on its own.
 if [[ -S "\${sock}" ]]; then
     args+=(-v "\${sock}:/run/podman/podman.sock" -e OUTO_PODMAN_SOCKET=/run/podman/podman.sock)
+    # OUTO_PODMAN_SOCK is the HOST path: `outo-models start` mounts it into the
+    # server container. (OUTO_PODMAN_SOCKET above is the in-container path.)
+    args+=(-e OUTO_PODMAN_SOCK="\${sock}")
 fi
 
 # The setup wizard needs an interactive TTY; piping must keep working.

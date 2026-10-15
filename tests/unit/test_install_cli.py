@@ -87,6 +87,23 @@ class TestInstallCliScript:
         # (rootless subuid mapping otherwise breaks writes — field failure).
         assert "--userns=keep-id" in INSTALL_TEXT
 
+    def test_wrapper_forwards_host_socket_path_into_cli_container(self) -> None:
+        # `outo-models start` runs in a second container and needs the HOST
+        # socket path to mount; it travels as OUTO_PODMAN_SOCK (never
+        # OUTO_PODMAN_SOCKET, which means the in-container path).
+        body = _wrapper_text()
+        assert '-e OUTO_PODMAN_SOCK="${sock}"' in body
+        assert '-v "${sock}:/run/podman/podman.sock"' in body
+
+    def test_socket_probe_is_rootless_first(self) -> None:
+        # The server container runs uid 1000 and cannot connect to a rootful
+        # root:root 0660 socket, so the rootless user socket must win.
+        body = _wrapper_text()
+        user_probe = body.index(
+            'user_sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"'
+        )
+        assert user_probe < body.index("elif [[ -S /run/podman/podman.sock ]]")
+
     def test_installer_precreates_config_dir_writable_by_container(self) -> None:
         # podman refuses to bind-mount a missing host dir (statfs error seen
         # in the field), and the in-container app (uid 1000) must be able to
@@ -224,8 +241,8 @@ class TestInstallerAppliesLowPortSysctl:
         assert invocations == ["80"], f"unexpected low-ports invocations: {invocations}"
 
 
-def _render_wrapper(tmp_path: Path, default_tag: str = "stable") -> Path:
-    """Reproduce the wrapper the installer would write.
+def _wrapper_text(default_tag: str = "stable") -> str:
+    """Render the wrapper body the installer would write.
 
     Mirrors the outer heredoc: install-time `${image}` is substituted, and
     backslash-escaped `\\${...}` becomes runtime `${...}`.
@@ -236,9 +253,12 @@ def _render_wrapper(tmp_path: Path, default_tag: str = "stable") -> Path:
     # is runtime text in the generated wrapper (real heredocs never expand
     # escaped refs). Then undo the runtime escapes (`\$` → `$`).
     body = re.sub(r"(?<!\\)\$\{image\}", default_ref, body)
-    body = body.replace("\\$", "$").replace('\\"', '"')
+    return body.replace("\\$", "$").replace('\\"', '"')
+
+
+def _render_wrapper(tmp_path: Path, default_tag: str = "stable") -> Path:
     wrapper = tmp_path / "outo-models"
-    wrapper.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+    wrapper.write_text("#!/usr/bin/env bash\n" + _wrapper_text(default_tag), encoding="utf-8")
     wrapper.chmod(0o755)
     return wrapper
 
@@ -367,6 +387,30 @@ class TestWrapperImageResolution:
         )
         assert result.returncode == 0, result.stderr
         assert ":dev status" in result.stdout
+
+
+class TestWrapperForwardsHostSocketPath:
+    def test_forwards_host_socket_mount_and_env_when_socket_exists(self, tmp_path: Path) -> None:
+        import socket as socket_mod
+
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        sock_path = tmp_path / "host.sock"
+        with socket_mod.socket(socket_mod.AF_UNIX) as listener:
+            listener.bind(str(sock_path))
+            result = _run_wrapper(
+                wrapper,
+                bin_dir,
+                tmp_path,
+                extra_env={
+                    "OUTO_CONFIG": str(tmp_path / "absent.yaml"),
+                    "OUTO_PODMAN_SOCK": str(sock_path),
+                },
+            )
+        assert result.returncode == 0, result.stderr
+        assert f"{sock_path}:/run/podman/podman.sock" in result.stdout
+        assert f"OUTO_PODMAN_SOCK={sock_path}" in result.stdout
+        assert "OUTO_PODMAN_SOCKET=/run/podman/podman.sock" in result.stdout
 
 
 class TestWrapperDestructiveEnvPassThrough:
