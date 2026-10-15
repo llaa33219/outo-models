@@ -283,6 +283,20 @@ class TestSecurityHeadersOnSmokePath:
         # localhost is internal mode (plain HTTP) → no HSTS.
         assert response.headers.get("strict-transport-security") is None
 
+    async def test_space_run_path_framing_headers(self, live_server: str) -> None:
+        async with httpx.AsyncClient(base_url=live_server, timeout=15.0) as client:
+            run_response = await client.get("/spaces/alice/demo/run/")
+            page_response = await client.get("/api/repos")
+
+        assert run_response.headers["x-frame-options"] == "SAMEORIGIN"
+        run_csp = run_response.headers["content-security-policy"]
+        assert "frame-ancestors 'self'" in run_csp
+        assert "script-src" not in run_csp
+        assert "default-src" not in run_csp
+        # The rest of the site keeps the strict policy.
+        assert page_response.headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in page_response.headers["content-security-policy"]
+
 
 # ---------------------------------------------------------------------------
 # Reset dry-run default

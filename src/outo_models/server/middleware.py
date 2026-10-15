@@ -44,6 +44,31 @@ _CSP_HEADER = (
 )
 _PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
+# The Space run proxy serves user-owned app content: either an exported
+# static site or a reverse-proxied container. The Space page frames it in
+# an iframe, so the run path gets SAMEORIGIN + a framing-only CSP. The
+# `script-src` / `style-src` allowlist is deliberately dropped there — the
+# framed document is the user's own app whose scripts must execute, and
+# running untrusted code is already inherent to the Space feature (its
+# container executes with the owner's own credentials, in an isolated
+# network namespace). Every other path keeps the strict policy.
+_RUN_PATH_PREFIX = "/spaces/"
+_RUN_XFO = b"SAMEORIGIN"
+_RUN_CSP_HEADER = "frame-ancestors 'self'"
+_STRICT_XFO = b"DENY"
+
+
+def _is_space_run_path(path: str) -> bool:
+    """`True` for `/spaces/{owner}/{name}/run/...` requests.
+
+    `run` must be its own path segment, so `/spaces/a/runner/x` (a
+    lookalike) stays on the strict policy.
+    """
+    if not path.startswith(_RUN_PATH_PREFIX):
+        return False
+    segments = path[len(_RUN_PATH_PREFIX) :].split("/")
+    return len(segments) >= 3 and bool(segments[0]) and bool(segments[1]) and segments[2] == "run"
+
 
 class SecurityHeadersMiddleware:
     """Attach security headers to every outgoing response.
@@ -70,14 +95,16 @@ class SecurityHeadersMiddleware:
         """
         return not self._settings.is_internal
 
-    def _build_headers(self) -> list[tuple[bytes, bytes]]:
+    def _build_headers(self, *, framed_by_page: bool) -> list[tuple[bytes, bytes]]:
         """Return the security-header list to prepend to every response."""
+        xfo = _RUN_XFO if framed_by_page else _STRICT_XFO
+        csp = _RUN_CSP_HEADER if framed_by_page else _CSP_HEADER
         headers: list[tuple[bytes, bytes]] = [
             (b"x-content-type-options", b"nosniff"),
-            (b"x-frame-options", b"DENY"),
+            (b"x-frame-options", xfo),
             (b"referrer-policy", b"strict-origin-when-cross-origin"),
             (b"permissions-policy", _PERMISSIONS_POLICY.encode("ascii")),
-            (b"content-security-policy", _CSP_HEADER.encode("utf-8")),
+            (b"content-security-policy", csp.encode("utf-8")),
         ]
         if self._should_emit_hsts():
             headers.append(
@@ -94,7 +121,9 @@ class SecurityHeadersMiddleware:
             await self._app(scope, receive, send)
             return
 
-        security_headers = self._build_headers()
+        security_headers = self._build_headers(
+            framed_by_page=_is_space_run_path(scope.get("path", ""))
+        )
         response_started = False
 
         async def wrapped_send(message: Message) -> None:

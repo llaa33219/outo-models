@@ -71,6 +71,25 @@ class TestCreateApp:
         # localhost is internal mode (plain HTTP) → no HSTS.
         assert response.headers.get("strict-transport-security") is None
 
+    def test_space_run_path_allows_same_origin_framing(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/spaces/alice/demo/run/")
+        assert response.headers["x-frame-options"] == "SAMEORIGIN"
+        csp = response.headers["content-security-policy"]
+        assert "frame-ancestors 'self'" in csp
+        assert "script-src" not in csp
+        assert "default-src" not in csp
+
+    def test_space_page_path_still_denies_framing(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        client, _, _ = app
+        response = client.get("/spaces")
+        assert response.headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
 
 class TestErrorEnvelope:
     """Generic exceptions render as the documented JSON envelope, no leaks."""

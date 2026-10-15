@@ -131,6 +131,63 @@ def _assert_common_headers(headers) -> None:
     assert headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert headers["permissions-policy"].startswith("camera=()")
     assert headers["content-security-policy"].startswith("default-src 'self'")
+    assert "frame-ancestors 'none'" in headers["content-security-policy"]
+
+
+class TestSpaceRunFramingHeaders:
+    """The Space run proxy is framed by the Space page — SAMEORIGIN only.
+
+    The run path serves user-owned app content (a static export or a
+    reverse-proxied container). `SAMEORIGIN` + a framing-only CSP lets the
+    preview iframe render while the `script-src` allowlist of the rest of
+    the site would block the app's own scripts.
+    """
+
+    def _run_headers(self, app: tuple[TestClient, FastAPI, object], path: str):
+        client, _, _ = app
+        return client.get(path).headers
+
+    def test_run_root_allows_same_origin_framing(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        headers = self._run_headers(app, "/spaces/alice/demo/run/")
+        assert headers["x-frame-options"] == "SAMEORIGIN"
+        csp = headers["content-security-policy"]
+        assert "frame-ancestors 'self'" in csp
+        assert "frame-ancestors 'none'" not in csp
+
+    def test_run_path_drops_script_and_default_src(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        headers = self._run_headers(app, "/spaces/alice/demo/run/index.html")
+        csp = headers["content-security-policy"]
+        assert "script-src" not in csp
+        assert "default-src" not in csp
+        assert "style-src" not in csp
+        assert "img-src" not in csp
+        assert "font-src" not in csp
+
+    def test_run_path_keeps_the_other_security_headers(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        headers = self._run_headers(app, "/spaces/alice/demo/run/")
+        assert headers["x-content-type-options"] == "nosniff"
+        assert headers["referrer-policy"] == "strict-origin-when-cross-origin"
+        assert headers["permissions-policy"].startswith("camera=()")
+
+    def test_non_run_spaces_page_still_denies_framing(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        headers = self._run_headers(app, "/spaces")
+        assert headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in headers["content-security-policy"]
+
+    def test_lookalike_path_without_run_segment_denies_framing(
+        self, app: tuple[TestClient, FastAPI, object]
+    ) -> None:
+        headers = self._run_headers(app, "/spaces/alice/runner/index.html")
+        assert headers["x-frame-options"] == "DENY"
+        assert "frame-ancestors 'none'" in headers["content-security-policy"]
 
 
 # Attach the helper as a method on the test classes so the existing
