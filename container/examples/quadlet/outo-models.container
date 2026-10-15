@@ -50,6 +50,15 @@ PublishPort=443:443
 # name match).
 Volume=outo-models-data:/var/lib/outo-models
 
+# Host Podman API socket. `outo-models start` mounts it automatically, but a
+# quadlet (or any other) deployment must do it explicitly, otherwise every
+# Spaces container SDK (docker/gradio/streamlit) fails. `%t` is the user's
+# runtime dir (/run/user/<uid>), i.e. the ROOTLESS podman socket — the
+# supported path, because this container runs as uid 1000 and cannot connect
+# to a rootful root:root 0660 socket.
+Volume=%t/podman/podman.sock:/run/podman/podman.sock:ro
+Environment=OUTO_PODMAN_SOCKET=/run/podman/podman.sock
+
 # Auto-update — quadlet delegates the Podman auto-update policy. When
 # AutoUpdate=registry is set, `podman-auto-update.timer` detects new
 # images and replaces the container without downtime.
