@@ -316,7 +316,10 @@ sudo systemctl enable --now podman.socket     # rootful installs
 ```
 
 The installer does this best-effort for you; reinstalling the shim
-(`install-cli.sh`) retries it.
+(`install-cli.sh`) retries it. Rootless is the supported path for the
+*server* container: it runs as uid 1000 and gets `EACCES` on a rootful
+`root:root 0660` socket. See
+[503 `podman_unreachable`](#503-podman_unreachable).
 
 ## 7. Log locations
 
@@ -506,27 +509,47 @@ outo-models start
 
 ```json
 { "error": "podman_unreachable",
-  "message": "Cannot connect to the Podman socket. Check that the host's /run/podman/podman.sock file is mounted into the container." }
+  "message": "Cannot connect to the Podman socket. `outo-models start` mounts it automatically; quadlet and other deployments must mount the host socket themselves (OUTO_PODMAN_SOCKET, default /run/podman/podman.sock)." }
 ```
 
-Cause: the Unix socket pointed to by `OUTO_PODMAN_SOCKET` is not
-reachable inside the container. The most common reasons are a missing
-mount, or confusion between rootless and system mode.
+Cause: the Unix socket pointed to by `OUTO_PODMAN_SOCKET` is not reachable
+inside the container. `outo-models start` mounts the host socket for you
+(`-v <host-socket>:/run/podman/podman.sock:ro` plus
+`-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock`), so on the standard path
+this means one of two things: the host socket was not found at start time,
+or only a rootful one existed. A deployment that launches the container
+itself (quadlet, a bare `podman run`) bypasses the auto-mount entirely.
+
+**Rule of thumb: rootless first.** The server container runs as uid 1000
+and cannot connect to a rootful `root:root 0660` socket — that is an
+`EACCES`, not a missing file. Enable the rootless user socket as the
+non-root user that runs `outo-models`:
+
+```bash
+systemctl --user enable --now podman.socket
+```
 
 Resolution steps:
 
 ```bash
-# 1) Verify the host Podman socket actually exists
-ls -l /run/podman/podman.sock 2>/dev/null \
-  || ls -l /run/user/$(id -u)/podman/podman.sock 2>/dev/null
+# 1) Verify the host Podman socket actually exists (rootless first)
+ls -l "$(echo "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}")/podman/podman.sock" 2>/dev/null \
+  || ls -l /run/podman/podman.sock 2>/dev/null
 
 # 2) Verify the same path is visible inside the container
 podman exec outo-models ls -l /run/podman/podman.sock
 
-# 3) If the mount is missing, add it to the start command
-sudo podman run -d --name outo-models \
-  -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro \
-  ...
+# 3a) Standard path: restart so `start` re-probes and mounts the socket
+outo-models start
+# If it printed
+#   [note] no Podman socket found — Spaces container SDKs (docker/gradio/streamlit) stay unavailable until a Podman socket is mounted.
+# the host had no socket at start time. Fix (1), then start again.
+
+# 3b) Quadlet / manual deployment: mount it yourself
+#   Volume=%t/podman/podman.sock:/run/podman/podman.sock:ro
+#   Environment=OUTO_PODMAN_SOCKET=/run/podman/podman.sock
+# and restart the unit. Override the host path start should mount with
+# OUTO_PODMAN_SOCK=/run/user/<uid>/podman/podman.sock outo-models start
 
 # 4) Probe REST directly inside the container
 podman exec outo-models \

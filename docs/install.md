@@ -152,7 +152,13 @@ The operator CLI (`outo-models setup`, `start`, `admin`, …) lives inside the
 image, so a bare `podman pull` leaves no `outo-models` command on the host.
 The shim script writes `/usr/local/bin/outo-models`, a small wrapper that
 runs the CLI from the image with the mounts it needs (`/etc/outo-models`,
-the `outo-models-data` volume, and the host Podman socket):
+the `outo-models-data` volume, and the host Podman socket). The shim picks
+the host socket rootless-first (`$XDG_RUNTIME_DIR/podman/podman.sock`,
+then `/run/podman/podman.sock`), mounts it at
+`/run/podman/podman.sock` inside the CLI container, and forwards the host
+path through `OUTO_PODMAN_SOCK` so `outo-models start` can mount the same
+socket into the server container. The container-side path is passed as
+`OUTO_PODMAN_SOCKET=/run/podman/podman.sock`:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
@@ -186,7 +192,19 @@ the invoking user (`systemctl --user enable --now podman.socket` +
 that socket using the `podman-remote` binary baked into the image — this is
 how `start`/`stop`/`update`/`reset` work even though the CLI itself runs in
 a throwaway container. Rootful (sudo) installs already have the system
-socket at `/run/podman/podman.sock` and need nothing extra.
+socket at `/run/podman/podman.sock` and need nothing extra, though the
+server container runs as uid 1000 and would get `EACCES` on a rootful
+`root:root 0660` socket.
+
+The server container needs that socket too, and `outo-models start` mounts
+it into the server container automatically (using the host path the shim
+forwards as `OUTO_PODMAN_SOCK`). Deployments that launch the container
+themselves — quadlet, a bare `podman run` — must mount it themselves; see
+[spaces.md §The socket is mounted for you](spaces.md#the-socket-is-mounted-for-you).
+Rootless-first wins for a reason: run `systemctl --user enable --now
+podman.socket` as the same non-root user that runs `outo-models`. The shim
+resolves the rootless socket through that user's `XDG_RUNTIME_DIR`, so the
+usual "do not `sudo` the shim" rule still applies.
 
 > Through the shim, the wizard cannot open host firewall ports by itself
 > (the firewall tools are not in the image). Run

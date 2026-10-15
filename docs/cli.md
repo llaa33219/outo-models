@@ -153,6 +153,27 @@ podman run -d --name outo-models \
   outo-models:stable
 ```
 
+### Podman socket auto-mount
+
+`start` mounts the host Podman API socket into the server container so the
+Spaces container SDKs (`docker` / `gradio` / `streamlit`) work on a default
+install. The mount added to `podman run` is:
+
+```bash
+-v <host-socket-path>:/run/podman/podman.sock:ro
+-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock
+```
+
+The host path comes from `OUTO_PODMAN_SOCK` when the shim set it, otherwise
+from probing `$XDG_RUNTIME_DIR/podman/podman.sock` first and
+`/run/podman/podman.sock` second. Rootless is preferred: the server
+container runs as uid 1000 and cannot connect to a rootful socket. When
+nothing is found, `start` prints:
+
+```
+[note] no Podman socket found — Spaces container SDKs (docker/gradio/streamlit) stay unavailable until a Podman socket is mounted.
+```
+
 If `podman` is missing from `PATH`, an English message is printed to
 stderr — "this command must run on the server host" — and the process
 exits with code 1.
@@ -541,7 +562,7 @@ Pydantic Settings maps every `OUTO_*` environment variable by stripping the
 | `OUTO_S3_PREFIX` | `s3_prefix` | `lfs` | Object-key prefix inside the bucket |
 | `OUTO_S3_PRESIGN_TTL_SECONDS` | `s3_presign_ttl_seconds` | `3600` | Lifetime of presigned URLs |
 | `OUTO_SPACES_RUNTIME_ENABLED` | `spaces_runtime_enabled` | `true` | Toggle the Spaces container runtime |
-| `OUTO_PODMAN_SOCKET` | `podman_socket` | `/run/podman/podman.sock` | Podman REST API Unix socket |
+| `OUTO_PODMAN_SOCKET` | `podman_socket` | `/run/podman/podman.sock` | Podman socket path **inside the container** (server + CLI `podman-remote`) |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | `spaces_runtime_port_range_start` | `20000` | Start of Space host-port range |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | `spaces_runtime_port_range_end` | `21000` | End of Space host-port range |
 
@@ -557,6 +578,7 @@ Additional operator-facing variables:
 | `OUTO_UPDATE_SCRIPT` | Override `update.sh` path | `cli.container_script` |
 | `OUTO_RESET_SCRIPT` | Override `reset.sh` path | `cli.container_script` |
 | `OUTO_CADDY_ADMIN_URL` | Caddy admin API base URL | lifespan cert health check (default `http://localhost:2019`) |
+| `OUTO_PODMAN_SOCK` | **Host** path to the Podman socket (no config key — env only) | Forwarded by the `install-cli.sh` shim, then used by `start` as the `podman run` mount source. Rootless user socket preferred |
 | `CLOUDFLARE_API_TOKEN` | Used for Caddy DNS-01 | Caddyfile `tls { dns cloudflare {env.CLOUDFLARE_API_TOKEN} }` |
 
 ## Exit codes
