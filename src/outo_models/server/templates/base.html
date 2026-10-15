@@ -28,6 +28,25 @@
   --blp-paper-blue-2:     #F4F8FC;
   --blp-soft-blue:        #7FBCFF; /* placeholder */
 
+  /* Status + semantic palette — 디자인.md §3.2. Runtime state chips,
+   * Start/Stop buttons, error panels, usage bars. Declared HERE (not
+   * page-locally) so every template can read them; a page that
+   * redeclares one of these breaks in dark mode, because the
+   * `prefers-color-scheme: dark` block below only re-declares what is
+   * declared up here. */
+  --blp-sky:              #00AFFF; /* BLP LOGO SKY BLUE — secondary accent */
+  --blp-light-dark:       #D4DCE8; /* BLP LIGHT DARK — weak border */
+  --blp-deep-dark:        #00193D; /* BLP DARK — strong text / header */
+  --blp-green:            #00D620; /* success */
+  --blp-deep-green:       #00B21B; /* emphasized success (text) */
+  --blp-paper-green:      #B8E1D8; /* success notice background */
+  --blp-paper-lime:       #F2F6ED; /* success notice surface */
+  --blp-red:              #FF0505; /* error / delete */
+  --blp-deep-red:         #DB0000; /* emphasized error (text) */
+  --blp-soft-red:         #FF7F7F; /* weak warning */
+  --blp-deep-yellow:      #EBD700; /* emphasized warning */
+  --blp-paper-orange:     #FCF5EE; /* warm auxiliary surface */
+
   /* System constants — spec §부록 A */
   --gap-tile:             4px;
   --border-tile:          2px;
@@ -79,6 +98,25 @@
     --blp-light-blue:       #1F3050; /* filled chip border */
     --blp-paper-blue-2:     #131C2E; /* even subtler bg */
     --blp-soft-blue:        #7DA9C7; /* placeholder on dark */
+    /* Status palette — only the roles that MUST flip are re-declared
+     * (same policy as the blue family above, §3.3.1):
+     *   - light notice SURFACES (`paper-*`) become dark blue-tinted
+     *     surfaces, otherwise a chip would glow white on a dark page;
+     *   - the text roles that sit ON those surfaces (`deep-dark`,
+     *     `deep-green`, `deep-red`) are lifted so contrast holds;
+     *   - hairline/accent roles on a dark surface (`light-dark`,
+     *     `sky`, `green`) get one tone brighter.
+     * Already-bright roles (`red`, `soft-red`, `deep-yellow`) stay
+     * byte-identical — they read fine on `--tile-bg` (#0E1420). */
+    --blp-sky:              #4FC3FF; /* accent on dark */
+    --blp-light-dark:       #2A3547; /* weak border on dark */
+    --blp-deep-dark:        #E8EEF7; /* chip text on a dark surface */
+    --blp-green:            #2AE86B; /* success border on dark */
+    --blp-deep-green:       #5BE08A; /* success text on a dark surface */
+    --blp-paper-green:      #14382C; /* dark success notice */
+    --blp-paper-lime:       #16211A; /* dark success surface */
+    --blp-deep-red:         #FF6B6B; /* error text on a dark surface */
+    --blp-paper-orange:     #241C14; /* dark warm surface */
   }
 }
 

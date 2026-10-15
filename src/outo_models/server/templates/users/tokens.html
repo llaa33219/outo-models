@@ -117,14 +117,10 @@
      * (square tiles, capsule buttons/chips/pills, dark code box is
      * content per 디자인.md §0.1).
      *
-     * `--blp-red` is redeclared here because base.html's :root token
-     * block does not include the danger palette (pre-existing gap).
-     * Without the redeclaration the `.danger` button rule falls back
-     * to a transparent background and the Revoke control is invisible. */
-    :root {
-      --blp-red: #FF0505;
-      --blp-deep-red: #DB0000;
-    }
+     * The danger palette (`--blp-red` / `--blp-deep-red`) comes from
+     * base.html's :root status block — it is NOT redeclared here, or
+     * the page would pin light-mode values and the Revoke control
+     * would stay unreadable in dark mode. */
     .token-create-card { margin-bottom: 24px; }
     .scope-row {
       display: flex;
