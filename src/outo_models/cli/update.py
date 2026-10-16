@@ -5,7 +5,13 @@ Delegates to `assets/scripts/update.sh` (resolved via
 
     1. `podman pull <image-tag>`
     2. `podman run --rm ... outo-models migrate` (throwaway container)
-    3. `podman restart outo-models` (if the container is running)
+    3. `podman run --rm ... outo-models start` (recreate, from the new image)
+
+Step 3 runs `start` — not `podman restart` — because a restart reuses the OLD
+container spec, so spec changes shipped with the new image (v0.6.6 added the
+Podman socket mount) never reached the running server and the operator had to
+run `outo-models start` by hand. `start` replaces the container with the
+current spec, so the end state of `update` is the end state of `start`.
 
 The CLI's only job is to locate the script, build its argv, stream its
 output, and translate its exit code into a CLI exit. The wizard and the
@@ -87,7 +93,7 @@ def update(
         ),
     ),
 ) -> None:
-    """`outo-models update` — pull the new image, run DB migrations, restart."""
+    """`outo-models update` — pull the new image, run DB migrations, recreate."""
     image_ref = normalize_image_ref(image) if image is not None else _image_from_config()
 
     script = container_script("update.sh")

@@ -84,7 +84,9 @@ app.command("stop", help="Stop the outo-models container.")(stop)
 app.command("restart", help="Restart the outo-models container.")(restart)
 app.command("status", help="Show the outo-models container status.")(status)
 
-app.command("update", help="Pull the new image, run DB migrations, and restart.")(update)
+app.command("update", help="Pull the new image, run DB migrations, and recreate the container.")(
+    update
+)
 app.command("reset", help="Wipe the container and all data (triple-yes gate).")(reset)
 app.add_typer(admin_app, name="admin", help="Manage users, quotas, and GPUs")
 
