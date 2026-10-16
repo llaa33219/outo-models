@@ -119,6 +119,25 @@ def _extract_first(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+_GPU_INDEX_PREFIX = "GPU-"
+
+
+def _cdi_device_name(assignment_id: str) -> str:
+    """Map a stored GPU assignment to an NVIDIA CDI device name.
+
+    Assignments are operator input stored verbatim (`gpu-0` in the admin UI),
+    while a valid NVIDIA CDI device name is either a bare integer index or
+    `GPU-<uuid>`. Strip a `gpu-` prefix when the remainder is an integer;
+    anything else passes through untouched — the UI track owns input rules.
+    """
+    candidate = assignment_id.strip()
+    if candidate.lower().startswith(_GPU_INDEX_PREFIX.lower()):
+        remainder = candidate[len(_GPU_INDEX_PREFIX) :]
+        if remainder.isdigit():
+            return str(int(remainder))
+    return candidate
+
+
 @dataclass(frozen=True, slots=True)
 class ManagedContainer:
     """One row returned by `list_managed`."""
@@ -365,7 +384,10 @@ class SpaceRuntimeManager:
             ],
         }
         if gpu_ids:
-            devices = [{"path": f"nvidia.com/gpu={gpu}", "type": "cdi"} for gpu in gpu_ids]
+            devices = [
+                {"path": f"nvidia.com/gpu={_cdi_device_name(gpu)}", "type": "cdi"}
+                for gpu in gpu_ids
+            ]
             body["hostConfig"]["devices"] = devices
 
         create_response = await self._request(

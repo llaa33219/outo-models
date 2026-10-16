@@ -23,6 +23,7 @@ from outo_models.exceptions import OutoError
 from outo_models.spaces.runtime_manager import (
     ManagedContainer,
     SpaceRuntimeManager,
+    _cdi_device_name,
     container_name,
     image_tag,
 )
@@ -211,6 +212,28 @@ class TestBuildImage:
         await client.aclose()
 
 
+class TestCdiDeviceName:
+    """Assignments are stored verbatim (`gpu-0` in the admin UI); the NVIDIA
+    CDI device name is either a bare integer index or `GPU-<uuid>`."""
+
+    @pytest.mark.parametrize(
+        ("assignment", "expected"),
+        [
+            ("gpu-0", "0"),
+            ("gpu-01", "1"),
+            ("gpu-7", "7"),
+            ("GPU-2", "2"),
+            ("0", "0"),
+            ("  gpu-2  ", "2"),
+            ("GPU-abc", "GPU-abc"),
+            ("", ""),
+            ("nonsense", "nonsense"),
+        ],
+    )
+    def test_normalizes_index_form_when_prefixed(self, assignment: str, expected: str) -> None:
+        assert _cdi_device_name(assignment) == expected
+
+
 class TestStartStopAndInspect:
     async def test_allocates_lowest_free_port(self, settings) -> None:
         def h(request: httpx.Request) -> httpx.Response:
@@ -262,6 +285,27 @@ class TestStartStopAndInspect:
         devices = payload["hostConfig"]["devices"]
         assert {"path": "nvidia.com/gpu=0", "type": "cdi"} in devices
         assert {"path": "nvidia.com/gpu=1", "type": "cdi"} in devices
+
+    async def test_device_list_normalizes_stored_assignment_ids(self, settings, captured) -> None:
+        def h(request: httpx.Request) -> httpx.Response:
+            if "/containers/json" in str(request.url):
+                return httpx.Response(200, json=[])
+            if "/containers/create" in str(request.url):
+                return httpx.Response(201, json={"Id": "container-id-3"})
+            if "/start" in str(request.url):
+                return httpx.Response(204)
+            return httpx.Response(200, json={})
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0", "GPU-abc"))
+        await client.aclose()
+        create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
+        payload = json.loads(create_request.content)
+        assert payload["hostConfig"]["devices"] == [
+            {"path": "nvidia.com/gpu=0", "type": "cdi"},
+            {"path": "nvidia.com/gpu=GPU-abc", "type": "cdi"},
+        ]
 
     async def test_inspect_returns_payload_or_none(self, settings) -> None:
         def h(request: httpx.Request) -> httpx.Response:
