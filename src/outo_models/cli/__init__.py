@@ -53,6 +53,7 @@ from rich.prompt import Confirm, Prompt
 from typer import Exit as _TyperExit
 
 from outo_models.exceptions import OutoError
+from outo_models.utils import humanbytes as _humanbytes
 
 # ---------------------------------------------------------------------------
 # Prompts (testable)
@@ -341,64 +342,10 @@ def format_bytes(num_bytes: int) -> str:
     return f"{value:.2f} {units[idx]}"
 
 
-def parse_human_bytes(text_value: str) -> int:
-    """Parse `10GiB` / `500MiB` / `0` / `1024` style strings into bytes.
-
-    Accepts the binary-suffixed units (`KiB`, `MiB`, `GiB`, `TiB`) and
-    decimal-suffixed units (`KB`, `MB`, `GB`, `TB`); each is interpreted
-    in its natural base (2^10 / 10^3 respectively). Case-insensitive.
-
-    Used by `outo-models admin quota set`. Raises `ValidationFailedError`
-    on malformed input — the same error type the API surfaces — so the
-    operator gets a uniform message regardless of which surface they used.
-    """
-    from outo_models.exceptions import ValidationFailedError
-
-    raw = text_value.strip()
-    if not raw:
-        raise ValidationFailedError("quota value must not be empty")
-
-    binary_units: dict[str, int] = {
-        "KIB": 1024,
-        "MIB": 1024**2,
-        "GIB": 1024**3,
-        "TIB": 1024**4,
-        "PIB": 1024**5,
-    }
-    decimal_units: dict[str, int] = {
-        "KB": 1000,
-        "MB": 1000**2,
-        "GB": 1000**3,
-        "TB": 1000**4,
-        "PB": 1000**5,
-    }
-
-    upper = raw.upper().replace(" ", "")
-    for unit, factor in binary_units.items():
-        if upper.endswith(unit):
-            number = upper[: -len(unit)]
-            return _parse_int(number, factor, raw)
-    for unit, factor in decimal_units.items():
-        if upper.endswith(unit):
-            number = upper[: -len(unit)]
-            return _parse_int(number, factor, raw)
-
-    try:
-        return int(raw)
-    except ValueError as exc:
-        raise ValidationFailedError(
-            f"quota value {text_value!r} is not a valid size "
-            "(use e.g. 10GiB, 500MiB, or 10737418240)"
-        ) from exc
-
-
-def _parse_int(number_text: str, factor: int, original: str) -> int:
-    from outo_models.exceptions import ValidationFailedError
-
-    try:
-        return int(float(number_text) * factor)
-    except ValueError as exc:
-        raise ValidationFailedError(f"quota value {original!r} has a non-numeric prefix") from exc
+# The parser itself lives in `outo_models.utils.humanbytes` so routers can
+# reuse it without importing `rich` / `typer`. Re-exported here because
+# `outo_models.cli.parse_human_bytes` is part of the documented CLI surface.
+parse_human_bytes = _humanbytes.parse_human_bytes
 
 
 __all__ = [
