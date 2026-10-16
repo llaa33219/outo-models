@@ -691,6 +691,26 @@ Run every `outo-models` command as the SAME user (all rootless as yourself,
 or all via sudo) — rootless and rootful podman have separate image stores
 and containers, so mixing them makes images/containers seem to "vanish".
 
+### `Error: statfs /run/podman/podman.sock: permission denied` during `update`
+
+`outo-models update` recreates the container by handing `podman run` the HOST
+socket path as the bind-mount SOURCE. That path reaches the script only through
+`OUTO_PODMAN_SOCK`, which the host CLI shim forwards; shims installed before
+v0.6.6 mount the socket at `/run/podman/podman.sock` without forwarding the
+host path, so the container-side mount point was passed as the host source and
+podman rejected it.
+
+Current versions refuse to guess and print the fix instead. If you still see
+the raw error, your shim predates that guard — refresh it and re-run:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+outo-models update
+```
+
+The pull and the DB migration already completed when the recreate aborts, and
+the running server container is untouched — no downtime.
+
 ### `PermissionError` writing `config.yaml` or database files (rootless)
 
 Rootless podman maps the container's uid 1000 to a host subuid by default,

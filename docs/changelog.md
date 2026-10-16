@@ -4,6 +4,20 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.8 — update fails loudly on a stale CLI shim
+
+### Fixed
+
+- **`outo-models update` no longer crashes with
+  `statfs /run/podman/podman.sock: permission denied` on a stale host
+  shim.** When the installed CLI shim predates `OUTO_PODMAN_SOCK`
+  forwarding, the update script used to hand the container-side
+  `/run/podman/podman.sock` mount point to the host engine as a bind
+  source. It now aborts before the container swap with an actionable
+  message (re-run `install-cli.sh`, then `outo-models update`), and the
+  running server container is left untouched. Host-shell socket probing
+  and the pull/migrate steps are unchanged.
+
 ## v0.6.7 — Admin web dashboard, update recreates the container
 
 ### Added
