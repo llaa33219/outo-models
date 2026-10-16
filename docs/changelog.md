@@ -4,7 +4,7 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
-## v0.6.7 — Admin web dashboard, update recreates the container (unreleased)
+## v0.6.7 — Admin web dashboard, update recreates the container
 
 ### Added
 
