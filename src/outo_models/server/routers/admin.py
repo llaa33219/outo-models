@@ -10,15 +10,14 @@ they keep writing their `AuditLog` rows. Admin operations outside that
 state machine (quota / gpu assignments) get their own `AuditLog`
 entries emitted via `_admin_helpers.write_admin_audit`.
 
-# allow: SIZE_OK — the WP-13 contract lists 9 admin endpoints + 3 schemas
-# as the surface, and splitting the file would force the test imports +
-# Pydantic model references to be threaded through a separate module.
-# Keeping it together is the smaller diff.
+# allow: SIZE_OK — the admin surface is 11 endpoints + 3 schemas held in
+# one module because the HTML dashboard in `ui.py` imports the same
+# helpers from `_admin_helpers`; every handler here is a thin wrapper, so
+# splitting the schemas away would only lengthen the import chains.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -32,15 +31,15 @@ from outo_models.auth import (
     deny_user,
     unban_user,
 )
-from outo_models.db import AuditLog, User, WebSetting
-from outo_models.repos.quota import ensure_quota_rows
+from outo_models.db import AuditLog, User
 from outo_models.server.deps import get_db, require_admin
 from outo_models.server.routers._admin_helpers import (
+    clear_user_gpu_ids,
     get_gpu_assignments,
-    gpu_setting_key,
     load_target_user,
     quota_dict,
-    write_admin_audit,
+    set_user_gpu_ids,
+    set_user_quota,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -189,21 +188,9 @@ async def set_quota(
 ) -> dict[str, int]:
     """Set the storage quota (in bytes) and audit the change."""
     user = await load_target_user(db, username)
-    quota, _usage = await ensure_quota_rows(db, user)
-    old_value = quota.max_bytes
-    quota.max_bytes = body.max_bytes
-    write_admin_audit(
-        db,
-        admin=admin,
-        action="admin.quota",
-        target_id=user.id,
-        detail=json.dumps(
-            {"old_max_bytes": old_value, "new_max_bytes": body.max_bytes},
-            ensure_ascii=False,
-        ),
-    )
+    await set_user_quota(db, user, body.max_bytes, actor=admin)
     await db.commit()
-    return {"max_bytes": quota.max_bytes}
+    return {"max_bytes": body.max_bytes}
 
 
 # ---------------------------------------------------------------------------
@@ -231,20 +218,7 @@ async def set_gpu(
 ) -> dict[str, list[str]]:
     """Replace the GPU assignment list and audit the change."""
     user = await load_target_user(db, username)
-    key = gpu_setting_key(username)
-    row = (await db.execute(select(WebSetting).where(WebSetting.key == key))).scalar_one_or_none()
-    encoded = json.dumps(list(body.gpu_ids), ensure_ascii=False)
-    if row is None:
-        db.add(WebSetting(key=key, value=encoded))
-    else:
-        row.value = encoded
-    write_admin_audit(
-        db,
-        admin=admin,
-        action="admin.gpu",
-        target_id=user.id,
-        detail=encoded,
-    )
+    await set_user_gpu_ids(db, user, body.gpu_ids, actor=admin)
     await db.commit()
     return {"gpu_ids": list(body.gpu_ids)}
 
@@ -257,17 +231,7 @@ async def clear_gpu(
 ) -> Response:
     """Drop the GPU assignment list entirely."""
     user = await load_target_user(db, username)
-    key = gpu_setting_key(username)
-    row = (await db.execute(select(WebSetting).where(WebSetting.key == key))).scalar_one_or_none()
-    if row is not None:
-        await db.delete(row)
-        write_admin_audit(
-            db,
-            admin=admin,
-            action="admin.gpu",
-            target_id=user.id,
-            detail=json.dumps({"cleared": True}),
-        )
+    await clear_user_gpu_ids(db, user, actor=admin)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
