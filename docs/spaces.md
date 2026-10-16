@@ -265,6 +265,11 @@ DELETE /spaces/<owner>/<name>/run/{path:path}
 - If the container is not running: `503 space_not_running`
 - If the upstream is dead: `504 proxy_unreachable` (httpx
   `RequestError`)
+- The proxy target is `http://127.0.0.1:<host_port>/<path>` — the **host**
+  loopback, where rootless Podman binds each Space's portmappings. Loopback
+  is per-netns, so the server container shares the host network namespace
+  (`--network=host`, see [cli.md](cli.md#outo-models-start)); that is what
+  makes this hop reachable.
 - The `static` SDK does not proxy — it returns
   `_file_response_for_static(site_dir, "...")` directly. If `{path}` is
   empty or ends in `/`, the handler falls back to `index.html`.

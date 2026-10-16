@@ -385,6 +385,7 @@ Internally this runs:
 
 ```bash
 podman run -d --name outo-models \
+  --userns=keep-id --network=host \
   -e OUTO_DATA_DIR=/var/lib/outo-models \
   -e OUTO_SECRET_KEY=... \
   -e OUTO_DOMAIN=models.example.com \
@@ -392,15 +393,18 @@ podman run -d --name outo-models \
   -e OUTO_DB_URL=... (optional) \
   -v outo-models-data:/var/lib/outo-models \
   --cap-add NET_BIND_SERVICE \
-  -p 80:80 -p 443:443 \
   outo-models:stable
 ```
 
-`--cap-add NET_BIND_SERVICE` covers **only the in-container bind** — Caddy
-binding `:80` / `:443` inside the container network namespace. On
-rootless Podman, publishing the host port is done by the HOST-side
-`rootlessport` helper, which the capability cannot help; that additionally
-needs the host sysctl `net.ipv4.ip_unprivileged_port_start` lowered. The
+The container runs **host-networked** (`--network=host`, no `-p` mappings):
+Caddy binds `:80` / `:443` directly on the host, and the Spaces run proxy can
+reach the Space ports that rootless portmappings bind to the host loopback.
+
+`--cap-add NET_BIND_SERVICE` covers the **in-container bind** — Caddy
+binding `:80` / `:443` inside the container's (host) network namespace. On
+rootless Podman the bind therefore lands on the host's ports directly, which
+additionally needs the host sysctl `net.ipv4.ip_unprivileged_port_start`
+lowered. The
 installer (`scripts/install-cli.sh`) applies it automatically when the
 kernel is still at its default `1024`, and `outo-models start` preflights
 it (error code `low_ports_blocked`). See

@@ -145,13 +145,19 @@ Reads the `image`, `volume`, and `ports` keys from
 
 ```bash
 podman run -d --name outo-models \
+  --userns=keep-id --network=host \
   -e OUTO_DATA_DIR=... -e OUTO_SECRET_KEY=... -e OUTO_DOMAIN=... \
   -e OUTO_REQUIRE_APPROVAL=true -e OUTO_DB_URL=... \
   -v outo-models-data:/var/lib/outo-models \
   --cap-add NET_BIND_SERVICE \
-  -p 80:80 -p 443:443 \
   outo-models:stable
 ```
+
+The container runs **host-networked** (`--network=host`, no `-p` mappings) so
+the Spaces run proxy can reach the Space ports that rootless portmappings bind
+to the host loopback. The `ports` keys still drive the low-port preflight
+below — under host networking Caddy binds `:80` / `:443` directly on the host,
+so unprivileged low ports must remain enabled.
 
 ### Podman socket auto-mount
 
