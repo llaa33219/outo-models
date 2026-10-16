@@ -71,7 +71,6 @@ from outo_models.exceptions import OutoError
 _LIBPOD_PREFIX = "/v4.0.0/libpod"
 
 _SPACE_PORT = 8000
-_SPACE_PORT_STR = f"{_SPACE_PORT}/tcp"
 
 _LABEL_MANAGED = "outo.managed"
 _LABEL_MANAGED_VALUE = "true"
@@ -360,35 +359,27 @@ class SpaceRuntimeManager:
     ) -> tuple[str, int | None]:
         container = container_name(owner, name)
         host_port = await self._allocate_host_port()
-        port_bindings = {
-            _SPACE_PORT_STR: [
-                {
-                    "host_ip": "127.0.0.1",
-                    "host_port": str(host_port),
-                }
-            ]
-        }
+        # libpod decodes this as `specgen.SpecGenerator`, not as a Docker-API
+        # config: `env` is a map, ports are numeric uint16, `restart_policy` is
+        # a bare string. Go silently drops unknown keys, so a Docker-API field
+        # name loses intent instead of erroring — keep this body in specgen terms.
         body: dict[str, Any] = {
             "name": container,
             "image": image_tag(owner, name),
             "labels": self._space_labels(owner, name),
-            "exposedPorts": {
-                _SPACE_PORT_STR: {},
-            },
-            "hostConfig": {
-                "PortBindings": port_bindings,
-                "RestartPolicy": {"Name": "always"},
-            },
-            "env": [
-                f"PORT={_SPACE_PORT}",
+            "env": {"PORT": str(_SPACE_PORT)},
+            "portmappings": [
+                {
+                    "host_ip": "127.0.0.1",
+                    "container_port": _SPACE_PORT,
+                    "host_port": host_port,
+                    "protocol": "tcp",
+                }
             ],
+            "restart_policy": "always",
         }
         if gpu_ids:
-            devices = [
-                {"path": f"nvidia.com/gpu={_cdi_device_name(gpu)}", "type": "cdi"}
-                for gpu in gpu_ids
-            ]
-            body["hostConfig"]["devices"] = devices
+            body["gpus"] = [_cdi_device_name(gpu) for gpu in gpu_ids]
 
         create_response = await self._request(
             "POST",

@@ -14,6 +14,7 @@ and verifies either a wire-shape contract or an error-mapping contract.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -55,6 +56,24 @@ def _client_for(handler, captured: list[httpx.Request]) -> httpx.AsyncClient:
         transport=transport,
         headers={"Accept": "application/json"},
     )
+
+
+def _create_ok_handler(request: httpx.Request) -> httpx.Response:
+    """Answer the three requests `start()` makes: list, create, start."""
+    if "/containers/json" in str(request.url):
+        return httpx.Response(200, json=[])
+    if "/containers/create" in str(request.url):
+        return httpx.Response(201, json={"Id": "container-id"})
+    if "/start" in str(request.url):
+        return httpx.Response(204)
+    return httpx.Response(200, json={})
+
+
+def _create_payload(captured: list[httpx.Request]) -> dict[str, Any]:
+    """Return the decoded JSON body of the captured `/containers/create` call."""
+    create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
+    payload: dict[str, Any] = json.loads(create_request.content)
+    return payload
 
 
 class TestContainerNameAndImageTag:
@@ -260,52 +279,55 @@ class TestStartStopAndInspect:
         # 20000 / 20001 should be free, only 20002 is in use → next free is 20000.
         assert port == 20000
 
-    async def test_create_payload_includes_labels_and_env(self, settings, captured) -> None:
-        def h(request: httpx.Request) -> httpx.Response:
-            if "/containers/json" in str(request.url):
-                return httpx.Response(200, json=[])
-            if "/containers/create" in str(request.url):
-                return httpx.Response(201, json={"Id": "container-id-2"})
-            if "/start" in str(request.url):
-                return httpx.Response(204)
-            return httpx.Response(200, json={})
-
-        client = _client_for(h, captured)
+    async def test_create_payload_matches_libpod_specgenerator(self, settings, captured) -> None:
+        client = _client_for(_create_ok_handler, captured)
         manager = SpaceRuntimeManager(settings, client=client)
-        await manager.start("alice", "demo", gpu_ids=("0", "1"))
+        _, host_port = await manager.start("alice", "demo")
         await client.aclose()
-        create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
-        payload = json.loads(create_request.content)
+        payload = _create_payload(captured)
         assert payload["name"] == "outo-space-alice-demo"
-        labels = payload["labels"]
-        assert labels["outo.space"] == "alice/demo"
-        assert labels["outo.managed"] == "true"
-        envs = payload["env"]
-        assert any(line.startswith("PORT=") for line in envs)
-        devices = payload["hostConfig"]["devices"]
-        assert {"path": "nvidia.com/gpu=0", "type": "cdi"} in devices
-        assert {"path": "nvidia.com/gpu=1", "type": "cdi"} in devices
+        assert payload["image"] == "localhost/outo-space-alice-demo:latest"
+        assert payload["labels"] == {"outo.managed": "true", "outo.space": "alice/demo"}
+        # SpecGenerator.Env is map[string]string — a JSON list here is the
+        # `cannot unmarshal array into Go struct field SpecGenerator.env` failure.
+        assert payload["env"] == {"PORT": "8000"}
+        assert payload["restart_policy"] == "always"
+        # nettypes.PortMapping ports are uint16 — numbers, not Docker strings.
+        assert payload["portmappings"] == [
+            {
+                "host_ip": "127.0.0.1",
+                "container_port": 8000,
+                "host_port": host_port,
+                "protocol": "tcp",
+            }
+        ]
 
-    async def test_device_list_normalizes_stored_assignment_ids(self, settings, captured) -> None:
-        def h(request: httpx.Request) -> httpx.Response:
-            if "/containers/json" in str(request.url):
-                return httpx.Response(200, json=[])
-            if "/containers/create" in str(request.url):
-                return httpx.Response(201, json={"Id": "container-id-3"})
-            if "/start" in str(request.url):
-                return httpx.Response(204)
-            return httpx.Response(200, json={})
+    async def test_create_payload_omits_docker_api_fields(self, settings, captured) -> None:
+        client = _client_for(_create_ok_handler, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo")
+        await client.aclose()
+        payload = _create_payload(captured)
+        # Go ignores unknown keys, so these fail as silently lost intent
+        # (no port binding, no restart policy, no devices) rather than an error.
+        assert "hostConfig" not in payload
+        assert "exposedPorts" not in payload
 
-        client = _client_for(h, captured)
+    async def test_create_payload_gpus_normalize_assignment_ids(self, settings, captured) -> None:
+        client = _client_for(_create_ok_handler, captured)
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("gpu-0", "GPU-abc"))
         await client.aclose()
-        create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
-        payload = json.loads(create_request.content)
-        assert payload["hostConfig"]["devices"] == [
-            {"path": "nvidia.com/gpu=0", "type": "cdi"},
-            {"path": "nvidia.com/gpu=GPU-abc", "type": "cdi"},
-        ]
+        payload = _create_payload(captured)
+        assert payload["gpus"] == ["0", "GPU-abc"]
+
+    async def test_create_payload_omits_gpus_when_unassigned(self, settings, captured) -> None:
+        client = _client_for(_create_ok_handler, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo")
+        await client.aclose()
+        payload = _create_payload(captured)
+        assert "gpus" not in payload
 
     async def test_inspect_returns_payload_or_none(self, settings) -> None:
         def h(request: httpx.Request) -> httpx.Response:
