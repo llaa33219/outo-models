@@ -202,10 +202,16 @@ class TestUpdateFailureSurfacing:
 
     def test_missing_podman_exits_zero(self, tmp_path: Path) -> None:
         # Graceful no-op: `update.sh` must never hard-fail a non-podman host.
+        # PODMAN_BIN names a binary that cannot exist so the lookup fails on
+        # every host: runners may ship a real /usr/bin/podman (CI does).
         result = _run(
             tmp_path,
             IMAGE,
-            env={"PATH": "/usr/bin:/bin", "FAKE_PODMAN_LOG": str(tmp_path / "x.log")},
+            env={
+                "PODMAN_BIN": "outo-models-no-such-podman",
+                "PATH": "/usr/bin:/bin",
+                "FAKE_PODMAN_LOG": str(tmp_path / "x.log"),
+            },
         )
         assert result.returncode == 0, result.stderr
         assert "podman is not installed" in result.stdout
