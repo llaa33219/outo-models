@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from outo_models.db import WebSetting
+from outo_models.server.routers.spaces import _load_owner_gpu_ids
+
 # Fixtures `app`, `factory`, `seed_approved_user` are auto-discovered from
 # tests/integration/conftest.py.
 
@@ -123,3 +126,23 @@ class TestListSpaces:
         names = [row["name"] for row in response.json()]
         assert "public-space" in names
         assert "private-space" not in names
+
+
+class TestLoadOwnerGpuIds:
+    """`_load_owner_gpu_ids` reads the `gpu:<username>` WebSetting row."""
+
+    async def test_returns_stored_list_when_row_exists(
+        self, app: tuple[TestClient, FastAPI, object], factory
+    ) -> None:
+        _, _, _ = app
+        async with factory() as session:
+            session.add(WebSetting(key="gpu:alice", value='["gpu-0", "gpu-1"]'))
+            await session.commit()
+            assert await _load_owner_gpu_ids(session, "alice") == ["gpu-0", "gpu-1"]
+
+    async def test_returns_empty_list_when_row_missing(
+        self, app: tuple[TestClient, FastAPI, object], factory
+    ) -> None:
+        _, _, _ = app
+        async with factory() as session:
+            assert await _load_owner_gpu_ids(session, "nobody") == []

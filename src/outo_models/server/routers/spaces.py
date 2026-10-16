@@ -23,11 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from outo_models.config import Settings
-from outo_models.db import AuditLog, Repo, User, WebSetting
+from outo_models.db import AuditLog, Repo, User
 from outo_models.exceptions import ForbiddenError, NotFoundError, OutoError, ValidationFailedError
 from outo_models.repos.models import Visibility
 from outo_models.repos.storage import REPO_LOCKS, repo_fs_path
 from outo_models.server.deps import get_current_user, get_current_user_optional, get_db
+from outo_models.server.routers._admin_helpers import get_gpu_assignments
 from outo_models.spaces import (
     SUPPORTED_SDKS,
     RuntimeState,
@@ -161,18 +162,7 @@ def _ensure_runtime_enabled(settings: Settings) -> JSONResponse | None:
 
 
 async def _load_owner_gpu_ids(db: AsyncSession, username: str) -> list[str]:
-    row = (
-        await db.execute(select(WebSetting).where(WebSetting.key == f"gpu:{username}"))
-    ).scalar_one_or_none()
-    if row is None:
-        return []
-    try:
-        decoded = json.loads(row.value)
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(decoded, list):
-        return []
-    return [s for s in decoded if isinstance(s, str)]
+    return await get_gpu_assignments(db, username)
 
 
 def _runtime_status_block(status_obj: RuntimeStatus) -> dict[str, object]:
