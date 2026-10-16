@@ -17,8 +17,8 @@ and cross-doc consistency automatically through `scripts/check-docs.sh`.
   the automated steps
 - [CLI reference](cli.md) — single source of truth for every command, flag,
   and environment variable
-- [Administrator guide](admin.md) — signup approval, bans, quotas, GPUs,
-  remote mode
+- [Administrator guide](admin.md) — the `/admin` web dashboard (signups,
+  users, audit), signup approval, bans, quotas, GPUs, remote mode
 - [Architecture](architecture.md) — module map, request flow, data layout,
   CI/CD
 - [Security](security.md) — argon2, PASETO PAT, sessions, CSRF, rate limits,

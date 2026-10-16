@@ -4,6 +4,61 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.7 — Admin web dashboard, update recreates the container (unreleased)
+
+### Added
+
+- **A full admin web dashboard at `/admin`.** It is no longer the
+  pending-signups page: it has three tabs, `signups` (rendered by
+  default), `users`, and `audit`, reachable through `GET /admin` and
+  `GET /admin/{tab}`. An unknown tab returns
+  `404 {"error":"not_found"}`. Every admin feature the CLI and the REST
+  API already exposed is now on the page: approve / deny-with-reason,
+  per-user quota editing (human sizes such as `500GiB`), per-user GPU
+  assignment (comma- or whitespace-separated ids; an empty field clears
+  the assignment), and ban / unban with a reason, including the rails
+  that forbid self-bans and banning another admin (disabled controls plus
+  a `forbidden` flash). The users tab filters by status
+  (`?status=approved|pending|denied|banned`) and pages with `?page=` (50
+  rows per page); the audit tab filters by `?action=` and `?limit=`
+  (1..500). All writes go through
+  `POST /admin/users/{username}/{action}` (CSRF double-submit) into the
+  same domain services the REST API uses, and answer with a `303` and a
+  flash: `?<noun>_saved=1`, or `?<noun>_error=<code>&message=…` carrying
+  the `OutoError` `.code` (`validation_failed`, `conflict`, `forbidden`,
+  …) with `internal_error` reserved for unexpected failures. A role-gated
+  "Admin" entry now appears in the profile dropdown. The `/api/admin/*`
+  REST API is unchanged and remains the CLI's transport.
+  Docs: [admin.md §0](admin.md#0-web-dashboard).
+
+### Changed
+
+- **`outo-models update` now RECREATES the server container instead of
+  restarting it.** The script pulls the image, runs `server migrate` in a
+  throwaway container of the new image, and then runs `start` **from the
+  new image** through the host podman, mirroring the host CLI shim's
+  mount set (`--network=host --userns=keep-id`, `/etc/outo-models`, the
+  data volume, and the host Podman socket with `OUTO_PODMAN_SOCK` /
+  `OUTO_PODMAN_SOCKET` forwarded). `podman restart` reuses the old
+  container spec, so an update-only upgrade kept a container without the
+  socket mount and container-SDK Spaces stayed broken
+  (`Cannot connect to the Podman socket`); the recreate is what makes the
+  socket mount survive an upgrade. `start` creates or replaces the
+  container, so the old "container missing → run it manually" branch is
+  gone. Docs: [cli.md §update](cli.md#update).
+
+- **GPU CDI device names are normalized when the runtime consumes them.**
+  Stored assignments stay verbatim (`list[str]`, e.g. `gpu-0`), but
+  `_cdi_device_name` maps `gpu-0`, `gpu-01`, and `0` to the device
+  `nvidia.com/gpu=0`, while `GPU-<uuid>` and every other form pass
+  through unchanged. Docs: [admin.md §5](admin.md#5-gpu-assignment).
+
+### Internal
+
+- **`parse_human_bytes` moved to `outo_models.utils.humanbytes`** and is
+  re-exported from `outo_models.cli`, so existing imports and the CLI /
+  REST contract are unchanged.
+
 ## v0.6.6 — Spaces Runtime tab, automatic Podman socket mount
 
 ### Added

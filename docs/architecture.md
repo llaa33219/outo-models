@@ -540,7 +540,7 @@ The chrome follows the spec verbatim:
   and the `font-display: swap` + `system-ui` fallback keeps text
   readable on offline / LAN installs.
 - All chrome colours come from the BLP palette (see spec §3.1 and
-  부록 A for the canonical token names).
+  Appendix A for the canonical token names).
 
 ### Routes
 
@@ -555,15 +555,21 @@ The chrome follows the spec verbatim:
 | `/login`, `/signup` | GET / POST | open | Auth forms (POST CSRF-protected) |
 | `/logout` | GET | login required | Sign-out confirmation tile (Cancel / Sign out buttons) |
 | `/logout` | POST | login required + CSRF | Clears the session cookie, 303 redirect to `/` |
-| `/admin` | GET | admin role | Pending-signups dashboard |
+| `/admin` | GET | admin role | Admin dashboard, renders the signups tab by default |
+| `/admin/{tab}` | GET | admin role | One admin tab: `signups`, `users`, `audit`. Unknown tab → `404 {"error":"not_found"}` |
+| `/admin/users/{username}/{action}` | POST | admin role + CSRF | Runs one admin mutation (`approve`, `deny`, `ban`, `unban`, `quota`, `gpu`), then 303-redirects to its tab with `?<noun>_saved=1` or `?<noun>_error=<code>&message=…` |
 
-Route registration order matters: the static-prefix routes
-(`/models`, `/datasets`, `/spaces`, `/new`, `/login`, `/signup`,
-`/logout`, `/admin`) and the one-segment parameterised `/{username}`
-route are registered BEFORE the two-segment `/{owner}/{name}`
-catch-all. A one-segment URL never matches a two-segment path by
-construction, so the ordering is mostly documentary, but it makes
-the intent explicit.
+Route registration order is load-bearing for the admin routes. The
+static-prefix routes (`/models`, `/datasets`, `/spaces`, `/new`,
+`/login`, `/signup`, `/logout`, `/admin`) and the one-segment
+parameterised `/{username}` route can be registered anywhere relative to
+the two-segment `/{owner}/{name}` catch-all — a one-segment URL never
+matches a two-segment path, so their position is documentary.
+`/admin/{tab}`, however, **is** a two-segment path and would otherwise be
+captured as `owner="admin", name=<tab>`: `/admin/users` would render as a
+repository page. Both admin routes
+(`/admin/{tab}` and `/admin/users/{username}/{action}`) are therefore
+registered BEFORE the `/{owner}/{name}` catch-all.
 
 ### Navbar context
 

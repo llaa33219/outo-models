@@ -36,7 +36,7 @@ outo-models
 ├── stop                 Stop the container
 ├── restart              Restart the container
 ├── status               Check the container's running state
-├── update               Pull image + DB migration + restart
+├── update               Pull image + DB migration + container recreate
 ├── reset                Wipe container and data (3-time confirmation gate)
 └── admin                User / quota / GPU management
     ├── list             List users
@@ -285,12 +285,37 @@ English line:
 sudo outo-models update [--image <ref>]
 ```
 
-Invokes `src/outo_models/assets/scripts/update.sh`, which runs the following steps in
-order:
+Invokes `src/outo_models/assets/scripts/update.sh`, which runs the following
+steps in order (the bracketed lines are the script's own echo output):
 
-1. `podman pull <image>`
-2. `podman run --rm -v outo-models-data:/var/lib/outo-models <image> outo-models migrate`
-3. `podman restart outo-models` (only if the container exists)
+1. `[1/3] pulling image: <image>` → `podman pull <image>`
+2. `[2/3] running DB migration` → `podman run --rm --userns=keep-id -v
+   /etc/outo-models:/etc/outo-models:ro -v outo-models-data:/var/lib/outo-models
+   <image> server migrate` (a throwaway container of the **new** image; the
+   entrypoint already prepends `outo-models`)
+3. `[3/3] recreating container outo-models with the <image> spec` →
+   `podman run --rm --network=host --userns=keep-id -v
+   /etc/outo-models:/etc/outo-models -v
+   outo-models-data:/var/lib/outo-models <image> start`, plus the host
+   Podman socket mount (`-v <host-sock>:/run/podman/podman.sock`,
+   `-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock`,
+   `-e OUTO_PODMAN_SOCK=<host-sock>`) when one is found
+
+Step 3 **recreates** the server container rather than restarting it: it
+runs `outo-models start` from the new image, with the same mount set the
+host-side CLI shim uses, so the container is built from the current
+spec. This matters because `podman restart` reuses the OLD container
+spec — spec changes shipped with a new image (mounts, env, ports) would
+never apply, leaving an update-only upgrade with a Spaces container SDK
+that reports `Cannot connect to the Podman socket` and no mounted host
+socket. `start` creates the container when it is missing and replaces it
+when it exists, so there is no separate "container missing" branch and no
+manual `outo-models start` afterwards. On success the script prints
+`[done] outo-models update finished.`
+
+If podman is not installed on the host, the script prints the
+`[note] podman is not installed on this host.` block and exits `0` — it
+is host-side, so a container-only deployment can ignore it.
 
 The script's exit code becomes the CLI's exit code. Anything non-zero is
 rendered as `OutoError(code="update_failed")` and the process exits 1.
