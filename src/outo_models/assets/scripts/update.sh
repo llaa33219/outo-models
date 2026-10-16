@@ -104,6 +104,30 @@ echo "[2/3] running DB migration"
 # the server container. Passing both is what makes an update-only upgrade pick
 # up the socket mount (a restart kept the pre-mount spec forever).
 host_sock="${OUTO_PODMAN_SOCK:-}"
+# A stale host shim (pre-v0.6.6) mounts the host socket at
+# /run/podman/podman.sock but forwards no HOST path, so the probe below would
+# read that container-side mount point and pass it to podman as a `-v` SOURCE
+# — the host engine then dies with "statfs ...: permission denied". Inside a
+# container only a forwarded OUTO_PODMAN_SOCK is a valid bind source.
+if [[ -z "${host_sock}" ]] \
+    && [[ -f /.dockerenv || -f /run/.containerenv || -n "${container:-}" ]]; then
+    cat >&2 <<'EOF'
+[error] cannot recreate the server container: the host CLI shim did not
+forward a Podman socket path (OUTO_PODMAN_SOCK). The in-container
+/run/podman/podman.sock mount point is not a valid host bind source, so the
+recreate is aborted instead of crashing with "permission denied".
+
+  Refresh the host CLI shim, then re-run the update:
+
+    curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+    outo-models update
+
+  The image pull and the DB migration above already completed, and your
+  running server container is untouched — it keeps serving traffic.
+EOF
+    exit 1
+fi
+
 if [[ -z "${host_sock}" ]]; then
     user_sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
     if [[ -S "${user_sock}" ]]; then

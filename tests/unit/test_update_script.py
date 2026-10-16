@@ -183,6 +183,47 @@ class TestUpdateStepSequence:
         assert _recreate(_invocations(tmp_path)) == first
 
 
+class TestInContainerSocketResolution:
+    """`OUTO_PODMAN_SOCK` is the only trustworthy socket path inside a container.
+
+    A host shim installed before v0.6.6 mounts the host socket at
+    /run/podman/podman.sock but never forwards the HOST path. The socket probe
+    then matches that container-side mount point and hands it to podman as a
+    `-v` SOURCE, and the host engine dies with
+    "statfs /run/podman/podman.sock: permission denied" (exit 125) — a cryptic
+    crash that blocked `outo-models update` outright. The fix is a one-glance
+    instruction instead: refresh the shim, re-run.
+    """
+
+    def test_in_container_without_forwarded_host_socket_stops_before_recreate(
+        self, tmp_path: Path
+    ) -> None:
+        # Given / When: `container` is the marker podman exports in-container;
+        # OUTO_PODMAN_SOCK is absent, i.e. the stale shim.
+        result = _update(tmp_path, container="podman")
+        # Then: guidance, not a statfs crash.
+        assert result.returncode != 0
+        assert "install-cli.sh" in result.stderr
+        assert "outo-models update" in result.stderr
+        calls = _invocations(tmp_path)
+        assert calls[0][-2:] == ["pull", IMAGE]
+        assert calls[1][-2:] == ["server", "migrate"]
+        # The nested `start` never ran — the running server container is untouched.
+        assert _recreate(calls) == []
+
+    def test_in_container_with_forwarded_host_socket_recreates(
+        self, tmp_path: Path, host_socket: str
+    ) -> None:
+        # Given / When: the normal shim path — inside a container, but the HOST
+        # socket path is forwarded.
+        result = _update(tmp_path, container="podman", OUTO_PODMAN_SOCK=host_socket)
+        # Then
+        assert result.returncode == 0, result.stderr
+        call = _recreate(_invocations(tmp_path))
+        assert f"{host_socket}:/run/podman/podman.sock" in call
+        assert f"OUTO_PODMAN_SOCK={host_socket}" in call
+
+
 class TestUpdateFailureSurfacing:
     def test_pull_failure_stops_before_migrating(self, tmp_path: Path) -> None:
         result = _update(tmp_path, FAKE_PODMAN_FAIL="pull")
