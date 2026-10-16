@@ -316,9 +316,9 @@ user  ─ POST /api/spaces/<owner>/<name>/start ─▶  Caddy → uvicorn
                                                                     │
                                                                     └─ manager.start(owner, name, gpu_ids=...)
                                                                           │
-                                                                          ├─ POST /v4.0.0/libpod/containers/create
-                                                                          │     + body.PortBindings[8000/tcp]
-                                                                          │     + hostConfig.devices: CDI GPU
+                                                                    ├─ POST /v4.0.0/libpod/containers/create
+                                                                    │     + body.portmappings (127.0.0.1:<host_port> → 8000/tcp)
+                                                                    │     + body.gpus: CDI GPU identifiers
                                                                           ├─ POST /v4.0.0/libpod/containers/{name}/start
                                                                           └─ return (container_id, host_port)
                                                           │

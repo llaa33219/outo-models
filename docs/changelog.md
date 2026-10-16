@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.9 — Space containers actually start on Podman
+
+### Fixed
+
+- **The Space container-create request now matches the libpod
+  `SpecGenerator` schema.** It used to mix Docker-API field names into
+  the libpod endpoint: `env` arrived as a list, failing every start with
+  `decode(): json: cannot unmarshal array into Go struct field
+  SpecGenerator.env of type map[string]string`, and `hostConfig` /
+  `exposedPorts` were silently ignored — so port bindings, the restart
+  policy and GPU devices never applied. The body now sends `env` as a
+  map, numeric `portmappings` bound to `127.0.0.1`, `restart_policy`
+  as a string, and GPU assignments through the `gpus` CDI identifier
+  field.
+
 ## v0.6.8 — update fails loudly on a stale CLI shim
 
 ### Fixed
