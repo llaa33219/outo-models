@@ -4,6 +4,19 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.10 — the Space run proxy can reach Space containers
+
+### Fixed
+
+- **The server container now runs host-networked (`--network=host`).**
+  The run proxy targets `http://127.0.0.1:<host_port>`, where rootless
+  portmappings bind each Space, but the server container used to run in
+  its own network namespace — a different loopback — so every
+  non-static Space answered `proxy_unreachable` ("All connection
+  attempts failed"). The `-p` port mappings are gone with it: under
+  host networking Caddy binds :80/:443 directly on the host, and the
+  `ports` config still drives the low-port preflight.
+
 ## v0.6.9 — Space containers actually start on Podman
 
 ### Fixed

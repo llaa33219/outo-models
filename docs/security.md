@@ -228,19 +228,25 @@ The container runs as uid/gid 1000 (`app`) per the
 - Anything that requires host privileges — firewall, DNS, certificate
   renewal — is done by **host-side scripts** (`src/outo_models/assets/scripts/*.sh`),
   not from inside the container
-- Caddy needs `--cap-add NET_BIND_SERVICE` to bind 80 / 443 **inside the
-  container network namespace** when running non-root; the `start`
-  command attaches it automatically. It does **not** help rootless
-  Podman publish the host port — that is done by the HOST-side
-  `rootlessport` helper and needs `net.ipv4.ip_unprivileged_port_start`
-  lowered on the host (see the sysctl note below)
+- Caddy needs `--cap-add NET_BIND_SERVICE` to bind 80 / 443 as uid 1000; the
+  `start` command attaches it automatically. Because the container runs
+  host-networked (see below), that bind lands directly on the host's ports,
+  which needs `net.ipv4.ip_unprivileged_port_start` lowered on the host (see
+  the sysctl note below)
+- The container shares the **host network namespace** (`--network=host`, no
+  `-p` mappings) so the Spaces run proxy can reach the Space ports that
+  rootless portmappings bind to the host loopback. That is acceptable because
+  the server container is trusted code and already holds the Podman API
+  socket; **Space** containers keep their own netnses, and their
+  loopback-bound ports remain unreachable from any other container.
 - After root-only steps (e.g. `pip install`), the entrypoint drops back to
   the non-root user immediately
 
 ### Sysctl: low ports on the host
 
-Rootless Podman publishes port 80 / 443 through the HOST-side
-`rootlessport` helper, which the kernel only permits when
+Rootless Podman binds port 80 / 443 in the server container's (host) network
+namespace through the HOST-side `rootlessport` helper, which the kernel only
+permits when
 `net.ipv4.ip_unprivileged_port_start` is low enough. Raising access to
 low ports is a real privilege trade-off, so:
 
@@ -258,9 +264,11 @@ low ports is a real privilege trade-off, so:
   ```
 
   (Removing the drop-in stops the value from coming back on reboot.)
-- The alternative — publishing high host ports (`-p 8080:80 -p 8443:443`)
-  — needs no sysctl change but makes the service unreachable on standard
-  HTTPS and breaks ACME HTTP-01 (DNS-01 only). See
+- The alternative — a hand-rolled launch publishing high host ports
+  (`-p 8080:80 -p 8443:443`, without `--network=host`) — needs no sysctl
+  change but makes the service unreachable on standard
+  HTTPS and breaks ACME HTTP-01 (DNS-01 only). It also disables the Spaces
+  `run/` proxy, whose target is the host loopback. See
   [troubleshooting.md §2](troubleshooting.md#2-port-80--443-binding-failures).
 
 ## 11. Host firewall boundary

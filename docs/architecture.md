@@ -137,7 +137,7 @@ creates the following tables.
 browser / git CLI
         │  HTTPS (80 → Caddy, 443 → Caddy)
         ▼
-Caddy (in-container) :80/:443
+Caddy (server container, host netns) :80/:443
         │  - ACME issuance/renewal (HTTP-01 or DNS-01 cloudflare)
         │  - TLS termination
         │  - reverse_proxy 127.0.0.1:8000
@@ -475,8 +475,10 @@ is a podman systemd quadlet example. In production, only the following
 need adjustment:
 
 - `Image=` — `outo-models:stable` (production) or `:dev` (test)
-- `PublishPort=` — keep 80, 443 (see [troubleshooting.md](troubleshooting.md)
-  for loopback mapping notes)
+- `Network=host` — the CLI's `podman run` uses `--network=host` with **no**
+  `PublishPort=` so the Spaces run proxy reaches the host loopback; add the
+  quadlet equivalent and drop the `PublishPort=` lines (see
+  [troubleshooting.md](troubleshooting.md) for loopback mapping notes)
 - `Volume=outo-models-data:/var/lib/outo-models` — do not rename (static
   test enforces the name)
 - Beyond `Environment=OUTO_ENV=production`, keep secrets in `systemd-creds`
