@@ -1,36 +1,421 @@
 {% extends "base.html" %}
-{% block title %}Admin dashboard — outo-models{% endblock %}
+{% block title %}Admin dashboard &mdash; outo-models{% endblock %}
 {% block content %}
-<h1>Admin dashboard</h1>
-<p class="muted">Approve or reject pending signups.</p>
+{# ------------------------------------------------------------------------
+ * Admin dashboard — three tabs over one template. The router only loads
+ * the panel that is on screen; every flash is read from the redirect
+ * query string in Python, never here.
+ *
+ * `macro outcome` renders one noun's flash: the machine code is always
+ * shown, the human message rides along with it, and a `_saved=1` flag
+ * turns into the short confirmation line.
+ * ------------------------------------------------------------------------ #}
+{% macro outcome(error, message, saved, label) %}
+  {% if error %}
+    <div class="errors admin-flash" role="alert">
+      <p class="admin-flash__title">{{ label }} was not applied</p>
+      {% if message %}<p class="admin-flash__message">{{ message }}</p>{% endif %}
+      <p class="admin-flash__code">error code: {{ error }}</p>
+    </div>
+  {% elif saved %}
+    <p class="admin-flash admin-flash--ok" role="status">{{ label }} saved.</p>
+  {% endif %}
+{% endmacro %}
 
-<h2>Pending signups</h2>
-{% if pending %}
-  <table>
-    <thead><tr><th>Username</th><th>Email</th><th>Signup time</th><th>Approve</th><th>Reject</th></tr></thead>
-    <tbody>
-      {% for user in pending %}
-        <tr>
-          <td>{{ user.username }}</td>
-          <td>{{ user.email }}</td>
-          <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td>
-            <form method="post" action="/api/admin/users/{{ user.username }}/approve" style="display:inline">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit" class="primary">Approve</button>
-            </form>
-          </td>
-          <td>
-            <form method="post" action="/api/admin/users/{{ user.username }}/deny" style="display:inline">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit" class="danger">Reject</button>
-            </form>
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% macro users_page_url(page_no) %}{{ tab_users_url }}?status={{ status_filter }}&amp;page={{ page_no }}{% endmacro %}
+
+<h1>Admin dashboard</h1>
+<p class="muted">Triage signups, manage accounts, quotas and GPU assignments, and read the audit log.</p>
+
+<nav class="admin-tabs" aria-label="Admin sections">
+  <a href="{{ tab_signups_url }}" class="tabs__link{% if tab_signups_active %} tabs__link--active{% endif %}">Signups<span class="admin-tabs__count">{{ status_counts.pending }}</span></a>
+  <a href="{{ tab_users_url }}" class="tabs__link{% if tab_users_active %} tabs__link--active{% endif %}">Users<span class="admin-tabs__count">{{ status_counts.approved + status_counts.pending + status_counts.denied + status_counts.banned }}</span></a>
+  <a href="{{ tab_audit_url }}" class="tabs__link{% if tab_audit_active %} tabs__link--active{% endif %}">Audit</a>
+</nav>
+
+{% if tab == 'signups' %}
+  {# ======================= SIGNUPS ======================= #}
+  <section class="admin-panel" aria-label="Pending signups">
+    {{ outcome(signup_error, signup_message, signup_saved, 'Signup decision') }}
+
+    {% if pending_users %}
+      <div class="admin-scroll">
+      <table class="admin-table">
+        <thead>
+          <tr><th>Username</th><th>Email</th><th>Signup time</th><th>Decision</th></tr>
+        </thead>
+        <tbody>
+          {% for row in pending_users %}
+            <tr>
+              <td><strong>{{ row.username }}</strong></td>
+              <td>{{ row.email }}</td>
+              <td class="muted admin-nowrap">{{ row.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+              <td class="admin-actions">
+                <form class="inline" method="post" action="/admin/users/{{ row.username }}/approve">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <button type="submit" class="primary">Approve</button>
+                </form>
+                <form class="admin-decide" method="post" action="/admin/users/{{ row.username }}/deny">
+                  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                  <input type="text" name="reason" maxlength="500" autocomplete="off"
+                         aria-label="Reason for denying {{ row.username }}" placeholder="Reason (optional)">
+                  <button type="submit" class="danger">Deny</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="empty-state">No pending signups. New registrations appear here oldest first.</p>
+    {% endif %}
+  </section>
+{% elif tab == 'users' %}
+  {# ======================= USERS ======================= #}
+  <section class="admin-panel" aria-label="Users">
+    {{ outcome(user_error, user_message, user_saved, 'Account change') }}
+    {{ outcome(quota_error, quota_message, quota_saved, 'Quota') }}
+    {{ outcome(gpu_error, gpu_message, gpu_saved, 'GPU assignment') }}
+
+    <form class="admin-filter" method="get" action="{{ tab_users_url }}">
+      <div class="admin-filter__field">
+        <label for="admin-status">Status</label>
+        <select id="admin-status" name="status">
+          <option value="" {% if not status_filter %}selected{% endif %}>All statuses</option>
+          {% for choice in ['approved', 'pending', 'denied', 'banned'] %}
+            <option value="{{ choice }}" {% if status_filter == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="admin-filter__actions">
+        <button type="submit" class="primary">Apply</button>
+        {% if status_filter %}<a class="admin-filter__clear" href="{{ tab_users_url }}">Clear</a>{% endif %}
+        <span class="muted">{{ users_total }} user{% if users_total != 1 %}s{% endif %}</span>
+      </div>
+    </form>
+
+    {% if users %}
+      <div class="admin-scroll">
+      <table class="admin-table admin-table--users">
+        <thead>
+          <tr>
+            <th>User</th><th>Status</th><th>Role</th><th>Created</th>
+            <th>Usage / quota</th><th>GPU ids</th><th>Manage</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in users %}
+            {% set is_self = current_user and current_user.username == row.username %}
+            {% set can_ban = not is_self and row.role != 'admin' %}
+            <tr>
+              <td>
+                <strong>{{ row.username }}</strong><br>
+                <span class="muted">{{ row.email }}</span>
+              </td>
+              <td><span class="admin-chip admin-chip--{{ row.status }}">{{ row.status }}</span></td>
+              <td class="muted">{{ row.role }}</td>
+              <td class="muted admin-nowrap">{{ row.created_at.strftime('%Y-%m-%d') }}</td>
+              <td class="admin-nowrap"><span class="admin-usage">{{ row.quota_used_human }}</span> / {{ row.quota_max_human }}</td>
+              <td class="admin-gpu">
+                {% if row.gpu_ids %}{{ row.gpu_ids|join(', ') }}{% else %}<span class="muted">none</span>{% endif %}
+              </td>
+              <td>
+                <details class="admin-row__manage">
+                  <summary class="admin-row__toggle">Manage</summary>
+                  <div class="admin-row__panel">
+                    <form class="admin-field" method="post" action="/admin/users/{{ row.username }}/quota">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <label for="quota-{{ loop.index }}">Storage quota</label>
+                      <div class="admin-field__row">
+                        <input id="quota-{{ loop.index }}" type="text" name="max_bytes" maxlength="40"
+                               autocomplete="off" placeholder="e.g. 500GiB">
+                        <button type="submit" class="primary">Save</button>
+                      </div>
+                      <p class="help">Now {{ row.quota_max_human }} &middot; {{ row.quota_used_human }} used</p>
+                    </form>
+
+                    <form class="admin-field" method="post" action="/admin/users/{{ row.username }}/gpu">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <label for="gpu-{{ loop.index }}">GPU ids</label>
+                      <div class="admin-field__row">
+                        <input id="gpu-{{ loop.index }}" type="text" name="gpu_ids" maxlength="500"
+                               autocomplete="off" placeholder="e.g. gpu-0, gpu-1"
+                               value="{{ row.gpu_ids|join(', ') }}">
+                        <button type="submit" class="primary">Save</button>
+                      </div>
+                      <p class="help">Spaces start on these devices. An empty value clears every assignment.</p>
+                    </form>
+
+                    {% if row.status == 'banned' %}
+                      <form class="admin-field" method="post" action="/admin/users/{{ row.username }}/unban">
+                        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                        <div class="admin-field__row">
+                          <button type="submit" class="primary">Restore to approved</button>
+                        </div>
+                      </form>
+                    {% else %}
+                      <form class="admin-field" method="post" action="/admin/users/{{ row.username }}/ban">
+                        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                        <label for="ban-{{ loop.index }}">Ban reason</label>
+                        <div class="admin-field__row">
+                          <input id="ban-{{ loop.index }}" type="text" name="reason" maxlength="500"
+                                 autocomplete="off" placeholder="Reason (optional)"
+                                 {% if not can_ban %}disabled{% endif %}>
+                          <button type="submit" class="danger" {% if not can_ban %}disabled{% endif %}>Ban</button>
+                        </div>
+                        {% if not can_ban %}
+                          <p class="help">
+                            {%- if is_self %}You cannot ban your own admin account.
+                            {%- else %}Admins are not bannable from this page.{% endif %}
+                          </p>
+                        {% endif %}
+                      </form>
+                    {% endif %}
+                  </div>
+                </details>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+
+      {% if users_pages > 1 %}
+        <nav class="admin-pager" aria-label="Users pages">
+          {% if users_page > 1 %}
+            <a class="admin-pager__link" href="{{ users_page_url(users_page - 1) }}" rel="prev">Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ users_page }} of {{ users_pages }}</span>
+          {% if users_page < users_pages %}
+            <a class="admin-pager__link" href="{{ users_page_url(users_page + 1) }}" rel="next">Next</a>
+          {% endif %}
+        </nav>
+      {% endif %}
+    {% else %}
+      <p class="empty-state">No user matches this filter.</p>
+    {% endif %}
+  </section>
 {% else %}
-  <p class="muted">No pending signups.</p>
+  {# ======================= AUDIT ======================= #}
+  <section class="admin-panel" aria-label="Audit log">
+    <form class="admin-filter" method="get" action="{{ tab_audit_url }}">
+      <div class="admin-filter__field">
+        <label for="audit-action">Action</label>
+        <select id="audit-action" name="action">
+          <option value="" {% if not audit_action_filter %}selected{% endif %}>All actions</option>
+          {% for choice in audit_actions %}
+            <option value="{{ choice }}" {% if audit_action_filter == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="admin-filter__field">
+        <label for="audit-limit">Rows</label>
+        <select id="audit-limit" name="limit">
+          {% for choice in [25, 50, 100, 500] %}
+            <option value="{{ choice }}" {% if audit_limit == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="admin-filter__actions">
+        <button type="submit" class="primary">Apply</button>
+        {% if audit_action_filter %}<a class="admin-filter__clear" href="{{ tab_audit_url }}">Clear</a>{% endif %}
+      </div>
+    </form>
+
+    {% if audit_rows %}
+      <div class="admin-scroll">
+      <table class="admin-table admin-table--audit">
+        <thead>
+          <tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th><th>Detail</th><th>IP</th></tr>
+        </thead>
+        <tbody>
+          {% for row in audit_rows %}
+            <tr>
+              <td class="muted admin-nowrap">{{ row.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+              <td><span class="admin-action">{{ row.action }}</span></td>
+              <td>{{ row.actor_username or 'system' }}</td>
+              <td class="muted admin-nowrap">{{ row.target }}</td>
+              <td class="admin-detail">{{ row.detail }}</td>
+              <td class="muted admin-nowrap">
+                {%- if row.ip %}{{ row.ip }}{% else %}&mdash;{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="empty-state">No audit entry matches this filter.</p>
+    {% endif %}
+  </section>
 {% endif %}
+
+{# ------------------------------------------------------------------------
+ * Page-local CSS. Every value is an existing `--*` token from base.html —
+ * nothing is redeclared here, so the dark palette applies untouched.
+ * ------------------------------------------------------------------------ #}
+<style>
+  /* Tabs — same capsule grammar as the repo tabs, plus a live count. */
+  .admin-tabs {
+    display: flex;
+    gap: var(--gap-tile);
+    margin: 16px 0;
+    flex-wrap: wrap;
+  }
+  .tabs__link {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 0 14px;
+    font: 500 13px/1 'Pretendard', system-ui, sans-serif;
+    color: var(--text);
+    background: var(--tile-bg);
+    border: var(--border-el) solid var(--color-inactive);
+    border-radius: var(--radius-pill);
+    transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
+  }
+  .tabs__link:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+  .tabs__link--active { background: var(--color-main); border-color: var(--color-main); color: var(--tile-bg); }
+  .tabs__link--active:hover { background: var(--el-hover); border-color: var(--el-hover); color: var(--tile-bg); }
+  .admin-tabs__count { margin-left: 6px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+  /* Panel spacing — the flash sits flush above the first control. */
+  .admin-panel { display: flex; flex-direction: column; gap: 16px; }
+  .admin-flash { margin: 0; }
+  .admin-flash__title { margin: 0 0 4px; font-weight: 600; }
+  .admin-flash__message { margin: 0; }
+  .admin-flash__code { margin: 6px 0 0; font-size: 12px; opacity: 0.75; }
+  .admin-flash--ok {
+    margin: 0;
+    padding: 12px 16px;
+    background: var(--blp-paper-green);
+    border: var(--border-el) solid var(--blp-green);
+    color: var(--blp-deep-dark);
+    font-size: 14px;
+  }
+
+  /* Filter strip — HF-console density, one row on wide screens. */
+  .admin-filter {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    padding: 16px;
+    background: var(--tile-bg);
+    border: var(--border-tile) solid var(--color-inactive);
+  }
+  .admin-filter__field label { margin: 0 0 4px; }
+  .admin-filter__actions { display: flex; gap: 12px; align-items: center; }
+  .admin-filter__clear { color: var(--text-sub); font-size: 14px; }
+
+  /* Wide grids scroll inside their own tile instead of stretching the
+   * page, so a 390px viewport stays 390px wide. On a wide viewport the
+   * grid already fits, so the box stays `visible` and the manage panel
+   * (which floats out of its cell) is never clipped. */
+  .admin-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  @media (min-width: 641px) { .admin-scroll { overflow: visible; } }
+  .admin-table td { vertical-align: top; }
+  .admin-table th { white-space: nowrap; }
+  .admin-nowrap { white-space: nowrap; }
+  .admin-usage { font-variant-numeric: tabular-nums; }
+  .admin-gpu { max-width: 220px; overflow-wrap: anywhere; }
+  .admin-table--audit .admin-detail {
+    max-width: 320px;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+  .admin-action {
+    font: 500 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* Signup decision — approve sits inline, deny carries its reason. */
+  .admin-actions { min-width: 260px; }
+  .admin-decide { display: inline-flex; gap: 8px; align-items: center; margin-left: 8px; }
+  .admin-decide input { width: 170px; margin: 0; }
+
+  /* Status chip — geometry follows the Space runtime chip. */
+  .admin-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 10px;
+    font: 600 12px/1 'Pretendard', system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: var(--border-el) solid var(--color-inactive);
+    border-radius: 0;
+    white-space: nowrap;
+  }
+  .admin-chip--approved { background: var(--blp-paper-green); border-color: var(--blp-green); color: var(--blp-deep-dark); }
+  .admin-chip--pending { background: var(--blp-paper-blue); border-color: var(--blp-sky); color: var(--text); }
+  .admin-chip--denied { background: var(--blp-paper-orange); border-color: var(--blp-soft-red); color: var(--blp-deep-red); }
+  .admin-chip--banned { background: var(--blp-paper-orange); border-color: var(--blp-soft-red); color: var(--blp-deep-red); }
+
+  /* Per-row disclosure. The panel floats out of its cell so the seven
+   * data columns keep fitting the page width — an in-flow panel would
+   * inflate the table past its container and force a desktop scrollbar. */
+  .admin-row__manage { position: relative; min-width: 96px; }
+  .admin-row__toggle {
+    display: inline-block;
+    padding: 4px 10px;
+    font: 500 12px/1 'Pretendard', system-ui, sans-serif;
+    color: var(--text-sub);
+    border: var(--border-el) solid var(--color-inactive);
+    cursor: pointer;
+    list-style: none;
+  }
+  .admin-row__toggle::-webkit-details-marker { display: none; }
+  .admin-row__toggle::marker { content: ""; }
+  .admin-row__toggle:hover { border-color: var(--color-main); color: var(--color-main); }
+  .admin-row__panel {
+    position: absolute;
+    top: calc(100% - 6px);
+    right: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 300px;
+    padding: 12px;
+    text-align: left;
+    background: var(--tile-bg);
+    border: var(--border-tile) solid var(--color-main);
+  }
+  .admin-field { margin: 0; }
+  .admin-field label { margin: 0 0 4px; font-size: 13px; }
+  .admin-field__row { display: flex; gap: 8px; align-items: center; }
+  .admin-field__row input { flex: 1 1 auto; min-width: 0; margin: 0; }
+  .admin-field .help { margin-top: 4px; font-size: 12px; }
+
+  /* A rail that blocks an action must LOOK blocked: the ban control is
+   * disabled for self / admin targets, not merely wrapped in a hint. */
+  .admin-field__row button[disabled],
+  .admin-decide button[disabled] {
+    opacity: 0.4;
+    border-color: var(--color-inactive);
+    cursor: not-allowed;
+  }
+  .admin-field__row input[disabled] {
+    background: var(--blp-paper-blue-2);
+    cursor: not-allowed;
+  }
+
+  .admin-pager { display: flex; gap: 12px; align-items: center; }
+  .admin-pager__link {
+    padding: 6px 12px;
+    border: var(--border-el) solid var(--color-inactive);
+    background: var(--tile-bg);
+  }
+  .admin-pager__link:hover { border-color: var(--color-main); color: var(--color-main); text-decoration: none; }
+
+  @media (max-width: 640px) {
+    /* The grid already scrolls here, so the panel goes back in flow and
+     * the operator reaches it by scrolling to the Manage column. */
+    .admin-row__panel { position: static; width: 300px; }
+    .admin-decide { display: flex; margin-left: 0; margin-top: 8px; }
+    .admin-actions { min-width: 0; }
+    .admin-filter { gap: 12px; }
+  }
+</style>
 {% endblock %}

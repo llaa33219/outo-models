@@ -40,22 +40,33 @@ from fastapi.responses import (
     Response,
 )
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from outo_models.auth import (
     SessionManager,
+    approve_user,
+    ban_user,
     can_login,
     cookie_kwargs,
+    deny_user,
     register_user,
+    unban_user,
     verify_password,
 )
 from outo_models.auth.permissions import Scope
 from outo_models.auth.sessions import SESSION_COOKIE_NAME
 from outo_models.config import Settings, get_settings
-from outo_models.db import AuditLog, Repo, RepoComment, RepoLike, Revision, User
+from outo_models.db import (
+    AuditLog,
+    Repo,
+    RepoComment,
+    RepoLike,
+    Revision,
+    User,
+)
 from outo_models.exceptions import (
     ConflictError,
     ForbiddenError,
@@ -90,6 +101,14 @@ from outo_models.repos.social import (
 )
 from outo_models.repos.storage import disk_usage, repo_fs_path
 from outo_models.server.deps import get_current_user_optional, get_db
+from outo_models.server.routers import _admin_ui as admin_ui
+from outo_models.server.routers._admin_helpers import (
+    clear_user_gpu_ids,
+    load_target_user,
+    parse_gpu_ids,
+    set_user_gpu_ids,
+    set_user_quota,
+)
 from outo_models.server.routers._resolve_helpers import (
     _INLINE_IMAGE_MAX_BYTES,
     _INLINE_VIDEO_MAX_BYTES,
@@ -138,6 +157,7 @@ from outo_models.spaces import (
     runtime_status as runtime_status_async,
 )
 from outo_models.utils.git_url import clone_url
+from outo_models.utils.humanbytes import parse_human_bytes
 from outo_models.utils.slug import validate_slug
 
 router = APIRouter(tags=["ui"], include_in_schema=False)
@@ -400,7 +420,7 @@ async def _render_kind_list(
     NOT loop per repo (one query batches the count). Counts are
     computed in SQL, never in Python.
     """
-    from sqlalchemy import desc, func, or_
+    from sqlalchemy import desc, or_
 
     _ALLOWED_SORT = {"recent", "downloads", "likes"}
     sort_value = sort if sort in _ALLOWED_SORT else "recent"
@@ -1064,24 +1084,125 @@ async def new_repo_page(
     )
 
 
+# ---------------------------------------------------------------------------
+# Admin dashboard (`/admin`, `/admin/{tab}`, `/admin/users/{u}/{action}`).
+#
+# This whole block MUST be registered before the two-segment
+# `/{owner}/{name}` catch-all: `/admin/users` and `/admin/audit` are
+# exactly two segments, so without this ordering Starlette resolves them
+# as a repository page (`owner="admin"`) and the dashboard is
+# unreachable from the browser. The page context, filters and flash
+# parsing live in `_admin_ui`; the domain writes are the same ones the
+# REST API uses (`outo_models.auth.approval` plus `_admin_helpers`), so
+# the approval transitions keep writing their own `AuditLog` rows.
+# ---------------------------------------------------------------------------
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard_page(
     request: Request,
     user: Annotated[User, Depends(_require_admin_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Response:
-    """Render the admin dashboard."""
-    pending = (
-        (await db.execute(select(User).where(User.status == "pending").order_by(User.created_at)))
-        .scalars()
-        .all()
-    )
+    """Render the admin dashboard. Defaults to the signups queue."""
+    return await _admin_page(request, db, user, tab="signups")
+
+
+@router.get("/admin/{tab}", response_class=HTMLResponse)
+async def admin_tab_page(
+    request: Request,
+    tab: str,
+    user: Annotated[User, Depends(_require_admin_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Render one admin tab (`signups`, `users`, `audit`)."""
+    if tab not in admin_ui.ADMIN_TABS:
+        return admin_ui.not_found()
+    return await _admin_page(request, db, user, tab=tab)
+
+
+@router.post("/admin/users/{username}/{action}")
+async def admin_user_action_form(
+    request: Request,
+    username: str,
+    action: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[User, Depends(_require_admin_user)],
+    reason: Annotated[str | None, Form()] = None,
+    max_bytes: Annotated[str | None, Form()] = None,
+    gpu_ids: Annotated[str | None, Form()] = None,
+    csrf: Annotated[str | None, Form(alias=CSRF_COOKIE)] = None,
+) -> Response:
+    """Run one admin mutation and redirect back to its tab with a flash.
+
+    The ordering is load-bearing: CSRF is verified first, every branch
+    validates its own input before the first DB write, and the redirect
+    is built from the PATH-PARAM strings alone — after `db.rollback()`
+    every ORM attribute loaded this request is expired, so touching one
+    here would lazy-load synchronously from async context
+    (`MissingGreenlet`).
+    """
+    verify_csrf(request, form_token=csrf)
+    try:
+        match action:
+            case "approve":
+                await approve_user(db, username=username, admin=admin)
+            case "deny":
+                await deny_user(
+                    db,
+                    username=username,
+                    admin=admin,
+                    reason=admin_ui.clean_reason(reason),
+                )
+            case "ban":
+                await ban_user(
+                    db,
+                    username=username,
+                    admin=admin,
+                    reason=admin_ui.clean_reason(reason),
+                )
+            case "unban":
+                await unban_user(db, username=username, admin=admin)
+            case "quota":
+                target = await load_target_user(db, username)
+                await set_user_quota(db, target, parse_human_bytes(max_bytes or ""), actor=admin)
+            case "gpu":
+                await _apply_gpu_ids(db, admin, username, gpu_ids)
+            case _:
+                return admin_ui.not_found()
+    except OutoError as exc:
+        await db.rollback()
+        return admin_ui.error_redirect(action, exc.code, str(exc))
+    except Exception:
+        _LOGGER.exception("admin_action_failed", action=action, username=username)
+        await db.rollback()
+        return admin_ui.error_redirect(action, "internal_error", admin_ui.ADMIN_INTERNAL_ERROR)
+    await db.commit()
+    return admin_ui.saved_redirect(action)
+
+
+async def _apply_gpu_ids(db: AsyncSession, admin: User, username: str, gpu_ids: str | None) -> None:
+    """Set or clear `username`'s GPU assignment list (caller commits).
+
+    An empty text field means "no assignments", so the row is dropped
+    rather than replaced with an empty list.
+    """
+    target = await load_target_user(db, username)
+    ids = parse_gpu_ids(gpu_ids or "")
+    if ids:
+        await set_user_gpu_ids(db, target, ids, actor=admin)
+    else:
+        await clear_user_gpu_ids(db, target, actor=admin)
+
+
+async def _admin_page(request: Request, db: AsyncSession, user: User, *, tab: str) -> Response:
+    """Render `admin/dashboard.html` with the tab's context."""
     return _form_page(
         request,
         "admin/dashboard.html",
         user=user,
         active_nav=None,
-        context={"pending": pending, "csrf_cookie_name": CSRF_COOKIE},
+        context=await admin_ui.page_context(request, db, tab),
     )
 
 

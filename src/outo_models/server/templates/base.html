@@ -832,6 +832,9 @@ th { color: var(--text-sub); font-weight: 600; font-size: 13px; }
               <a class="nav-dropdown__item" role="menuitem" href="/{{ current_user.username }}/usage">Usage</a>
               <a class="nav-dropdown__item" role="menuitem" href="/settings/tokens">Access tokens</a>
               <a class="nav-dropdown__item" role="menuitem" href="/{{ current_user.username }}/edit">Profile settings</a>
+              {% if current_user.role == 'admin' %}
+                <a class="nav-dropdown__item" role="menuitem" href="/admin">Admin</a>
+              {% endif %}
               <a class="nav-dropdown__item" role="menuitem" href="/support">Support</a>
               <a class="nav-dropdown__item nav-dropdown__item--danger" role="menuitem" href="/logout">Log out</a>
             </div>
