@@ -526,6 +526,11 @@ def start(
         # in the shared volume stay owned by the invoking host user instead
         # of subuids — mixed ownership breaks the DB.
         "--userns=keep-id",
+        # The Spaces run proxy forwards to 127.0.0.1:<host_port>, where
+        # rootless portmappings bind on the HOST. Loopback is per-netns, so the
+        # server must share the host netns — the `-p` mappings this replaces
+        # published ports but could never make that loopback reachable.
+        "--network=host",
         *env_args,
         "-v",
         f"{volume}:/var/lib/outo-models",
@@ -537,8 +542,6 @@ def start(
         "--cap-add",
         "NET_BIND_SERVICE",
     ]
-    for port in ports:
-        argv.extend(["-p", f"{port}:{port}"])
     argv.append(image)
 
     # Capture instead of streaming: on a failed run podman's own message is

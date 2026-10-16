@@ -148,6 +148,17 @@ class TestStartCommand:
         # The wizard's Caddyfile + config.yaml reach the server read-only.
         assert "/etc/outo-models:/etc/outo-models:ro" in argv
 
+    def test_argv_is_host_networked_without_port_mappings(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Loopback is per-netns: the run proxy's 127.0.0.1:<host_port> is the
+        # host's, so `-p` mappings could never make it reachable (see AGENTS.md).
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert "--network=host" in argv
+        assert "-p" not in argv
+        assert "--publish" not in argv
+        assert not [a for a in argv if ":" in a and a.split(":")[0].isdigit()]
+
     def _run_start_capture_argv(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> list[str]:
