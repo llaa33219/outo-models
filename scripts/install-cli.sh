@@ -174,6 +174,17 @@ GUIDE
     fi
 fi
 
+# `update` is orchestrated by update.sh INSIDE the launched image, so a stale
+# local copy is a stale orchestrator: the first update after a release would
+# run the PREVIOUS release's recreate block and silently drop whatever the new
+# one forwards (the Podman socket mount, OUTO_CDI_DIRS — both field failures).
+# Refresh first so the new update.sh orchestrates immediately, whatever the tag
+# is. Best-effort and quiet: update.sh pulls again, and an offline host must
+# still update from its local copy.
+if [[ "\${1:-}" == "update" ]]; then
+    podman pull --quiet "\${image}" >/dev/null 2>&1 || true
+fi
+
 exec podman "\${args[@]}" "\${image}" "\$@"
 EOF
 
@@ -419,6 +430,32 @@ elif [[ "${low_ports_threshold}" =~ ^[0-9]+$ ]] && (( 10#${low_ports_threshold} 
 else
     echo "[note] net.ipv4.ip_unprivileged_port_start is ${low_ports_threshold} (not the default 1024) — left as-is."
     echo "       to lower it: sudo bash ${low_ports_dest} 80"
+fi
+
+# Spaces GPU attachment goes through CDI: the runtime resolves GPU devices
+# from the host CDI spec dirs (forwarded to the container as OUTO_CDI_DIRS).
+# The NVIDIA container toolkit ships `nvidia-ctk`, which writes the spec file
+# those dirs are searched for — without it the operator has to discover and
+# run that command by hand, which is exactly the manual step AGENTS.md calls a
+# design defect. The in-container CLI cannot do it (it runs where the host's
+# /etc/cdi is not writable), so this installer — already root on the host — is
+# the one place allowed to (AGENTS.md §2.3).
+#
+# Best-effort and strictly non-destructive: no nvidia-ctk means no toolkit and
+# nothing to do, so it stays silent; an existing /etc/cdi/nvidia.yaml is never
+# regenerated or overwritten (it may be an operator's or a newer toolkit's
+# file); a generation failure warns with the manual command and continues,
+# because GPUs are optional and the install must never die here. Re-running
+# this installer is a no-op once the spec exists.
+if command -v nvidia-ctk >/dev/null 2>&1; then
+    if [[ -f /etc/cdi/nvidia.yaml ]]; then
+        : # already provisioned — leave it exactly as it is
+    elif mkdir -p /etc/cdi && nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; then
+        echo "[ok] generated NVIDIA CDI specs at /etc/cdi/nvidia.yaml"
+    else
+        echo "[warn] could not generate the NVIDIA CDI specs; Spaces GPU attachment may fail." >&2
+        echo "       run it manually: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" >&2
+    fi
 fi
 
 echo "[done] installed ${dest} (default image: ${image})"

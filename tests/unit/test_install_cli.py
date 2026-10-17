@@ -256,6 +256,74 @@ class TestInstallerAppliesLowPortSysctl:
         assert invocations == ["80"], f"unexpected low-ports invocations: {invocations}"
 
 
+class TestInstallerProvisionsNvidiaCdiSpecs:
+    """The installer must generate the NVIDIA CDI spec when it can.
+
+    Spaces GPU attachment resolves devices through CDI. The NVIDIA container
+    toolkit ships `nvidia-ctk`, which writes the spec file the runtime reads —
+    without it the operator has to discover and run the command by hand, and
+    the install never said so. The installer already runs as root on the host,
+    so it is the one sanctioned place to do it (AGENTS.md §2.3).
+
+    Contract (see also the tests below):
+      * silent no-op when `nvidia-ctk` is absent — most hosts have no GPU;
+      * never regenerates or overwrites an existing /etc/cdi/nvidia.yaml;
+      * `if/elif/else` guarded so `set -euo pipefail` cannot kill the install —
+        a failure warns with the manual command and continues.
+    """
+
+    # The literal invocation, pinned by contract (not a variable, not a bare
+    # default output path).
+    GENERATE = "nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+    GATE = "if command -v nvidia-ctk >/dev/null 2>&1; then"
+    GUARD = "-f /etc/cdi/nvidia.yaml"
+
+    def _generate_index(self) -> int:
+        return INSTALL_TEXT.index(self.GENERATE)
+
+    def test_generates_the_spec_into_the_default_cdi_directory(self) -> None:
+        # The runtime resolves GPU devices from the host CDI spec dirs; the
+        # canonical generated file is /etc/cdi/nvidia.yaml.
+        assert self.GENERATE in INSTALL_TEXT
+        assert self.GUARD in INSTALL_TEXT
+
+    def test_block_lives_in_the_installer_body_after_the_helper_install(self) -> None:
+        # Proving placement: the step runs on the HOST at install time, not
+        # inside the generated shim heredoc (the host-truth channel the shim
+        # reads), so it must appear after the embedded heredocs terminate.
+        assert INSTALL_TEXT.index(self.GATE) > INSTALL_TEXT.index(_LOW_PORTS_HEREDOC_END)
+
+    def test_gated_on_the_toolkit_being_installed(self) -> None:
+        # No nvidia-ctk → nothing to generate, and the install must stay
+        # silent (most hosts have no NVIDIA toolkit at all).
+        assert self.GATE in INSTALL_TEXT
+        assert INSTALL_TEXT.index(self.GATE) < self._generate_index()
+
+    def test_existing_spec_is_never_regenerated_or_overwritten(self) -> None:
+        # The existence guard precedes the invocation: a spec written by the
+        # operator or by a newer toolkit must survive re-running the installer.
+        guard = INSTALL_TEXT.index(self.GUARD)
+        assert guard < self._generate_index()
+        generate_block = INSTALL_TEXT[guard : self._generate_index()]
+        assert "nvidia-ctk" not in generate_block
+
+    def test_generation_failure_warns_with_the_manual_command_and_continues(self) -> None:
+        # set -euo pipefail is on: a bare invocation would abort the whole
+        # install. The elif/else form is the guard, and the else branch must
+        # name the command so the operator can retry by hand.
+        generate = self._generate_index()
+        guard = INSTALL_TEXT.index(self.GUARD)
+        block = INSTALL_TEXT[guard : generate + 700]
+        assert "elif" in block  # the invocation is a condition, not a bare command
+        else_branch = block.split("else", 1)[1]
+        assert "[warn]" in else_branch
+        # Scoped to the else branch so an implementation that only ran the
+        # command and printed a generic warn cannot pass.
+        assert self.GENERATE in else_branch
+        # Nothing in the branch may abort the install.
+        assert "exit" not in else_branch
+
+
 def _wrapper_text(default_tag: str = "stable") -> str:
     """Render the wrapper body the installer would write.
 
@@ -402,6 +470,98 @@ class TestWrapperImageResolution:
         )
         assert result.returncode == 0, result.stderr
         assert ":dev status" in result.stdout
+
+
+class TestWrapperUpdatePrePullsFreshImage:
+    """`outo-models update` is orchestrated by update.sh INSIDE the image the
+    shim launches, so a stale local copy means a stale orchestrator: the first
+    update after a release runs the *previous* release's recreate block and
+    silently drops whatever the new one forwards (this has broken upgrades
+    twice — the Podman socket mount, then OUTO_CDI_DIRS). The shim must
+    refresh before launching `update`.
+    """
+
+    def test_pre_pull_is_gated_on_the_update_subcommand(self) -> None:
+        # Text contract: the gate and the pull are in the generated wrapper,
+        # and they sit before the exec so the pull always wins the race.
+        body = _wrapper_text()
+        gate = 'if [[ "${1:-}" == "update" ]]; then'
+        assert gate in body
+        pull = 'podman pull --quiet "${image}" >/dev/null 2>&1 || true'
+        assert pull in body[body.index(gate) : body.index(gate) + 400]
+        assert body.index(pull) < body.index('exec podman "${args[@]}"')
+
+    def test_update_pulls_before_running_the_command(self, tmp_path: Path) -> None:
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+            args=["update"],
+        )
+        assert result.returncode == 0, result.stderr
+        lines = (tmp_path / "podman.log").read_text(encoding="utf-8").splitlines()
+        pulls = [i for i, line in enumerate(lines) if line.startswith("pull")]
+        runs = [
+            i for i, line in enumerate(lines) if line.startswith("run") and ":stable update" in line
+        ]
+        assert pulls, f"no pull recorded before the update: {lines}"
+        assert runs, f"the update command was never launched: {lines}"
+        assert max(pulls) < min(runs), f"pull must precede the run: {lines}"
+
+    def test_update_pulls_the_resolved_image_not_the_default(self, tmp_path: Path) -> None:
+        # OUTO_IMAGE is a per-invocation override; the pre-pull must target
+        # whatever the exec will launch, or the update runs a different image
+        # than the one just refreshed.
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={
+                "OUTO_CONFIG": str(tmp_path / "absent.yaml"),
+                "OUTO_IMAGE": "localhost/outo-models:dev",
+            },
+            args=["update"],
+        )
+        assert result.returncode == 0, result.stderr
+        log = (tmp_path / "podman.log").read_text(encoding="utf-8")
+        assert "pull --quiet localhost/outo-models:dev" in log
+
+    def test_update_pre_pull_survives_a_registry_failure(self, tmp_path: Path) -> None:
+        # Offline / registry down → the update still runs on the local copy.
+        # update.sh pulls again anyway; a failed pre-pull must never block.
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path, pull_ok=False)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+            args=["update"],
+        )
+        assert result.returncode == 0, result.stderr
+        assert ":stable update" in result.stdout
+
+    def test_non_update_subcommands_are_never_pre_pulled(self, tmp_path: Path) -> None:
+        # Only `update` is orchestrated by the launched image, so a pinned tag
+        # must stay pull-free for every other subcommand.
+        wrapper = _render_wrapper(tmp_path, default_tag="0.2.0-dev")
+        bin_dir = _fake_podman(tmp_path)
+        for sub in (["status"], ["start"], ["reset"]):
+            result = _run_wrapper(
+                wrapper,
+                bin_dir,
+                tmp_path,
+                extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+                args=sub,
+            )
+            assert result.returncode == 0, result.stderr
+        log = (tmp_path / "podman.log").read_text(encoding="utf-8")
+        assert not any(line.startswith("pull") for line in log.splitlines()), log
 
 
 class TestWrapperForwardsHostSocketPath:
