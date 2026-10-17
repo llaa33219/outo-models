@@ -490,6 +490,9 @@ class TestStartStopAndInspect:
         assert any("containers/outo-space-alice-demo/restart" in p for p in paths)
 
 
+# A spec shaped like the live `nvidia-ctk cdi generate` output: hooks
+# included. They must not stop the device from resolving — podman applies
+# them itself.
 _CDI_SPEC = """\
 cdiVersion: 0.5.0
 kind: nvidia.com/gpu
@@ -499,6 +502,9 @@ containerEdits:
 devices:
   "0":
     containerEdits:
+      hooks:
+        - hookName: createContainer
+          path: /bin/true
       deviceNodes:
         - path: /dev/nvidia0
           type: c
@@ -525,8 +531,10 @@ def cdi_spec_dir(tmp_path, monkeypatch) -> Path:
 
 class TestGpuVersionGate:
     """`gpus` only exists on the libpod API from podman 6.0 on; older releases
-    drop the unknown JSON key silently, so the server translates the CDI spec
-    into `devices` + `mounts` + `env` itself."""
+    drop the unknown JSON key silently, so the create body names the devices
+    as CDI qualified names and podman resolves them itself
+    (`ExtractCDIDevices` → `libpod.WithCDI` → `registry.InjectDevices`,
+    which applies the full containerEdits, hooks included)."""
 
     async def test_modern_podman_uses_gpus_field(self, settings, captured) -> None:
         client = _client_for(_version_handler("6.0.0"), captured)
@@ -538,7 +546,7 @@ class TestGpuVersionGate:
         assert "devices" not in payload
         assert "mounts" not in payload
 
-    async def test_old_podman_gets_translated_cdi_edits(
+    async def test_old_podman_gets_qualified_cdi_device_names(
         self, settings, captured, cdi_spec_dir
     ) -> None:
         client = _client_for(_version_handler("4.9.3"), captured)
@@ -548,23 +556,23 @@ class TestGpuVersionGate:
         payload = _create_payload(captured)
         # `gpus` on 4.x is silently dropped by Go — never send it there.
         assert "gpus" not in payload
-        assert payload["devices"] == [
-            {
-                "path": "/dev/nvidia0",
-                "type": "c",
-                "major": 195,
-                "minor": 0,
-                "fileMode": 0o666,
-            }
-        ]
-        assert payload["mounts"] == [
-            {
-                "source": "/usr/lib/libnvidia-container.so.1",
-                "destination": "/usr/lib/libnvidia-container.so.1",
-            }
-        ]
-        # The pre-existing env map must survive the merge.
-        assert payload["env"] == {"PORT": "8000", "NVIDIA_VISIBLE_DEVICES": "all"}
+        assert payload["devices"] == [{"path": "nvidia.com/gpu=0"}]
+
+    async def test_old_podman_body_carries_no_translated_edits(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # The field failure this delivery replaces: the server resolved the
+        # spec itself and merged device nodes, NVIDIA library mounts and
+        # NVIDIA_* env into the body — which silently dropped the spec's
+        # hooks. Nothing but the device names goes over the wire now.
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        payload = _create_payload(captured)
+        assert payload["devices"] == [{"path": "nvidia.com/gpu=0"}]
+        assert "mounts" not in payload
+        assert payload["env"] == {"PORT": "8000"}
 
     async def test_podman_five_uses_the_fallback(self, settings, captured, cdi_spec_dir) -> None:
         client = _client_for(_version_handler("5.6.0"), captured)
@@ -573,13 +581,13 @@ class TestGpuVersionGate:
         await client.aclose()
         payload = _create_payload(captured)
         assert "gpus" not in payload
-        assert payload["devices"][0]["path"] == "/dev/nvidia0"
+        assert payload["devices"] == [{"path": "nvidia.com/gpu=0"}]
 
     async def test_version_fetch_failure_falls_back_to_cdi(
         self, settings, captured, cdi_spec_dir
     ) -> None:
         # An unreachable / version-less podman must still get a working
-        # container: the CDI fallback is the more compatible of the two paths.
+        # container: qualified device names are the more compatible spelling.
         def h(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/version"):
                 return httpx.Response(500, json={"message": "boom"})
@@ -591,33 +599,40 @@ class TestGpuVersionGate:
         await client.aclose()
         payload = _create_payload(captured)
         assert "gpus" not in payload
-        assert payload["devices"][0]["path"] == "/dev/nvidia0"
+        assert payload["devices"] == [{"path": "nvidia.com/gpu=0"}]
 
-    async def test_missing_cdi_spec_fails_loudly_on_old_podman(
-        self, settings, captured, tmp_path, monkeypatch
-    ) -> None:
-        # Given: podman 4.x and no CDI specs on the host. A silent GPU-less
-        # container is the exact failure the fallback exists to prevent.
-        from outo_models.spaces import cdi
-
-        empty = tmp_path / "empty-cdi"
-        empty.mkdir()
-        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(empty),))
+    async def test_every_assigned_gpu_is_named(self, settings, captured, cdi_spec_dir) -> None:
         client = _client_for(_version_handler("4.9.3"), captured)
         manager = SpaceRuntimeManager(settings, client=client)
-        with pytest.raises(OutoError) as excinfo:
-            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await manager.start("alice", "demo", gpu_ids=("gpu-0", "GPU-abc"))
         await client.aclose()
-        assert excinfo.value.code == "space_gpu_cdi_unresolved"
-        assert "nvidia.com/gpu" in str(excinfo.value)
-        # Nothing was created: no Space create call made it to the wire (the
-        # host-read helper container is allowed — and did — try).
-        assert not [
-            request
-            for request in captured
-            if str(request.url).endswith("/containers/create")
-            and str(json.loads(request.content).get("name", "")).startswith("outo-space-")
+        assert _create_payload(captured)["devices"] == [
+            {"path": "nvidia.com/gpu=0"},
+            {"path": "nvidia.com/gpu=GPU-abc"},
         ]
+
+    async def test_successful_start_never_runs_the_spec_ladder(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # The resolver costs a podman round-trip; on the happy path podman
+        # resolved the names itself, so the local read and the helper
+        # container must both stay untouched.
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert _probe_calls(captured) == []
+
+    async def test_modern_podman_never_touches_the_helper(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # `gpus` needs no names and no translation, so the ladder — local
+        # read included — must not run at all.
+        client = _client_for(_version_handler("6.0.0"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert _probe_calls(captured) == []
 
     async def test_version_is_fetched_once_per_manager(
         self, settings, captured, cdi_spec_dir
@@ -641,9 +656,13 @@ class TestGpuVersionGate:
 
 _PROBE_SPEC_STREAM = f'---\n{_CDI_SPEC}---\nkind: example.com/gpu\ndevices:\n  "0": {{}}\n'
 
+_PODMAN_REFUSAL_TEXT = "no such device nvidia.com/gpu=0"
 
-def _probe_handler(logs: httpx.Response):
-    """Answer the helper-container lifecycle, delegate everything else."""
+_PODMAN_REFUSAL = httpx.Response(500, json={"message": _PODMAN_REFUSAL_TEXT})
+
+
+def _probe_handler(logs: httpx.Response, *, refusal: httpx.Response = _PODMAN_REFUSAL):
+    """Answer the helper-container lifecycle, refuse the Space's own create."""
 
     def h(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -657,6 +676,8 @@ def _probe_handler(logs: httpx.Response):
             return httpx.Response(200, json={"Id": "probe-id"})
         if path.endswith("/containers/create") and "outo-cdi-probe" in request.content.decode():
             return httpx.Response(201, json={"Id": "probe-id"})
+        if path.endswith("/containers/create"):
+            return refusal
         return _version_handler("4.9.3")(request)
 
     return h
@@ -673,159 +694,44 @@ def no_local_specs(tmp_path, monkeypatch):
     return empty
 
 
-class TestHostCdiReadFallback:
-    """The server container does not always see the host's CDI specs.
+class TestGpuCreateFailureDiagnosis:
+    """The ladder runs only after podman refused the container.
 
-    With the directories mounted the resolver reads local files at zero cost.
-    When that plumbing is missing or stale the specs live only on the host, so
-    the fallback reads them through a throwaway podman helper container that
-    bind mounts the same host paths and cats them out. A deployment that
-    never mounted anything must therefore not need an operator step.
+    Podman's own CDI path is the delivery, so its refusal is the only thing
+    the server's resolver can add anything to. It then answers with what it
+    actually found — or, when it does find the device, keeps podman's own
+    message, which is then the truth.
     """
 
-    async def test_resolves_from_the_host_when_nothing_is_mounted(
-        self, settings, captured, no_local_specs
-    ) -> None:
-        # Given: podman 4.x, GPU assigned, empty spec dirs in the server
-        # container — the specs exist only on the host.
-        client = _client_for(
-            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
-        )
-        manager = SpaceRuntimeManager(settings, client=client)
-
-        # When
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
-        await client.aclose()
-
-        # Then: the create body carries the host-resolved edits…
-        payload = _create_payload(captured)
-        assert "gpus" not in payload
-        assert payload["devices"] == [
-            {
-                "path": "/dev/nvidia0",
-                "type": "c",
-                "major": 195,
-                "minor": 0,
-                "fileMode": 0o666,
-            }
-        ]
-        assert payload["mounts"] == [
-            {
-                "source": "/usr/lib/libnvidia-container.so.1",
-                "destination": "/usr/lib/libnvidia-container.so.1",
-            }
-        ]
-        assert payload["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
-        # …and the helper ran exactly create → start → inspect → logs → remove.
-        assert _probe_calls(captured) == [
-            "POST create",
-            "POST start",
-            "GET json",
-            "GET logs",
-            "DELETE container",
-        ]
-
-    async def test_helper_create_body_binds_the_host_dirs_read_only(
+    async def test_missing_cdi_spec_fails_loudly_on_old_podman(
         self, settings, captured, tmp_path, monkeypatch
     ) -> None:
-        # Given: specs the resolver cannot see locally, on host paths the
-        # server container never received a mount for.
+        # Given: podman 4.x refuses the create and no CDI spec exists on the
+        # host either. A silent GPU-less container is what this prevents.
         from outo_models.spaces import cdi
 
-        host_dirs = ("/etc/cdi", "/opt/cdi")
-        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", host_dirs)
+        empty = tmp_path / "empty-cdi"
+        empty.mkdir()
+        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(empty),))
         client = _client_for(
-            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+            _probe_handler(httpx.Response(200, content=b""), refusal=_PODMAN_REFUSAL), captured
         )
         manager = SpaceRuntimeManager(settings, client=client)
-
-        # When
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
         await client.aclose()
+        message = str(excinfo.value)
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "nvidia.com/gpu" in message
+        # The operator sees both: the resolver's diagnosis and podman's text.
+        assert "What the resolver actually saw" in message
+        assert _PODMAN_REFUSAL_TEXT in message
 
-        # Then: the helper bind mounts each host dir onto itself, read-only,
-        # and cats every spec suffix out of it. The image is the Space's own
-        # already-built image — the helper runs no new image pull.
-        body = json.loads(
-            next(
-                request.content
-                for request in captured
-                if str(request.url).endswith("/containers/create")
-                and "outo-cdi-probe-" in request.content.decode()
-            )
-        )
-        assert body["image"] == "localhost/outo-space-alice-demo:latest"
-        assert body["labels"] == {"outo.managed": "true", "outo.cdi-probe": "1"}
-        assert body["mounts"] == [
-            {
-                "source": directory,
-                "destination": directory,
-                "type": "bind",
-                "options": ["ro", "rbind"],
-            }
-            for directory in host_dirs
-        ]
-        assert body["command"][:2] == ["sh", "-c"]
-        script = body["command"][2]
-        assert '"/opt/cdi"/*.json' in script
-        assert '"/etc/cdi"/*.yaml' in script
-        assert "cat" in script
-
-    async def test_unmatched_globs_do_not_fail_the_helper_script(
+    async def test_undefined_device_reports_the_defined_ones(
         self, settings, captured, no_local_specs
     ) -> None:
-        # A dir with only .yaml specs still globs .yml/.json — the shell must
-        # skip the unmatched pattern instead of handing `cat` a literal one.
-        client = _client_for(
-            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
-        )
-        manager = SpaceRuntimeManager(settings, client=client)
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
-        await client.aclose()
-        script = json.loads(
-            next(
-                request.content
-                for request in captured
-                if str(request.url).endswith("/containers/create")
-                and "outo-cdi-probe-" in request.content.decode()
-            )
-        )["command"][2]
-        assert '[ -f "$f" ]' in script
-        assert _create_payload(captured)["devices"][0]["path"] == "/dev/nvidia0"
-
-    async def test_multiplexed_log_frames_are_decoded(
-        self, settings, captured, no_local_specs
-    ) -> None:
-        # Given: podman's libpod logs endpoint writes an 8-byte stream frame
-        # before every line (it omits those only for compat requests).
-        payload = _PROBE_SPEC_STREAM.encode()
-        framed = b"\x01\x00\x00\x00" + len(payload).to_bytes(4, "big") + payload
-        client = _client_for(_probe_handler(httpx.Response(200, content=framed)), captured)
-        manager = SpaceRuntimeManager(settings, client=client)
-
-        # When
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
-        await client.aclose()
-
-        # Then: the frames decoded into a stream the pure parser accepts.
-        assert _create_payload(captured)["devices"][0]["path"] == "/dev/nvidia0"
-
-    async def test_plain_log_text_is_accepted_unchanged(
-        self, settings, captured, no_local_specs
-    ) -> None:
-        client = _client_for(
-            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
-        )
-        manager = SpaceRuntimeManager(settings, client=client)
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
-        await client.aclose()
-        assert _create_payload(captured)["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
-
-    async def test_unresolvable_on_the_host_raises_the_loud_error_naming_both_attempts(
-        self, settings, captured, no_local_specs
-    ) -> None:
-        # Given: the helper answers, but the host has no spec of that kind
-        # either — the genuinely unfixable case, which must stay loud.
+        # Given: the helper reads the specs, but the assigned id is not one
+        # of them — the message must list what IS defined, next to podman's.
         client = _client_for(
             _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
         )
@@ -835,10 +741,42 @@ class TestHostCdiReadFallback:
         await client.aclose()
         message = str(excinfo.value)
         assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "defined devices: 0" in message
         assert "helper container" in message
         assert "Both resolution paths were attempted" in message
+        assert _PODMAN_REFUSAL_TEXT in message
 
-    async def test_helper_failure_falls_back_to_the_loud_error(
+    async def test_resolvable_device_keeps_the_podman_error(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: the specs on the host DO define the device. Then podman's
+        # refusal is the truth — the resolver must not overwrite it.
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert excinfo.value.code == "podman_api"
+        assert _PODMAN_REFUSAL_TEXT in str(excinfo.value)
+        assert "space_gpu_cdi_unresolved" not in str(excinfo.value)
+
+    async def test_mounted_specs_answer_the_diagnosis_without_the_helper(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: the specs are mounted and define the device, so the local
+        # read answers the refusal and the host read is never needed.
+        client = _client_for(_probe_handler(httpx.Response(200, content=b"")), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert excinfo.value.code == "podman_api"
+        assert _PODMAN_REFUSAL_TEXT in str(excinfo.value)
+        assert _probe_calls(captured) == []
+
+    async def test_helper_failure_still_reports_the_resolver_diagnosis(
         self, settings, captured, no_local_specs
     ) -> None:
         # Given: the helper itself broke (podman refused the logs call).
@@ -854,19 +792,13 @@ class TestHostCdiReadFallback:
         assert "Both resolution paths were attempted" in str(excinfo.value)
         # The helper is removed even on the failure path.
         assert _probe_calls(captured)[-1] == "DELETE container"
-        assert not [
-            request
-            for request in captured
-            if str(request.url).endswith("/containers/create")
-            and str(json.loads(request.content).get("name", "")).startswith("outo-space-")
-        ]
 
-    async def test_failed_helper_removal_does_not_mask_the_loud_error(
+    async def test_failed_helper_removal_does_not_mask_the_diagnosis(
         self, settings, captured, no_local_specs
     ) -> None:
-        # Given: podman refuses the cleanup call as well. The helper path
-        # must still end in the self-diagnosing error, not in an opaque
-        # podman_api that hides which GPU could not be resolved.
+        # Given: podman refuses the cleanup call as well. The ladder must
+        # still end in the self-diagnosing error, not in an opaque podman_api
+        # that hides which GPU could not be resolved.
         inner = _probe_handler(httpx.Response(500, json={"message": "log gone"}))
 
         def h(request: httpx.Request) -> httpx.Response:
@@ -906,26 +838,167 @@ class TestHostCdiReadFallback:
         assert excinfo.value.code == "space_gpu_cdi_unresolved"
         assert _probe_calls(captured)[-1] == "DELETE container"
 
-    async def test_local_specs_win_and_the_helper_never_runs(
-        self, settings, captured, cdi_spec_dir
-    ) -> None:
-        # The healthy state stays free: a readable local spec means no
-        # throwaway container and no extra podman round-trip.
-        client = _client_for(_version_handler("4.9.3"), captured)
-        manager = SpaceRuntimeManager(settings, client=client)
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
-        await client.aclose()
-        assert _probe_calls(captured) == []
-        assert _create_payload(captured)["devices"][0]["path"] == "/dev/nvidia0"
-
-    async def test_modern_podman_never_touches_the_helper(
+    async def test_transport_failure_is_enriched_too(
         self, settings, captured, no_local_specs
     ) -> None:
-        # `gpus` needs no translation, so the ladder — local read included —
-        # must not run at all.
-        client = _client_for(_version_handler("6.0.0"), captured)
+        # Given: the socket drops on the create call itself. The unreachable
+        # error still carries the resolver's diagnosis rather than swallowing
+        # it, because "podman is down" and "podman rejected the device" need
+        # different fixes.
+        def h(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if "outo-cdi-probe-" in path:
+                return _probe_handler(httpx.Response(200, content=b""))(request)
+            if path.endswith("/containers/create"):
+                raise httpx.ConnectError("socket gone")
+            return _version_handler("4.9.3")(request)
+
+        client = _client_for(h, captured)
         manager = SpaceRuntimeManager(settings, client=client)
-        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
         await client.aclose()
-        assert _probe_calls(captured) == []
-        assert _create_payload(captured)["gpus"] == ["0"]
+        message = str(excinfo.value)
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "Both resolution paths were attempted" in message
+        assert "Podman refused the container" in message
+
+
+class TestHostCdiReadFallback:
+    """The server container does not always see the host's CDI specs.
+
+    With the directories mounted the resolver reads local files at zero cost.
+    When that plumbing is missing or stale the specs live only on the host, so
+    the fallback reads them through a throwaway podman helper container that
+    bind mounts the same host paths and cats them out. A deployment that
+    never mounted anything must therefore not need an operator step.
+    """
+
+    async def test_reads_the_host_specs_through_the_helper(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: podman 4.x refused the create, GPU assigned, empty spec dirs
+        # in the server container — the specs exist only on the host.
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+
+        # When
+        with pytest.raises(OutoError):
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+
+        # Then: the create body still carried only the qualified name, and
+        # the helper ran exactly create → start → inspect → logs → remove.
+        assert _create_payload(captured)["devices"] == [{"path": "nvidia.com/gpu=0"}]
+        assert _probe_calls(captured) == [
+            "POST create",
+            "POST start",
+            "GET json",
+            "GET logs",
+            "DELETE container",
+        ]
+
+    async def test_helper_create_body_binds_the_host_dirs_read_only(
+        self, settings, captured, tmp_path, monkeypatch
+    ) -> None:
+        # Given: specs the resolver cannot see locally, on host paths the
+        # server container never received a mount for.
+        from outo_models.spaces import cdi
+
+        host_dirs = ("/etc/cdi", "/opt/cdi")
+        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", host_dirs)
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+
+        # When
+        with pytest.raises(OutoError):
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+
+        # Then: the helper bind mounts each host dir onto itself, read-only,
+        # and cats every spec suffix out of it. The image is the Space's own
+        # already-built image — the helper runs no new image pull.
+        body = json.loads(
+            next(
+                request.content
+                for request in captured
+                if str(request.url).endswith("/containers/create")
+                and "outo-cdi-probe-" in request.content.decode()
+            )
+        )
+        assert body["image"] == "localhost/outo-space-alice-demo:latest"
+        assert body["labels"] == {"outo.managed": "true", "outo.cdi-probe": "1"}
+        assert body["mounts"] == [
+            {
+                "source": directory,
+                "destination": directory,
+                "type": "bind",
+                "options": ["ro", "rbind"],
+            }
+            for directory in host_dirs
+        ]
+        assert body["command"][:2] == ["sh", "-c"]
+        script = body["command"][2]
+        assert '"/opt/cdi"/*.json' in script
+        assert '"/etc/cdi"/*.yaml' in script
+        assert "cat" in script
+
+    async def test_unmatched_globs_do_not_fail_the_helper_script(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # A dir with only .yaml specs still globs .yml/.json — the shell must
+        # skip the unmatched pattern instead of handing `cat` a literal one.
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError):
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        script = json.loads(
+            next(
+                request.content
+                for request in captured
+                if str(request.url).endswith("/containers/create")
+                and "outo-cdi-probe-" in request.content.decode()
+            )
+        )["command"][2]
+        assert '[ -f "$f" ]' in script
+        assert _create_payload(captured)["devices"] == [{"path": "nvidia.com/gpu=0"}]
+
+    async def test_multiplexed_log_frames_are_decoded(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: podman's libpod logs endpoint writes an 8-byte stream frame
+        # before every line (it omits those only for compat requests).
+        payload = _PROBE_SPEC_STREAM.encode()
+        framed = b"\x01\x00\x00\x00" + len(payload).to_bytes(4, "big") + payload
+        client = _client_for(_probe_handler(httpx.Response(200, content=framed)), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+
+        # Then: the frames decoded into a stream the pure parser accepts, so
+        # the device resolved and podman's own refusal is what remains.
+        assert excinfo.value.code == "podman_api"
+        assert _PODMAN_REFUSAL_TEXT in str(excinfo.value)
+
+    async def test_plain_log_text_is_accepted_unchanged(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert excinfo.value.code == "podman_api"
+        assert _PODMAN_REFUSAL_TEXT in str(excinfo.value)

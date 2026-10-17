@@ -64,7 +64,7 @@ import json
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import httpx
 
@@ -526,7 +526,10 @@ class SpaceRuntimeManager:
         identifiers: Sequence[str],
         image: str,
     ) -> cdi.CdiEdits:
-        """Resolve GPU identifiers through the local specs, then the host's.
+        """Diagnose GPU identifiers through the local specs, then the host's.
+
+        Only the failure path calls this: podman resolves the create body's
+        qualified device names itself, so a successful start never needs it.
 
         Step 1 reads the spec directories inside the server container — the
         fast path, free of any extra podman traffic. Only when that finds
@@ -554,6 +557,30 @@ class SpaceRuntimeManager:
             f"{exc}\n{_CDI_BOTH_ATTEMPTS}",
             code=exc.code,
         )
+
+    async def _raise_gpu_diagnosis(
+        self,
+        exc: OutoError,
+        identifiers: Sequence[str],
+        image: str,
+    ) -> NoReturn:
+        """Replace a failed create with the resolver's own diagnosis.
+
+        Podman's bare "unknown device" or "create failed" text says nothing
+        about which specs exist, so when the resolver can also not find the
+        device, its message (kinds, defined devices, per-directory report) is
+        the useful one and the podman text is appended for completeness. When
+        the resolver *does* find the device, podman's message is the truth and
+        is re-raised untouched.
+        """
+        try:
+            await self._resolve_gpu_edits(identifiers, image)
+        except ValidationFailedError as diagnostic:
+            raise ValidationFailedError(
+                f"{diagnostic}\nPodman refused the container:\n{exc}",
+                code=diagnostic.code,
+            ) from diagnostic
+        raise exc
 
     async def start(
         self,
@@ -588,6 +615,7 @@ class SpaceRuntimeManager:
             ],
             "restart_policy": "always",
         }
+        cdi_identifiers: tuple[str, ...] = ()
         if gpu_ids:
             identifiers = [_cdi_device_name(gpu) for gpu in gpu_ids]
             version = await self.podman_version()
@@ -595,19 +623,27 @@ class SpaceRuntimeManager:
                 body["gpus"] = identifiers
             else:
                 # podman < 6.0 has no `gpus` field on the create body and
-                # silently ignores unknown JSON keys, so translate the host
-                # CDI specs into fields every version understands — reading
-                # them locally first and from the host only if that misses.
-                edits = await self._resolve_gpu_edits(identifiers, image_tag(owner, name))
-                body["devices"] = list(edits.device_nodes)
-                body["mounts"] = [*body.get("mounts", []), *edits.mounts]
-                body["env"].update(edits.env)
+                # silently ignores unknown JSON keys. Qualified CDI names in
+                # `devices` are its own CDI path (ExtractCDIDevices →
+                # libpod.WithCDI → registry.InjectDevices): podman reads the
+                # host specs and applies the complete containerEdits, hooks
+                # included. Translating the specs here instead would drop
+                # exactly those edits.
+                cdi_identifiers = tuple(identifiers)
+                body["devices"] = [
+                    {"path": f"{cdi.DEFAULT_KIND}={identifier}"} for identifier in identifiers
+                ]
 
-        create_response = await self._request(
-            "POST",
-            f"{_LIBPOD_PREFIX}/containers/create",
-            json_body=body,
-        )
+        try:
+            create_response = await self._request(
+                "POST",
+                f"{_LIBPOD_PREFIX}/containers/create",
+                json_body=body,
+            )
+        except OutoError as exc:
+            if cdi_identifiers:
+                await self._raise_gpu_diagnosis(exc, cdi_identifiers, image_tag(owner, name))
+            raise
         container_id = ""
         payload = create_response.json()
         if isinstance(payload, dict):
