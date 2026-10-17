@@ -280,6 +280,7 @@ class TestStartCommand:
         run_cdi = tmp_path / "run-cdi"
         etc_cdi.mkdir()
         run_cdi.mkdir()
+        monkeypatch.delenv("OUTO_CDI_DIRS", raising=False)
         monkeypatch.setattr(start_mod, "in_container", lambda: False)
         monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi), str(run_cdi)))
         argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
@@ -293,6 +294,7 @@ class TestStartCommand:
 
         etc_cdi = tmp_path / "etc-cdi"
         etc_cdi.mkdir()
+        monkeypatch.delenv("OUTO_CDI_DIRS", raising=False)
         monkeypatch.setattr(start_mod, "in_container", lambda: False)
         monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi), str(tmp_path / "absent")))
         argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
@@ -304,6 +306,7 @@ class TestStartCommand:
     ) -> None:
         from outo_models.cli import start as start_mod
 
+        monkeypatch.delenv("OUTO_CDI_DIRS", raising=False)
         monkeypatch.setattr(start_mod, "in_container", lambda: False)
         monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(tmp_path / "a"), str(tmp_path / "b")))
         argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
@@ -319,10 +322,54 @@ class TestStartCommand:
 
         etc_cdi = tmp_path / "etc-cdi"
         etc_cdi.mkdir()
+        monkeypatch.delenv("OUTO_CDI_DIRS", raising=False)
         monkeypatch.setattr(start_mod, "in_container", lambda: True)
         monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi),))
         argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
         assert not [a for a in argv if "cdi" in a]
+
+    def test_argv_mounts_cdi_dirs_from_host_env_override(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The field failure this closes: the CLI always runs in the shim's
+        # container, so the in-container probe never sees the host's specs and
+        # the podman<6 GPU fallback died with space_gpu_cdi_unresolved on a
+        # host that had valid /etc/cdi specs. The shim forwards the HOST paths
+        # in OUTO_CDI_DIRS; the host podman resolves the `-v` sources, so they
+        # are used verbatim — never stat'ed from inside a container.
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setenv("OUTO_CDI_DIRS", "/host/etc/cdi:/host/var/run/cdi")
+        monkeypatch.setattr(start_mod, "in_container", lambda: True)
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        pairs = [argv[i : i + 2] for i in range(len(argv) - 1)]
+        assert ["-v", "/host/etc/cdi:/host/etc/cdi:ro"] in pairs
+        assert ["-v", "/host/var/run/cdi:/host/var/run/cdi:ro"] in pairs
+
+    def test_cdi_env_override_drops_empty_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A trailing or doubled separator (a shim built from a partially empty
+        # probe) must not produce a `-v ::/x:ro` source — the host podman
+        # would then try to mount a nonexistent path named "".
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setenv("OUTO_CDI_DIRS", ":/host/etc/cdi::")
+        monkeypatch.setattr(start_mod, "in_container", lambda: True)
+        assert start_mod._host_cdi_dirs() == ("/host/etc/cdi",)
+
+    def test_empty_cdi_env_falls_through_to_the_host_shell_probe(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An empty value carries no host truth, so the probe still runs — this
+        # keeps a direct `outo-models start` on a host shell working.
+        from outo_models.cli import start as start_mod
+
+        etc_cdi = tmp_path / "etc-cdi"
+        etc_cdi.mkdir()
+        monkeypatch.setenv("OUTO_CDI_DIRS", "")
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+        monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi),))
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert f"{etc_cdi}:{etc_cdi}:ro" in argv
 
     def test_missing_config_refuses(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -95,19 +95,30 @@ def _host_podman_socket() -> str | None:
 
 # Where the host keeps its CDI spec files. podman < 6.0 has no CDI concept in
 # its REST API, so the server resolves the specs itself on the fallback GPU
-# path — which means it has to be able to read them.
+# path — which means it has to be able to read them. Probed only from a host
+# shell; through the CLI shim the host's answer arrives in `OUTO_CDI_DIRS`.
 _CDI_SPEC_DIRS = ("/etc/cdi", "/var/run/cdi")
 
 
 def _host_cdi_dirs() -> tuple[str, ...]:
     """Return the CDI spec directories to mount read-only, existing ones only.
 
-    An absent directory is omitted silently: `podman run -v` would otherwise
-    create it on the host as an empty root-owned directory. Like the socket
-    probe, nothing is probed from inside the CLI container — there every
-    visible path is the container's own mount point, and passing that as a
-    `-v` source makes the host podman fail on a nonexistent host path.
+    `OUTO_CDI_DIRS` (forwarded by the install-cli.sh shim) is a colon-separated
+    list of HOST paths, used verbatim and never stat'ed: the HOST podman
+    resolves the `-v` source, so the directory does not have to be visible from
+    this process. Same host-truth channel as `OUTO_PODMAN_SOCK` above, and
+    needed for the same reason — `start` always runs in the shim's container.
+
+    Without it, only a host shell may probe: inside a container every visible
+    path is the container's own mount point, and passing that as a `-v` source
+    makes the host podman fail on a nonexistent host path.
+
+    A probed directory that does not exist is omitted silently: `podman run -v`
+    would otherwise create it on the host as an empty root-owned directory.
     """
+    override = os.environ.get("OUTO_CDI_DIRS")
+    if override:
+        return tuple(entry for entry in override.split(":") if entry)
     if in_container():
         return ()
     found: list[str] = []
