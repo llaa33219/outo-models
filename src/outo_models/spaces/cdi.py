@@ -24,10 +24,22 @@ GPU-less container is the exact failure this module removes.
 
 The spec files live on the host, so `outo-models start` mounts both
 directories read-only into the server container (see `cli/start.py`).
+When that plumbing is missing or stale, `runtime_manager` reads the same
+directories from the host through a throwaway podman helper container and
+feeds the result to `parse_specs` + `resolve_edits` — the IO-free half of
+this module, so the translation has exactly one implementation.
+
+# allow: SIZE_OK — the whole file is one cohesive unit: parse CDI specs
+# (from files or from a text stream) and translate a device selection into
+# podman create-body fields. Splitting the parser from the resolver would
+# leave the error paths (which need both the specs and the per-directory
+# probe report) reaching across modules, and neither half has an independent
+# lifecycle: the resolver exists to serve the parser's output.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +50,10 @@ from outo_models.exceptions import ValidationFailedError
 
 #: Host CDI spec directories, in the order the CDI spec's default cache uses.
 DEFAULT_SPEC_DIRS: tuple[str, ...] = ("/etc/cdi", "/var/run/cdi")
+
+_DEFAULT_KIND = "nvidia.com/gpu"
+
+_UNRESOLVED_CODE = "space_gpu_cdi_unresolved"
 
 _SPEC_SUFFIXES = (".yaml", ".yml", ".json")
 
@@ -81,21 +97,63 @@ class CdiEdits:
     env: dict[str, str]
 
 
-def _spec_files(dirs: tuple[str | Path, ...]) -> list[Path]:
-    """Return every spec-looking file in `dirs`, sorted for determinism."""
-    files: list[Path] = []
-    for directory in dirs:
-        root = Path(directory)
+@dataclass(frozen=True, slots=True)
+class _DirProbe:
+    """What the resolver observed inside one searched spec directory.
+
+    The searched dirs are mount *targets* inside the server container, so
+    "does this path exist?" is diagnostic information, not an implementation
+    detail: a dir that was never mounted, a dir the container cannot read and
+    a dir full of specs of another kind are otherwise indistinguishable from
+    the outside. `describe()` renders the one line that tells them apart.
+    """
+
+    path: str
+    state: str
+    specs: tuple[dict[str, Any], ...]
+    warnings: tuple[str, ...]
+
+    def describe(self) -> str:
+        if self.state != "present":
+            return f"{self.path}: {self.state}"
+        readable = len(self.specs)
+        plural = "" if readable == 1 else "s"
+        kinds = sorted({str(spec.get("kind")) for spec in self.specs if spec.get("kind")})
+        skipped = "" if not self.warnings else f" ({len(self.warnings)} unreadable)"
+        return (
+            f"{self.path}: present, {readable} readable spec{plural}{skipped}, "
+            f"kinds: {', '.join(kinds) if kinds else 'none'}"
+        )
+
+
+def _probe_dir(directory: str) -> _DirProbe:
+    """Observe one directory: its state, the specs in it, and its warnings."""
+    try:
+        entries = sorted(Path(directory).iterdir())
+    except FileNotFoundError:
+        return _DirProbe(directory, "missing", (), ())
+    except NotADirectoryError:
+        return _DirProbe(directory, "not a directory", (), ())
+    except OSError:
+        return _DirProbe(directory, "unreadable", (), ())
+    specs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for path in (entry for entry in entries if entry.suffix in _SPEC_SUFFIXES):
         try:
-            if not root.is_dir():
-                continue
-            entries = sorted(root.iterdir())
-        except OSError:
-            # An unreadable directory (permissions, vanished tmpfs) must not
-            # take the Space down; the missing-device error names the dirs.
+            with path.open("r", encoding="utf-8") as fh:
+                payload = yaml.safe_load(fh)
+        except (OSError, yaml.YAMLError) as exc:
+            warnings.append(f"Ignored unreadable CDI spec {path}: {exc}")
             continue
-        files.extend(entry for entry in entries if entry.suffix in _SPEC_SUFFIXES)
-    return files
+        if not isinstance(payload, dict):
+            warnings.append(f"Ignored CDI spec {path}: top-level is not a mapping")
+            continue
+        specs.append(payload)
+    return _DirProbe(directory, "present", tuple(specs), tuple(warnings))
+
+
+def _probe_all(dirs: tuple[str, ...]) -> tuple[_DirProbe, ...]:
+    return tuple(_probe_dir(directory) for directory in dirs)
 
 
 def load_specs(
@@ -107,19 +165,10 @@ def load_specs(
     or parsed. A broken third-party spec file must not break GPU injection
     for the specs that *are* readable, so parse errors are collected.
     """
-    specs: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    for path in _spec_files(tuple(dirs) if dirs is not None else DEFAULT_SPEC_DIRS):
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                payload = yaml.safe_load(fh)
-        except (OSError, yaml.YAMLError) as exc:
-            warnings.append(f"Ignored unreadable CDI spec {path}: {exc}")
-            continue
-        if not isinstance(payload, dict):
-            warnings.append(f"Ignored CDI spec {path}: top-level is not a mapping")
-            continue
-        specs.append(payload)
+    searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
+    probes = _probe_all(searched)
+    specs = [spec for probe in probes for spec in probe.specs]
+    warnings = [warning for probe in probes for warning in probe.warnings]
     return specs, warnings
 
 
@@ -162,6 +211,11 @@ def _device_node(
     return node, mount
 
 
+def _with_context(message: str, context: str) -> str:
+    """Append where these specs came from to a resolution error message."""
+    return f"{message} ({context})" if context else message
+
+
 def _translate_edits(
     edits: dict[str, Any],
     *,
@@ -169,14 +223,18 @@ def _translate_edits(
     nodes: list[dict[str, Any]],
     mounts: list[dict[str, Any]],
     env: dict[str, str],
+    context: str = "",
 ) -> None:
     """Accumulate one `containerEdits` block into the output collections."""
     for key in sorted(edits):
         if key not in _SUPPORTED_EDITS:
             raise ValidationFailedError(
-                f"CDI device {device!r} requests {key!r}, which cannot be "
-                f"translated into a podman create body. {_UNSUPPORTED_HINT}",
-                code="space_gpu_cdi_unresolved",
+                _with_context(
+                    f"CDI device {device!r} requests {key!r}, which cannot be "
+                    f"translated into a podman create body. {_UNSUPPORTED_HINT}",
+                    context,
+                ),
+                code=_UNRESOLVED_CODE,
             )
     for entry in edits.get("deviceNodes") or []:
         node, mount = _device_node(entry, device)
@@ -197,31 +255,70 @@ def _translate_edits(
         key, separator, value = str(entry).partition("=")
         if not separator:
             raise ValidationFailedError(
-                f"CDI device {device!r} has a malformed env entry {entry!r} (expected KEY=VALUE).",
-                code="space_gpu_cdi_unresolved",
+                _with_context(
+                    f"CDI device {device!r} has a malformed env entry {entry!r} "
+                    "(expected KEY=VALUE).",
+                    context,
+                ),
+                code=_UNRESOLVED_CODE,
             )
         env[key] = value
 
 
-def _global_edits(spec: dict[str, Any]) -> dict[str, Any]:
+def _global_edits(spec: Mapping[str, Any]) -> dict[str, Any]:
     """Return the spec-wide `containerEdits` block, if any."""
     edits = spec.get("containerEdits")
     return edits if isinstance(edits, dict) else {}
 
 
-def resolve_device(
-    identifiers: list[str] | tuple[str, ...],
-    *,
-    kind: str = "nvidia.com/gpu",
-    dirs: tuple[str | Path, ...] | list[str | Path] | None = None,
-) -> CdiEdits:
-    """Resolve CDI device identifiers into SpecGenerator-ready container edits.
+def parse_specs(text: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse a `---`-separated stream of CDI specs into mappings.
 
-    `identifiers` are CDI device references — either bare names resolved
-    under `kind`, or fully-qualified `vendor.com/class=name`. Every device
-    contributes its spec-wide `containerEdits` plus its own
-    `containerEdits`; later devices win on conflicting env keys, matching
-    CDI's own "last edit applied" behaviour.
+    The stream format is what a helper container's `cat` produces: each spec
+    file is preceded by a document separator, so the IO (reading files, or
+    asking the host) stays outside the resolver. Empty documents are skipped
+    silently — an empty spec file on the host carries no information — while
+    a document that is not a mapping is a real read failure and is reported.
+
+    A stream that does not parse at all yields no specs and one warning: the
+    same "collect the broken, keep the good" rule the file loader applies.
+    """
+    try:
+        documents = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        return [], [f"Ignored unreadable CDI spec stream: {exc}"]
+    specs: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for position, document in enumerate(documents, start=1):
+        if document is None:
+            continue
+        if not isinstance(document, dict):
+            warnings.append(f"Ignored CDI spec document {position}: top-level is not a mapping")
+            continue
+        specs.append(document)
+    return specs, warnings
+
+
+def resolve_edits(
+    specs: Sequence[Mapping[str, Any]],
+    identifiers: Sequence[str],
+    *,
+    kind: str = _DEFAULT_KIND,
+    searched: Sequence[str] | None = None,
+    probes: Sequence[_DirProbe] = (),
+    context: str = "",
+) -> CdiEdits:
+    """Translate already-parsed CDI specs into SpecGenerator container edits.
+
+    The pure half of `resolve_device`: same merge rules, same refusals, same
+    error codes — the specs arrive as data instead of being read from disk, so
+    a caller that obtained them from another filesystem resolves identically.
+
+    `searched`, `probes` and `context` exist only for the error message: they
+    say which directories were looked at, what each of them actually held, and
+    where these specs came from. Diagnostics cannot travel with the specs
+    themselves (a caller that read them over the network has no local `Path`
+    to describe), so they are separate keyword arguments by necessity.
 
     Raises:
         ValidationFailedError: no spec / no device for a requested
@@ -229,8 +326,7 @@ def resolve_device(
             create-body field. Failing loudly is mandatory — a container
             that silently starts without its GPU is the bug this replaces.
     """
-    searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
-    specs, _warnings = load_specs(searched)
+    paths = tuple(DEFAULT_SPEC_DIRS if searched is None else searched)
     nodes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
     env: dict[str, str] = {}
@@ -238,28 +334,76 @@ def resolve_device(
         device_kind, name = _split_identifier(device_name(identifier), kind)
         spec = next((s for s in specs if s.get("kind") == device_kind), None)
         if spec is None:
+            report = "\n".join(f"  {probe.describe()}" for probe in probes)
             raise ValidationFailedError(
-                f"No CDI spec of kind {device_kind!r} found (searched "
-                f"{', '.join(searched)}). Generate the specs on the host "
-                "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), then "
-                "refresh the CLI shim so it forwards the host spec directories "
-                "and recreate the server container so it can read them: re-run "
-                "scripts/install-cli.sh, then outo-models update.",
-                code="space_gpu_cdi_unresolved",
+                _with_context(
+                    f"No CDI spec of kind {device_kind!r} found in "
+                    f"{', '.join(paths)}. What the resolver actually saw:\n"
+                    f"{report or '  (nothing — the spec directories hold no readable spec)'}\n"
+                    "Generate the specs on the host "
+                    "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), then "
+                    "refresh the CLI shim so it forwards the host spec directories "
+                    "and recreate the server container so it can read them: re-run "
+                    "scripts/install-cli.sh, then outo-models update.",
+                    context,
+                ),
+                code=_UNRESOLVED_CODE,
             )
         devices = spec.get("devices")
         device = devices.get(name) if isinstance(devices, dict) else None
         if not isinstance(device, dict):
             raise ValidationFailedError(
-                f"CDI device {name!r} of kind {device_kind!r} is not defined "
-                f"in the specs found in {', '.join(searched)}.",
-                code="space_gpu_cdi_unresolved",
+                _with_context(
+                    f"CDI device {name!r} of kind {device_kind!r} is not defined "
+                    f"in the specs found in {', '.join(paths)}.",
+                    context,
+                ),
+                code=_UNRESOLVED_CODE,
             )
-        _translate_edits(_global_edits(spec), device=name, nodes=nodes, mounts=mounts, env=env)
+        _translate_edits(
+            _global_edits(spec), device=name, nodes=nodes, mounts=mounts, env=env, context=context
+        )
         edits = device.get("containerEdits")
         if isinstance(edits, dict):
-            _translate_edits(edits, device=name, nodes=nodes, mounts=mounts, env=env)
+            _translate_edits(
+                edits, device=name, nodes=nodes, mounts=mounts, env=env, context=context
+            )
     return CdiEdits(device_nodes=tuple(nodes), mounts=tuple(mounts), env=env)
 
 
-__all__ = ["DEFAULT_SPEC_DIRS", "CdiEdits", "device_name", "load_specs", "resolve_device"]
+def resolve_device(
+    identifiers: Sequence[str],
+    *,
+    kind: str = _DEFAULT_KIND,
+    dirs: Sequence[str | Path] | None = None,
+) -> CdiEdits:
+    """Resolve CDI device identifiers into SpecGenerator-ready container edits.
+
+    `identifiers` are CDI device references — either bare names resolved
+    under `kind`, or fully-qualified `vendor.com/class=name`. Every device
+    contributes its spec-wide `containerEdits` plus its own
+    `containerEdits`; later devices win on conflicting env keys, matching
+    CDI's own "last edit applied" behaviour. The result is identical to
+    `resolve_edits(load_specs(dirs), ...)` — this is the local-filesystem
+    spelling of the same translation.
+
+    Raises:
+        ValidationFailedError: no spec / no device for a requested
+            identifier, or an edit that cannot be expressed as a podman
+            create-body field.
+    """
+    searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
+    probes = _probe_all(searched)
+    specs = [spec for probe in probes for spec in probe.specs]
+    return resolve_edits(specs, identifiers, kind=kind, searched=searched, probes=probes)
+
+
+__all__ = [
+    "DEFAULT_SPEC_DIRS",
+    "CdiEdits",
+    "device_name",
+    "load_specs",
+    "parse_specs",
+    "resolve_device",
+    "resolve_edits",
+]

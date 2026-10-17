@@ -18,7 +18,17 @@ from pathlib import Path
 import pytest
 
 from outo_models.exceptions import ValidationFailedError
-from outo_models.spaces.cdi import CdiEdits, load_specs, resolve_device
+from outo_models.spaces.cdi import CdiEdits, load_specs, parse_specs, resolve_device, resolve_edits
+
+_OTHER_SPEC = """\
+cdiVersion: 0.5.0
+kind: example.com/gpu
+devices:
+  "0":
+    containerEdits:
+      deviceNodes:
+        - path: /dev/example0
+"""
 
 _NVIDIA_SPEC = """\
 cdiVersion: 0.5.0
@@ -273,3 +283,167 @@ class TestResolveDeviceFailures:
         with pytest.raises(ValidationFailedError) as excinfo:
             resolve_device(["0"], dirs=[directory])
         assert "additionalGIDs" in str(excinfo.value)
+
+
+class TestParseSpecs:
+    """`parse_specs` is the IO-free half of the loader.
+
+    The host-read fallback in `runtime_manager` gets its specs as one
+    `---`-separated text stream instead of from local files, so parsing has
+    to be reachable without a filesystem.
+    """
+
+    def test_parses_every_document_of_a_separated_stream(self) -> None:
+        # Given: the concatenation a helper container produces — one `---`
+        # marker in front of each spec file it catted.
+        stream = f"---\n{_NVIDIA_SPEC}\n---\n{_OTHER_SPEC}"
+        # When
+        specs, warnings = parse_specs(stream)
+        # Then: document order is preserved — a device must never resolve
+        # against a spec that was concatenated after it.
+        assert warnings == []
+        assert [spec["kind"] for spec in specs] == ["nvidia.com/gpu", "example.com/gpu"]
+
+    def test_skips_an_empty_document_without_warning(self) -> None:
+        # An empty spec file on the host yields an empty document, which is
+        # "nothing to read", not "something unreadable".
+        specs, warnings = parse_specs(f"---\n---\n{_OTHER_SPEC}")
+        assert warnings == []
+        assert [spec["kind"] for spec in specs] == ["example.com/gpu"]
+
+    def test_warns_about_a_non_mapping_document(self) -> None:
+        specs, warnings = parse_specs(f"---\n{_NVIDIA_SPEC}\n---\n- just\n- a\n- list\n")
+        assert [spec["kind"] for spec in specs] == ["nvidia.com/gpu"]
+        assert len(warnings) == 1
+        assert "not a mapping" in warnings[0]
+
+    def test_unparseable_stream_keeps_every_valid_document(self) -> None:
+        specs, warnings = parse_specs("---\nkind: [unterminated\n")
+        assert specs == []
+        assert len(warnings) == 1
+
+
+class TestResolveEdits:
+    """`resolve_edits` is the same pure translation as `resolve_device`,
+    with the specs handed in instead of read from disk."""
+
+    def test_matches_the_filesystem_backed_translation(self, tmp_path: Path) -> None:
+        specs, _ = load_specs([_spec_dir(tmp_path)])
+        assert resolve_edits(specs, ["0"], searched=(str(tmp_path / "cdi"),)) == resolve_device(
+            ["0"], dirs=[tmp_path / "cdi"]
+        )
+
+    def test_identifier_forms_are_normalized(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        assert resolve_edits(specs, ["gpu-0"]) == resolve_edits(specs, ["nvidia.com/gpu=0"])
+
+    def test_qualified_kind_wins_over_the_default_kind(self) -> None:
+        specs, _ = parse_specs(f"---\n{_NVIDIA_SPEC}\n---\n{_OTHER_SPEC}")
+        edits = resolve_edits(specs, ["example.com/gpu=0"])
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/example0"]
+
+    def test_missing_kind_reports_the_searched_dirs(self, tmp_path: Path) -> None:
+        specs, _ = parse_specs(_OTHER_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(specs, ["0"], searched=("/etc/cdi",))
+        message = str(excinfo.value)
+        assert "nvidia.com/gpu" in message
+        assert "/etc/cdi" in message
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+
+    def test_context_is_appended_to_the_missing_device_error(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(
+                specs,
+                ["3"],
+                searched=("/etc/cdi",),
+                context="specs read from the host via a helper container",
+            )
+        message = str(excinfo.value)
+        assert "3" in message
+        assert "specs read from the host via a helper container" in message
+
+    def test_context_is_appended_to_an_unsupported_edit_error(self) -> None:
+        specs, _ = parse_specs(
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            '  "0":\n'
+            "    containerEdits:\n"
+            "      hooks:\n"
+            "        - hookName: createContainer\n"
+        )
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(specs, ["0"], context="specs read from the host via a helper container")
+        assert "hooks" in str(excinfo.value)
+        assert "helper container" in str(excinfo.value)
+
+    def test_context_is_omitted_by_default(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(specs, ["3"], searched=("/etc/cdi",))
+        assert "helper container" not in str(excinfo.value)
+
+
+class TestMissingSpecDiagnostics:
+    """The missing-spec error reports what the resolver actually observed.
+
+    "Specs missing on the host", "specs mounted but unparseable", "specs of
+    a foreign kind" and "the directory was never mounted" all used to raise
+    the same message, so an operator had no way to tell them apart from
+    inside the server container. Each line of the report is one dir.
+    """
+
+    def test_existing_directory_reports_the_kind_it_found(self, tmp_path: Path) -> None:
+        # Given: the dir is mounted and readable, but holds another kind.
+        directory = _spec_dir(
+            tmp_path,
+            '{"kind": "example.com/gpu", "devices": {"0": {}}}',
+            name="example.json",
+        )
+        # When
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["0"], dirs=[directory])
+        # Then
+        message = str(excinfo.value)
+        assert f"{directory}: present, 1 readable spec" in message
+        assert "kinds: example.com/gpu" in message
+
+    def test_absent_directory_is_reported_as_missing(self, tmp_path: Path) -> None:
+        # Given: one mounted dir and one that was never mounted at all.
+        absent = tmp_path / "not-mounted"
+        directory = _spec_dir(
+            tmp_path,
+            '{"kind": "example.com/gpu", "devices": {"0": {}}}',
+            name="example.json",
+        )
+        # When
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["0"], dirs=[directory, absent])
+        # Then
+        message = str(excinfo.value)
+        assert f"{absent}: missing" in message
+        assert f"{directory}: present," in message
+
+    def test_empty_directory_is_reported_as_zero_specs(self, tmp_path: Path) -> None:
+        # Given: a mounted but empty spec dir.
+        empty = tmp_path / "cdi"
+        empty.mkdir()
+        # When
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["0"], dirs=[empty])
+        # Then
+        assert f"{empty}: present, 0 readable specs, kinds: none" in str(excinfo.value)
+
+    def test_unparseable_specs_are_counted_separately_from_an_empty_dir(
+        self, tmp_path: Path
+    ) -> None:
+        # Given: the dir is mounted and holds a spec file the resolver could
+        # not parse — the case that reads exactly like an empty dir otherwise.
+        directory = _spec_dir(tmp_path, "kind: [unterminated\n", name="broken.yaml")
+        # When
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["0"], dirs=[directory])
+        # Then
+        expected = f"{directory}: present, 0 readable specs (1 unreadable), kinds: none"
+        assert expected in str(excinfo.value)
