@@ -269,6 +269,61 @@ class TestStartCommand:
         )
         assert start_mod._host_podman_socket() == "/good/podman.sock"
 
+    def test_argv_mounts_cdi_dirs_when_present(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # podman < 6 has no CDI in its REST API, so the SERVER resolves the
+        # host specs itself — which requires them mounted read-only.
+        from outo_models.cli import start as start_mod
+
+        etc_cdi = tmp_path / "etc-cdi"
+        run_cdi = tmp_path / "run-cdi"
+        etc_cdi.mkdir()
+        run_cdi.mkdir()
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+        monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi), str(run_cdi)))
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert f"{etc_cdi}:{etc_cdi}:ro" in argv
+        assert f"{run_cdi}:{run_cdi}:ro" in argv
+
+    def test_argv_mounts_only_the_cdi_dirs_that_exist(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        etc_cdi = tmp_path / "etc-cdi"
+        etc_cdi.mkdir()
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+        monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi), str(tmp_path / "absent")))
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert f"{etc_cdi}:{etc_cdi}:ro" in argv
+        assert not [a for a in argv if str(tmp_path / "absent") in a]
+
+    def test_argv_omits_cdi_dirs_when_absent(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from outo_models.cli import start as start_mod
+
+        monkeypatch.setattr(start_mod, "in_container", lambda: False)
+        monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(tmp_path / "a"), str(tmp_path / "b")))
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert not [a for a in argv if "cdi" in a]
+        assert argv[-1] == "ghcr.io/llaa33219/outo-models:dev"  # start still succeeds
+
+    def test_argv_omits_cdi_dirs_inside_cli_container(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Same rule as the socket: a container-local path must never be used
+        # as a `-v` SOURCE, the host podman would reject it.
+        from outo_models.cli import start as start_mod
+
+        etc_cdi = tmp_path / "etc-cdi"
+        etc_cdi.mkdir()
+        monkeypatch.setattr(start_mod, "in_container", lambda: True)
+        monkeypatch.setattr(start_mod, "_CDI_SPEC_DIRS", (str(etc_cdi),))
+        argv = self._run_start_capture_argv(runner, tmp_path, monkeypatch)
+        assert not [a for a in argv if "cdi" in a]
+
     def test_missing_config_refuses(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -93,6 +93,34 @@ def _host_podman_socket() -> str | None:
     return None
 
 
+# Where the host keeps its CDI spec files. podman < 6.0 has no CDI concept in
+# its REST API, so the server resolves the specs itself on the fallback GPU
+# path — which means it has to be able to read them.
+_CDI_SPEC_DIRS = ("/etc/cdi", "/var/run/cdi")
+
+
+def _host_cdi_dirs() -> tuple[str, ...]:
+    """Return the CDI spec directories to mount read-only, existing ones only.
+
+    An absent directory is omitted silently: `podman run -v` would otherwise
+    create it on the host as an empty root-owned directory. Like the socket
+    probe, nothing is probed from inside the CLI container — there every
+    visible path is the container's own mount point, and passing that as a
+    `-v` source makes the host podman fail on a nonexistent host path.
+    """
+    if in_container():
+        return ()
+    found: list[str] = []
+    for candidate in _CDI_SPEC_DIRS:
+        try:
+            is_dir = Path(candidate).is_dir()
+        except OSError:
+            continue
+        if is_dir:
+            found.append(candidate)
+    return tuple(found)
+
+
 def _config_path() -> Path:
     """Return the YAML config path, honoring `OUTO_CONFIG`."""
     override = os.environ.get("OUTO_CONFIG")
@@ -539,6 +567,8 @@ def start(
         "/etc/outo-models:/etc/outo-models:ro",
         # Read-only: the server only needs to talk to Podman, never write it.
         *(["-v", f"{podman_sock}:{_CONTAINER_PODMAN_SOCKET}:ro"] if podman_sock else []),
+        # Read-only: the server resolves CDI specs itself on podman < 6.0.
+        *[arg for directory in _host_cdi_dirs() for arg in ("-v", f"{directory}:{directory}:ro")],
         "--cap-add",
         "NET_BIND_SERVICE",
     ]
