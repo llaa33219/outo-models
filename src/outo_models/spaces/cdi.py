@@ -17,12 +17,15 @@ so podman applies the complete `containerEdits` itself — device nodes,
 mounts, env and OCI hooks alike. There is no server-side translation to
 maintain for delivery.
 
-What lives here is the *diagnosis*. When that create call fails, the server
-reads the same CDI spec files the podman CLI would read (`/etc/cdi`,
-`/var/run/cdi`), resolves the selected devices itself and reports what it
-found — which kinds exist, which devices a spec defines, what each searched
-directory actually held. The translation into the three SpecGenerator fields
-that exist on every version is kept for exactly that purpose:
+What lives here is the *lookup*, shared by two callers. The delivery asks it
+which device name to put on the wire: podman's registry matches names
+EXACTLY, so a `gpu-0`-shaped spec answers `unresolvable CDI devices
+nvidia.com/gpu=0` — `resolve_names` returns the name the spec itself
+defines. The diagnosis asks it the same question after a failed create and
+reports what it found — which kinds exist, which devices a spec defines, what
+each searched directory actually held. The translation into the three
+SpecGenerator fields that exist on every version is kept for exactly that
+purpose:
 
 * `devices` — OCI `specs.LinuxDevice` entries (`path`/`type`/`major`/…)
 * `mounts`  — OCI `specs.Mount` entries (`source`/`destination`/…)
@@ -40,8 +43,9 @@ The spec files live on the host, so `outo-models start` mounts both
 directories read-only into the server container (see `cli/start.py`).
 When that plumbing is missing or stale, `runtime_manager` reads the same
 directories from the host through a throwaway podman helper container and
-feeds the result to `parse_specs` + `resolve_edits` — the IO-free half of
-this module, so the diagnosis has exactly one implementation.
+feeds the result to `parse_specs` + `resolve_names` / `resolve_edits` — the
+IO-free half of this module, so the delivery and the diagnosis have exactly
+one implementation.
 
 # allow: SIZE_OK — the whole file is one cohesive unit: parse CDI specs
 # (from files or from a text stream) and resolve a device selection against
@@ -123,7 +127,7 @@ class CdiEdits:
 
 
 @dataclass(frozen=True, slots=True)
-class _DirProbe:
+class DirProbe:
     """What the resolver observed inside one searched spec directory.
 
     The searched dirs are mount *targets* inside the server container, so
@@ -151,16 +155,16 @@ class _DirProbe:
         )
 
 
-def _probe_dir(directory: str) -> _DirProbe:
+def _probe_dir(directory: str) -> DirProbe:
     """Observe one directory: its state, the specs in it, and its warnings."""
     try:
         entries = sorted(Path(directory).iterdir())
     except FileNotFoundError:
-        return _DirProbe(directory, "missing", (), ())
+        return DirProbe(directory, "missing", (), ())
     except NotADirectoryError:
-        return _DirProbe(directory, "not a directory", (), ())
+        return DirProbe(directory, "not a directory", (), ())
     except OSError:
-        return _DirProbe(directory, "unreadable", (), ())
+        return DirProbe(directory, "unreadable", (), ())
     specs: list[dict[str, Any]] = []
     warnings: list[str] = []
     for path in (entry for entry in entries if entry.suffix in _SPEC_SUFFIXES):
@@ -174,11 +178,28 @@ def _probe_dir(directory: str) -> _DirProbe:
             warnings.append(f"Ignored CDI spec {path}: top-level is not a mapping")
             continue
         specs.append(payload)
-    return _DirProbe(directory, "present", tuple(specs), tuple(warnings))
+    return DirProbe(directory, "present", tuple(specs), tuple(warnings))
 
 
-def _probe_all(dirs: tuple[str, ...]) -> tuple[_DirProbe, ...]:
+def _probe_all(dirs: tuple[str, ...]) -> tuple[DirProbe, ...]:
     return tuple(_probe_dir(directory) for directory in dirs)
+
+
+def probe_specs(
+    dirs: tuple[str | Path, ...] | list[str | Path] | None = None,
+) -> tuple[list[dict[str, Any]], list[str], tuple[DirProbe, ...]]:
+    """`load_specs` plus the per-directory report the errors render.
+
+    A caller that resolves the specs itself (the delivery does, to learn the
+    names podman must be given) still owes the operator the same "what did
+    the resolver actually see" lines a failure raises, so the probes travel
+    with the specs instead of being re-derived by the resolver.
+    """
+    searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
+    probes = _probe_all(searched)
+    specs = [spec for probe in probes for spec in probe.specs]
+    warnings = [warning for probe in probes for warning in probe.warnings]
+    return specs, warnings, probes
 
 
 def load_specs(
@@ -190,10 +211,7 @@ def load_specs(
     or parsed. A broken third-party spec file must not break GPU injection
     for the specs that *are* readable, so parse errors are collected.
     """
-    searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
-    probes = _probe_all(searched)
-    specs = [spec for probe in probes for spec in probe.specs]
-    warnings = [warning for probe in probes for warning in probe.warnings]
+    specs, warnings, _ = probe_specs(dirs)
     return specs, warnings
 
 
@@ -347,22 +365,115 @@ def _device_index(spec: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return index
 
 
-def _find_device(index: Mapping[str, dict[str, Any]], name: str) -> dict[str, Any] | None:
-    """Look `name` up in `index`, falling back to a normalized alias match.
+def _find_device(index: Mapping[str, dict[str, Any]], name: str) -> str | None:
+    """Return the spec's own device name for `name`, or None.
+
+    The stored spelling comes back, not the entry: podman's CDI registry
+    matches device names exactly, so the delivery needs the name the spec
+    defines while the caller only knows the assignment's spelling.
 
     `device_name` runs on both sides, so a spec that names its device
     `gpu-0` answers the assignment `0` and the other way round. An exact
     match always wins: a spec defining both `0` and `gpu-0` hands each
     query the entry it literally named.
     """
-    exact = index.get(name)
-    if exact is not None:
-        return exact
+    if name in index:
+        return name
     alias = device_name(name)
-    return next(
-        (device for stored, device in index.items() if device_name(stored) == alias),
-        None,
+    return next((stored for stored in index if device_name(stored) == alias), None)
+
+
+@dataclass(frozen=True, slots=True)
+class _Where:
+    """The error message's only extra input: where the specs came from.
+
+    Diagnostics cannot travel with the specs themselves (a caller that read
+    them over the network has no local `Path` to describe), so the search
+    sites and the source note are carried next to them.
+    """
+
+    searched: tuple[str, ...] = DEFAULT_SPEC_DIRS
+    probes: tuple[DirProbe, ...] = ()
+    context: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _Match:
+    """One resolved device: its spec, the spec's own name, and its entry."""
+
+    spec: Mapping[str, Any]
+    name: str
+    device: dict[str, Any]
+
+
+def _no_spec_error(kind: str, where: _Where) -> ValidationFailedError:
+    """Build the "no spec of this kind" error, with the per-dir report."""
+    report = "\n".join(f"  {probe.describe()}" for probe in where.probes)
+    return ValidationFailedError(
+        _with_context(
+            f"No CDI spec of kind {kind!r} found in "
+            f"{', '.join(where.searched)}. What the resolver actually saw:\n"
+            f"{report or '  (nothing — the spec directories hold no readable spec)'}\n"
+            "Generate the specs on the host "
+            "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), then "
+            "refresh the CLI shim so it forwards the host spec directories "
+            "and recreate the server container so it can read them: re-run "
+            "scripts/install-cli.sh, then outo-models update.",
+            where.context,
+        ),
+        code=_UNRESOLVED_CODE,
     )
+
+
+def _undefined_device_error(
+    name: str,
+    kind: str,
+    index: Mapping[str, dict[str, Any]],
+    where: _Where,
+) -> ValidationFailedError:
+    """Build the "not defined" error, listing what the spec does define."""
+    return ValidationFailedError(
+        _with_context(
+            f"CDI device {name!r} of kind {kind!r} is not defined "
+            f"in the specs found in {', '.join(where.searched)} — defined devices: "
+            f"{_report_devices(index)}.",
+            where.context,
+        ),
+        code=_UNRESOLVED_CODE,
+    )
+
+
+def _match_device(
+    specs: Sequence[Mapping[str, Any]],
+    identifier: str,
+    *,
+    kind: str = DEFAULT_KIND,
+    where: _Where | None = None,
+    indexes: dict[str, dict[str, dict[str, Any]]] | None = None,
+) -> _Match:
+    """Resolve one identifier against already-parsed specs.
+
+    The single lookup both public resolvers go through, so the delivery
+    (`resolve_names`) and the diagnosis (`resolve_edits`) can never disagree
+    about which device an assignment means.
+
+    `indexes` caches the per-kind device index: a malformed entry is a defect
+    of the spec, not of the assignment, so it must not be reported once per
+    device.
+    """
+    site = where if where is not None else _Where()
+    device_kind, name = _split_identifier(device_name(identifier), kind)
+    spec = next((s for s in specs if s.get("kind") == device_kind), None)
+    if spec is None:
+        raise _no_spec_error(device_kind, site)
+    cache = indexes if indexes is not None else {}
+    if device_kind not in cache:
+        cache[device_kind] = _device_index(spec)
+    index = cache[device_kind]
+    stored = _find_device(index, name)
+    if stored is None:
+        raise _undefined_device_error(name, device_kind, index, site)
+    return _Match(spec=spec, name=stored, device=index[stored])
 
 
 def _report_devices(index: Mapping[str, dict[str, Any]]) -> str:
@@ -408,7 +519,7 @@ def resolve_edits(
     *,
     kind: str = DEFAULT_KIND,
     searched: Sequence[str] | None = None,
-    probes: Sequence[_DirProbe] = (),
+    probes: Sequence[DirProbe] = (),
     context: str = "",
 ) -> CdiEdits:
     """Translate already-parsed CDI specs into SpecGenerator container edits.
@@ -429,55 +540,63 @@ def resolve_edits(
             Failing loudly is mandatory — a container that silently starts
             without its GPU is the bug this replaces.
     """
-    paths = tuple(DEFAULT_SPEC_DIRS if searched is None else searched)
+    where = _Where(
+        tuple(DEFAULT_SPEC_DIRS if searched is None else searched), tuple(probes), context
+    )
     nodes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
     env: dict[str, str] = {}
     indexes: dict[str, dict[str, dict[str, Any]]] = {}
     for identifier in identifiers:
-        device_kind, name = _split_identifier(device_name(identifier), kind)
-        spec = next((s for s in specs if s.get("kind") == device_kind), None)
-        if spec is None:
-            report = "\n".join(f"  {probe.describe()}" for probe in probes)
-            raise ValidationFailedError(
-                _with_context(
-                    f"No CDI spec of kind {device_kind!r} found in "
-                    f"{', '.join(paths)}. What the resolver actually saw:\n"
-                    f"{report or '  (nothing — the spec directories hold no readable spec)'}\n"
-                    "Generate the specs on the host "
-                    "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), then "
-                    "refresh the CLI shim so it forwards the host spec directories "
-                    "and recreate the server container so it can read them: re-run "
-                    "scripts/install-cli.sh, then outo-models update.",
-                    context,
-                ),
-                code=_UNRESOLVED_CODE,
-            )
-        # Indexed once per kind: a malformed entry is a defect of the spec,
-        # not of the assignment, so it must not be reported once per device.
-        if device_kind not in indexes:
-            indexes[device_kind] = _device_index(spec)
-        index = indexes[device_kind]
-        device = _find_device(index, name)
-        if device is None:
-            raise ValidationFailedError(
-                _with_context(
-                    f"CDI device {name!r} of kind {device_kind!r} is not defined "
-                    f"in the specs found in {', '.join(paths)} — defined devices: "
-                    f"{_report_devices(index)}.",
-                    context,
-                ),
-                code=_UNRESOLVED_CODE,
-            )
+        match = _match_device(specs, identifier, kind=kind, where=where, indexes=indexes)
         _translate_edits(
-            _global_edits(spec), device=name, nodes=nodes, mounts=mounts, env=env, context=context
+            _global_edits(match.spec),
+            device=match.name,
+            nodes=nodes,
+            mounts=mounts,
+            env=env,
+            context=context,
         )
-        edits = device.get("containerEdits")
+        edits = match.device.get("containerEdits")
         if isinstance(edits, dict):
             _translate_edits(
-                edits, device=name, nodes=nodes, mounts=mounts, env=env, context=context
+                edits, device=match.name, nodes=nodes, mounts=mounts, env=env, context=context
             )
     return CdiEdits(device_nodes=tuple(nodes), mounts=tuple(mounts), env=env)
+
+
+def resolve_names(
+    specs: Sequence[Mapping[str, Any]],
+    identifiers: Sequence[str],
+    *,
+    kind: str = DEFAULT_KIND,
+    searched: Sequence[str] | None = None,
+    probes: Sequence[DirProbe] = (),
+    context: str = "",
+) -> tuple[str, ...]:
+    """Return each identifier's device name **as the spec spells it**.
+
+    Podman's CDI registry matches names exactly: a host whose spec defines
+    `gpu-0` answers `unresolvable CDI devices nvidia.com/gpu=0`. So the name
+    that goes on the wire has to be the one the spec defines, whatever
+    spelling the assignment used — the lookup itself is the same normalized
+    alias match `resolve_edits` applies, only its result is reported back.
+
+    Raises:
+        ValidationFailedError: no spec / no device for a requested
+            identifier, with the same diagnosis `resolve_edits` raises.
+            Failing before the create is the point: podman's own
+            `unresolvable CDI devices` names neither the kind, nor the
+            defined devices, nor which spec directories were searched.
+    """
+    where = _Where(
+        tuple(DEFAULT_SPEC_DIRS if searched is None else searched), tuple(probes), context
+    )
+    indexes: dict[str, dict[str, dict[str, Any]]] = {}
+    return tuple(
+        _match_device(specs, identifier, kind=kind, where=where, indexes=indexes).name
+        for identifier in identifiers
+    )
 
 
 def resolve_device(
@@ -510,9 +629,12 @@ __all__ = [
     "DEFAULT_KIND",
     "DEFAULT_SPEC_DIRS",
     "CdiEdits",
+    "DirProbe",
     "device_name",
     "load_specs",
     "parse_specs",
+    "probe_specs",
     "resolve_device",
     "resolve_edits",
+    "resolve_names",
 ]

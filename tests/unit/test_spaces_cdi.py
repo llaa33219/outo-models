@@ -18,7 +18,14 @@ from pathlib import Path
 import pytest
 
 from outo_models.exceptions import ValidationFailedError
-from outo_models.spaces.cdi import CdiEdits, load_specs, parse_specs, resolve_device, resolve_edits
+from outo_models.spaces.cdi import (
+    CdiEdits,
+    load_specs,
+    parse_specs,
+    resolve_device,
+    resolve_edits,
+    resolve_names,
+)
 
 _OTHER_SPEC = """\
 cdiVersion: 0.5.0
@@ -118,6 +125,43 @@ devices:
           type: c
           major: 195
           minor: 1
+"""
+
+
+#: A `gpu-0`-shaped spec: podman accepts `nvidia.com/gpu=gpu-0` and nothing
+#: else, whatever spelling the assignment used.
+_ALIASED_DEVICE_SPEC = """\
+kind: nvidia.com/gpu
+devices:
+  - name: "gpu-0"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+"""
+
+#: Two devices whose names differ only by the alias rule's `gpu-` prefix.
+_TWO_ALIASED_DEVICES_SPEC = """\
+kind: nvidia.com/gpu
+devices:
+  - name: "gpu-0"
+  - name: "0"
+"""
+
+#: Two `gpu-`-indexed devices, as a multi-GPU assignment spells them.
+_TWO_GPU_INDEXED_DEVICES_SPEC = """\
+kind: nvidia.com/gpu
+devices:
+  - name: "gpu-0"
+  - name: "gpu-1"
+"""
+
+_UUID_DEVICE_SPEC = """\
+kind: nvidia.com/gpu
+devices:
+  - name: "GPU-1a2b3c4d-0000-0000-0000-000000000000"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
 """
 
 
@@ -666,3 +710,75 @@ class TestMissingSpecDiagnostics:
         # Then
         expected = f"{directory}: present, 0 readable specs (1 unreadable), kinds: none"
         assert expected in str(excinfo.value)
+
+
+class TestResolveNames:
+    """`resolve_names` answers the delivery question: what does podman want?
+
+    Podman's CDI registry matches device names EXACTLY — `nvidia.com/gpu=0` is
+    unresolvable on a host whose spec names its device `gpu-0`. The create
+    body therefore has to carry the name the spec itself defines, which is a
+    different question from "does this assignment mean that device?".
+    """
+
+    def test_exact_device_name_is_returned_verbatim(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        assert resolve_names(specs, ["0"]) == ("0",)
+
+    @pytest.mark.parametrize("identifier", ["0", "gpu-0", "nvidia.com/gpu=gpu-0"])
+    def test_alias_match_returns_the_spec_spelling(self, identifier: str) -> None:
+        # Given: a `gpu-0`-shaped spec — the live GB10 case. A bare index, the
+        # admin-UI spelling and a qualified form all mean the same device.
+        specs, _ = parse_specs(_ALIASED_DEVICE_SPEC)
+        # When
+        names = resolve_names(specs, [identifier])
+        # Then: the spec's own name, never the query's spelling.
+        assert names == ("gpu-0",)
+
+    def test_bare_index_spec_answers_a_gpu_prefixed_query(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        assert resolve_names(specs, ["gpu-0"]) == ("0",)
+
+    def test_uuid_device_passes_through_unchanged(self) -> None:
+        specs, _ = parse_specs(_UUID_DEVICE_SPEC)
+        uuid = "GPU-1a2b3c4d-0000-0000-0000-000000000000"
+        assert resolve_names(specs, [uuid]) == (uuid,)
+
+    def test_all_device_keeps_its_name(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        assert resolve_names(specs, ["all"]) == ("all",)
+
+    def test_every_assigned_device_keeps_its_own_spec_name(self) -> None:
+        specs, _ = parse_specs(_TWO_GPU_INDEXED_DEVICES_SPEC)
+        assert resolve_names(specs, ["gpu-0", "gpu-1"]) == ("gpu-0", "gpu-1")
+
+    def test_exact_name_wins_over_a_normalized_alias(self) -> None:
+        # Both names are defined: "0" must resolve to the entry literally
+        # called "0", because that is the one podman will accept.
+        specs, _ = parse_specs(_TWO_ALIASED_DEVICES_SPEC)
+        assert resolve_names(specs, ["0"]) == ("0",)
+
+    def test_qualified_identifier_keeps_its_own_kind(self) -> None:
+        specs, _ = parse_specs(f"---\n{_NVIDIA_SPEC}\n---\n{_OTHER_SPEC}")
+        assert resolve_names(specs, ["example.com/gpu=0"]) == ("0",)
+
+    def test_missing_device_names_the_defined_ones(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_names(specs, ["GPU-nonexistent"], searched=("/etc/cdi",))
+        message = str(excinfo.value)
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "defined devices: 0, all" in message
+
+    def test_missing_kind_reports_the_searched_dirs(self) -> None:
+        specs, _ = parse_specs(_OTHER_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_names(specs, ["0"], searched=("/etc/cdi",))
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "What the resolver actually saw" in str(excinfo.value)
+
+    def test_context_is_appended_to_the_missing_device_error(self) -> None:
+        specs, _ = parse_specs(_NVIDIA_SPEC)
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_names(specs, ["3"], context="specs read from the host via a helper container")
+        assert "specs read from the host via a helper container" in str(excinfo.value)
