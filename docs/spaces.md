@@ -301,7 +301,17 @@ container. They do, however, still resolve CDI — the create body's
 | >= 6.0 | `gpus: ["0", …]` — resolved by Podman itself |
 | < 6.0, or version undetectable | `devices: [{"path": "nvidia.com/gpu=0"}, …]` — CDI qualified names, which Podman resolves itself |
 
-Both rows end in Podman doing the resolution. On 4.x / 5.x the qualified
+Both rows end in Podman doing the resolution, and both carry the **exact
+device names the host's specs define**. Podman matches those names
+literally — on a host whose spec names its device `gpu-0`,
+`nvidia.com/gpu=0` is answered with `unresolvable CDI devices`. The server
+therefore reads the specs and canonicalizes the assignment against them, so
+`gpu-0`, `0`, `nvidia.com/gpu=gpu-0` and `GPU-<uuid>` all reach Podman as
+whatever the spec calls that device. When no spec can be read at all the
+assignment's normalized name goes out unchanged and Podman stays the
+authority.
+
+On 4.x / 5.x the qualified
 device names reach Podman's own CDI path — `specgen.ExtractCDIDevices` →
 `libpod.WithCDI` → `containers/common`'s `registry.InjectDevices` — which
 reads the host specs and applies the **complete** `containerEdits`: device
@@ -320,12 +330,16 @@ container themselves must mount them:
 -v /etc/cdi:/etc/cdi:ro -v /var/run/cdi:/var/run/cdi:ro
 ```
 
-When Podman refuses the create, the server diagnoses it: it resolves the
-same assignment against the specs itself and, if it cannot either, raises
-`OutoError(code="space_gpu_cdi_unresolved")` naming the device, the CDI kind
-and what Podman said — never a silently GPU-less container, and never a bare
-Podman message. If the resolver *does* find the device, Podman's own error is
-re-raised unchanged, because at that point it is the truth. The
+Before the create, the assignment is canonicalized against those specs; if
+the specs cannot resolve it, the server raises
+`OutoError(code="space_gpu_cdi_unresolved")` right there — naming the device,
+the CDI kind and the defined devices — instead of sending Podman a create it
+will refuse with a bare `unresolvable CDI devices`. When Podman refuses the
+create for another reason, the server diagnoses it the same way: it resolves
+the same assignment against the specs itself and, if it cannot either,
+appends what Podman said — never a silently GPU-less container, and never a
+bare Podman message. If the resolver *does* find the device, Podman's own
+error is re-raised unchanged, because at that point it is the truth. The
 "no spec of this kind" variant additionally reports, one line per searched
 directory, what the resolver actually observed (`present, N readable specs,
 kinds: …` / `missing` / `unreadable`), so "the specs were never mounted" is
@@ -341,20 +355,21 @@ mount was dropped on recreate, or a deployment never mounted them — the
 runtime recovers on its own:
 
 1. It reads the spec directories inside the server container.
-2. If that finds nothing, it reads the **same host directories** through the
-   Podman socket: a throwaway container named `outo-cdi-probe-<random>` of
-   the Space's own already-built image gets `/etc/cdi` and `/var/run/cdi`
-   bind mounted read-only, cats every `.yaml` / `.yml` / `.json` spec out, and
-   the specs are resolved from that output. The helper is removed afterwards.
+2. If that finds nothing usable, it reads the **same host directories**
+   through the Podman socket: a throwaway container named
+   `outo-cdi-probe-<random>` of the Space's own already-built image gets
+   `/etc/cdi` and `/var/run/cdi` bind mounted read-only, cats every `.yaml` /
+   `.yml` / `.json` spec out, and the specs are read from that output. The
+   helper is removed afterwards.
 3. If neither source resolves the device, the
    `space_gpu_cdi_unresolved` error is raised with both attempts named and
    Podman's refusal appended.
 
-Nothing has to be mounted for this to work, and the healthy case pays nothing:
-Podman resolving the names means the whole ladder — step 1 included — runs
-only after Podman refused the create, and the helper only after the local read
-missed. The ladder is podman-<6-only; from Podman 6.0 on the `gpus` field
-makes CDI Podman's own job and a refusal needs no diagnosis.
+Nothing has to be mounted for this to work, and the healthy case pays
+nothing: step 1 is a plain file read, and the helper — a real Podman
+round-trip plus a container lifecycle — runs only after the local read found
+no usable spec. The ladder runs on every Podman version, because both
+version paths need the spec's own device names.
 
 ## Clone / push
 

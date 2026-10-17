@@ -4,6 +4,20 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.17 — the CDI names the specs define
+
+### Fixed
+
+- **The GPU delivery now sends the exact device names the CDI specs
+  define.** Podman's registry matches names exactly, while our lookup
+  accepted `gpu-0` / `0` aliases — so a `gpu-0`-shaped spec satisfied
+  our resolver but podman refused `nvidia.com/gpu=0` with "unresolvable
+  CDI devices". The delivery now looks up the spec's own `name` and
+  sends `nvidia.com/gpu=<that>` (and `gpus: [<that>]` on podman >= 6),
+  so every spelling (`0`, `gpu-0`, `GPU-<uuid>`, `all`) resolves. An
+  assignment no spec defines fails before the create with the
+  resolver's report of the defined names.
+
 ## v0.6.16 — podman resolves the CDI names
 
 ### Fixed
