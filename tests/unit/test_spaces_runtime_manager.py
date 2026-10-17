@@ -70,19 +70,28 @@ def _create_ok_handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={})
 
 
-def _create_payload(captured: list[httpx.Request]) -> dict[str, Any]:
-    """Return the decoded JSON body of the Space's `/containers/create` call.
+def _space_create_calls(captured: list[httpx.Request]) -> list[dict[str, Any]]:
+    """Return the decoded body of every Space container create call.
 
     Keyed on the requested container name, not on the endpoint: the host-CDI
-    read fallback creates its own throwaway container through the same path.
+    read ladder creates its own throwaway container through the same path.
     """
+    bodies: list[dict[str, Any]] = []
     for request in captured:
         if not str(request.url).endswith("/containers/create"):
             continue
         payload: dict[str, Any] = json.loads(request.content)
         if str(payload.get("name", "")).startswith("outo-space-"):
-            return payload
-    raise AssertionError("no Space container create call was made")
+            bodies.append(payload)
+    return bodies
+
+
+def _create_payload(captured: list[httpx.Request]) -> dict[str, Any]:
+    """Return the body of the Space's `/containers/create` call."""
+    calls = _space_create_calls(captured)
+    if not calls:
+        raise AssertionError("no Space container create call was made")
+    return calls[0]
 
 
 def _probe_calls(captured: list[httpx.Request]) -> list[str]:
@@ -518,15 +527,41 @@ devices:
 
 
 @pytest.fixture
-def cdi_spec_dir(tmp_path, monkeypatch) -> Path:
-    """Point the CDI resolver at a synthetic nvidia spec on disk."""
+def write_specs(tmp_path, monkeypatch):
+    """Write a CDI spec into a fresh dir and point the resolver at it."""
     from outo_models.spaces import cdi
 
-    directory = tmp_path / "cdi"
-    directory.mkdir()
-    (directory / "nvidia.yaml").write_text(_CDI_SPEC, encoding="utf-8")
-    monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(directory),))
-    return directory
+    def write(text: str) -> Path:
+        directory = tmp_path / "cdi"
+        directory.mkdir(exist_ok=True)
+        (directory / "nvidia.yaml").write_text(text, encoding="utf-8")
+        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(directory),))
+        return directory
+
+    return write
+
+
+@pytest.fixture
+def cdi_spec_dir(write_specs) -> Path:
+    """Point the CDI resolver at a synthetic nvidia spec on disk."""
+    return write_specs(_CDI_SPEC)
+
+
+#: The live GB10 shape: the spec calls its device `gpu-0`, which podman
+#: matches literally — `nvidia.com/gpu=0` is `unresolvable` to it.
+_GPU_ALIASED_SPEC = """\
+cdiVersion: 0.5.0
+kind: nvidia.com/gpu
+devices:
+  - name: "gpu-0"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+  - name: "GPU-abc"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia1
+"""
 
 
 class TestGpuVersionGate:
@@ -601,7 +636,11 @@ class TestGpuVersionGate:
         assert "gpus" not in payload
         assert payload["devices"] == [{"path": "nvidia.com/gpu=0"}]
 
-    async def test_every_assigned_gpu_is_named(self, settings, captured, cdi_spec_dir) -> None:
+    async def test_every_assigned_gpu_is_named(self, settings, captured, write_specs) -> None:
+        write_specs(
+            _CDI_SPEC
+            + "  GPU-abc:\n    containerEdits:\n      deviceNodes:\n        - path: /dev/nvidia1\n"
+        )
         client = _client_for(_version_handler("4.9.3"), captured)
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("gpu-0", "GPU-abc"))
@@ -614,20 +653,20 @@ class TestGpuVersionGate:
     async def test_successful_start_never_runs_the_spec_ladder(
         self, settings, captured, cdi_spec_dir
     ) -> None:
-        # The resolver costs a podman round-trip; on the happy path podman
-        # resolved the names itself, so the local read and the helper
-        # container must both stay untouched.
+        # The local read is a file read, not a podman round-trip: the helper
+        # container must stay untouched even though the names come from the
+        # specs now.
         client = _client_for(_version_handler("4.9.3"), captured)
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("gpu-0",))
         await client.aclose()
         assert _probe_calls(captured) == []
 
-    async def test_modern_podman_never_touches_the_helper(
-        self, settings, captured, no_local_specs
+    async def test_modern_podman_with_local_specs_never_touches_the_helper(
+        self, settings, captured, cdi_spec_dir
     ) -> None:
-        # `gpus` needs no names and no translation, so the ladder — local
-        # read included — must not run at all.
+        # The `gpus` names have to be the spec's own spelling on 6.x too, but
+        # the local read answers that without a single podman round-trip.
         client = _client_for(_version_handler("6.0.0"), captured)
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("gpu-0",))
@@ -730,8 +769,10 @@ class TestGpuCreateFailureDiagnosis:
     async def test_undefined_device_reports_the_defined_ones(
         self, settings, captured, no_local_specs
     ) -> None:
-        # Given: the helper reads the specs, but the assigned id is not one
-        # of them — the message must list what IS defined, next to podman's.
+        # Given: the helper reads the specs, but the assigned id is not one of
+        # them. The resolver answers before the create, so its own diagnosis —
+        # what IS defined, and that the host read is where it came from — is
+        # what the operator gets, instead of podman's bare refusal text.
         client = _client_for(
             _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode())), captured
         )
@@ -744,7 +785,7 @@ class TestGpuCreateFailureDiagnosis:
         assert "defined devices: 0" in message
         assert "helper container" in message
         assert "Both resolution paths were attempted" in message
-        assert _PODMAN_REFUSAL_TEXT in message
+        assert _space_create_calls(captured) == []
 
     async def test_resolvable_device_keeps_the_podman_error(
         self, settings, captured, no_local_specs
@@ -864,6 +905,81 @@ class TestGpuCreateFailureDiagnosis:
         assert "Podman refused the container" in message
 
 
+class TestSpecDeviceNamesOnTheWire:
+    """Podman matches CDI device names EXACTLY.
+
+    The live failure: `devices: [{"path": "nvidia.com/gpu=0"}]` was accepted by
+    podman and answered `setting up CDI devices: unresolvable CDI devices
+    nvidia.com/gpu=0`, because the host's spec names its device `gpu-0` and
+    our resolver's `gpu-0`↔`0` alias match is not podman's. The create body
+    must therefore carry the name the spec itself defines.
+    """
+
+    async def test_old_podman_gets_the_spec_device_name(
+        self, settings, captured, write_specs
+    ) -> None:
+        write_specs(_GPU_ALIASED_SPEC)
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert _create_payload(captured)["devices"] == [{"path": "nvidia.com/gpu=gpu-0"}]
+
+    async def test_modern_podman_gets_the_spec_device_name(
+        self, settings, captured, write_specs
+    ) -> None:
+        write_specs(_GPU_ALIASED_SPEC)
+        client = _client_for(_version_handler("6.0.0"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert _create_payload(captured)["gpus"] == ["gpu-0"]
+
+    async def test_every_assignment_keeps_its_own_spec_name(
+        self, settings, captured, write_specs
+    ) -> None:
+        write_specs(_GPU_ALIASED_SPEC)
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("0", "GPU-abc"))
+        await client.aclose()
+        assert _create_payload(captured)["devices"] == [
+            {"path": "nvidia.com/gpu=gpu-0"},
+            {"path": "nvidia.com/gpu=GPU-abc"},
+        ]
+
+    async def test_unresolvable_assignment_never_reaches_the_create(
+        self, settings, captured, write_specs
+    ) -> None:
+        write_specs(_GPU_ALIASED_SPEC)
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-7",))
+        await client.aclose()
+        message = str(excinfo.value)
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "defined devices: GPU-abc, gpu-0" in message
+        assert _space_create_calls(captured) == []
+
+    async def test_unreadable_specs_fall_back_to_the_normalized_names(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: no spec is readable at all, neither locally nor through the
+        # helper. Podman is then the authority, so the create proceeds with
+        # the assignment's own spelling and its refusal carries the diagnosis.
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=b""), refusal=_PODMAN_REFUSAL), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert _create_payload(captured)["devices"] == [{"path": "nvidia.com/gpu=0"}]
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "What the resolver actually saw" in str(excinfo.value)
+
+
 class TestHostCdiReadFallback:
     """The server container does not always see the host's CDI specs.
 
@@ -889,16 +1005,18 @@ class TestHostCdiReadFallback:
             await manager.start("alice", "demo", gpu_ids=("gpu-0",))
         await client.aclose()
 
-        # Then: the create body still carried only the qualified name, and
-        # the helper ran exactly create → start → inspect → logs → remove.
+        # Then: the create body carried the name the host's specs define, and
+        # the helper ran its full create → start → inspect → logs → remove
+        # cycle before that create — it is what the delivery read.
         assert _create_payload(captured)["devices"] == [{"path": "nvidia.com/gpu=0"}]
-        assert _probe_calls(captured) == [
+        assert _probe_calls(captured)[:5] == [
             "POST create",
             "POST start",
             "GET json",
             "GET logs",
             "DELETE container",
         ]
+        assert _probe_calls(captured)[-1] == "DELETE container"
 
     async def test_helper_create_body_binds_the_host_dirs_read_only(
         self, settings, captured, tmp_path, monkeypatch

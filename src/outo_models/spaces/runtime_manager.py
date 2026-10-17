@@ -62,7 +62,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, cast
 
@@ -88,6 +88,9 @@ _LABEL_CDI_PROBE = "outo.cdi-probe"
 _CDI_PROBE_TIMEOUT = 10.0
 _CDI_PROBE_POLL_INTERVAL = 0.1
 _CDI_HOST_CONTEXT = "specs read from the host via a helper container"
+_CDI_SOURCE_LOCAL = "local"
+_CDI_SOURCE_HOST = "host"
+_CDI_SOURCE_NONE = "none"
 _CDI_BOTH_ATTEMPTS = (
     "Both resolution paths were attempted: the server container's own "
     "filesystem first, then the same directories read on the host through a "
@@ -96,6 +99,16 @@ _CDI_BOTH_ATTEMPTS = (
     "GPU is assigned to the user, and check that the assigned GPU id exists "
     "in those specs."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _CdiSpecs:
+    """What one run of the spec ladder found, and which step found it."""
+
+    specs: list[dict[str, Any]]
+    probes: tuple[cdi.DirProbe, ...]
+    context: str
+    source: str
 
 
 def container_name(owner: str, name: str) -> str:
@@ -167,6 +180,18 @@ def _cdi_probe_script(dirs: Sequence[str]) -> str:
         for directory in dirs
         for suffix in (".yaml", ".yml", ".json")
     )
+
+
+def _defines_a_kind(specs: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether these specs could resolve any device at all.
+
+    A document without a `kind` cannot match an identifier, so the ladder's
+    question is whether any usable spec was read — not whether the bytes were
+    non-empty. A helper container that logs `{}` on some odd path yields a
+    document, and treating that as "specs found" would turn podman's own
+    resolution into a resolver error about a spec that does not exist.
+    """
+    return any(spec.get("kind") for spec in specs)
 
 
 def _split_log_frames(raw: bytes) -> list[bytes]:
@@ -526,29 +551,78 @@ class SpaceRuntimeManager:
         identifiers: Sequence[str],
         image: str,
     ) -> cdi.CdiEdits:
-        """Diagnose GPU identifiers through the local specs, then the host's.
+        """Diagnose GPU identifiers against whatever specs the ladder found.
 
         Only the failure path calls this: podman resolves the create body's
         qualified device names itself, so a successful start never needs it.
+        When the specs came from the host read — or from nowhere — the error
+        names both attempts, so the remaining causes (no specs on the host at
+        all, an unknown GPU id) stay distinguishable.
+        """
+        found = await self._cdi_specs(image)
+        try:
+            return cdi.resolve_edits(
+                found.specs, identifiers, probes=found.probes, context=found.context
+            )
+        except ValidationFailedError as exc:
+            if found.source == _CDI_SOURCE_LOCAL:
+                raise
+            raise self._both_attempts_failed(exc) from exc
+
+    async def _cdi_specs(self, image: str) -> _CdiSpecs:
+        """Run the spec ladder: the server container's dirs, then the host's.
 
         Step 1 reads the spec directories inside the server container — the
         fast path, free of any extra podman traffic. Only when that finds
-        nothing does step 2 read the same host paths through a throwaway
-        helper container. When both fail, the error names both attempts so
-        the remaining causes (no specs on the host at all, an unknown GPU id)
-        are distinguishable.
+        nothing usable does step 2 read the same host paths through a
+        throwaway helper container. When neither answers, the specs that were
+        read are still returned: a directory full of another vendor's specs
+        is exactly what the error message has to report.
+
+        Which source answered is `source`: `local` is a live mount, so its
+        diagnosis is the host's truth and names no second attempt.
         """
+        local, _warnings, probes = cdi.probe_specs()
+        if _defines_a_kind(local):
+            return _CdiSpecs(local, probes, "", _CDI_SOURCE_LOCAL)
+        texts = await self._read_host_cdi_texts(cdi.DEFAULT_SPEC_DIRS, image)
+        if not texts:
+            return _CdiSpecs(local, probes, "", _CDI_SOURCE_NONE)
+        host, _warnings = cdi.parse_specs("\n".join(texts))
+        if not _defines_a_kind(host):
+            return _CdiSpecs(local, probes, "", _CDI_SOURCE_NONE)
+        return _CdiSpecs(host, probes, _CDI_HOST_CONTEXT, _CDI_SOURCE_HOST)
+
+    async def _gpu_device_names(self, identifiers: Sequence[str], image: str) -> tuple[str, ...]:
+        """Return the CDI device names to put on the wire, spec spelling.
+
+        Podman's registry matches device names exactly: a host whose spec
+        names its device `gpu-0` answers `unresolvable CDI devices
+        nvidia.com/gpu=0`. So the name that goes on the wire is the one the
+        spec defines, not the one the assignment was written as.
+
+        When no spec can be read at all, the normalized identifiers go out
+        unchanged — podman is then the authority, and a refused create still
+        comes back through `_raise_gpu_diagnosis` with the ladder's report.
+        """
+        found = await self._cdi_specs(image)
+        if not found.specs:
+            return tuple(identifiers)
         try:
-            return cdi.resolve_device(identifiers)
-        except ValidationFailedError as local_exc:
-            texts = await self._read_host_cdi_texts(cdi.DEFAULT_SPEC_DIRS, image)
-            if not texts:
-                raise self._both_attempts_failed(local_exc) from local_exc
-            specs, _ = cdi.parse_specs("\n".join(texts))
-            try:
-                return cdi.resolve_edits(specs, identifiers, context=_CDI_HOST_CONTEXT)
-            except ValidationFailedError as host_exc:
-                raise self._both_attempts_failed(host_exc) from host_exc
+            return cdi.resolve_names(
+                found.specs,
+                identifiers,
+                kind=cdi.DEFAULT_KIND,
+                probes=found.probes,
+                context=found.context,
+            )
+        except ValidationFailedError as exc:
+            # Same message shape as the post-create diagnosis: a live local
+            # mount is the host's own truth, so naming a second attempt that
+            # never happened would be noise.
+            if found.source == _CDI_SOURCE_LOCAL:
+                raise
+            raise self._both_attempts_failed(exc) from exc
 
     @staticmethod
     def _both_attempts_failed(exc: ValidationFailedError) -> ValidationFailedError:
@@ -619,8 +693,9 @@ class SpaceRuntimeManager:
         if gpu_ids:
             identifiers = [_cdi_device_name(gpu) for gpu in gpu_ids]
             version = await self.podman_version()
+            names = await self._gpu_device_names(identifiers, image_tag(owner, name))
             if version is not None and _major_version(version) >= _GPU_FIELD_MIN_MAJOR:
-                body["gpus"] = identifiers
+                body["gpus"] = list(names)
             else:
                 # podman < 6.0 has no `gpus` field on the create body and
                 # silently ignores unknown JSON keys. Qualified CDI names in
@@ -630,9 +705,7 @@ class SpaceRuntimeManager:
                 # included. Translating the specs here instead would drop
                 # exactly those edits.
                 cdi_identifiers = tuple(identifiers)
-                body["devices"] = [
-                    {"path": f"{cdi.DEFAULT_KIND}={identifier}"} for identifier in identifiers
-                ]
+                body["devices"] = [{"path": f"{cdi.DEFAULT_KIND}={name}"} for name in names]
 
         try:
             create_response = await self._request(
