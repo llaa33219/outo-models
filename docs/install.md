@@ -203,6 +203,17 @@ socket at `/run/podman/podman.sock` and need nothing extra, though the
 server container runs as uid 1000 and would get `EACCES` on a rootful
 `root:root 0660` socket.
 
+The installer also (best-effort) generates the NVIDIA CDI specs when it can:
+if `nvidia-ctk` (from `nvidia-container-toolkit`) is on `PATH` and
+`/etc/cdi/nvidia.yaml` does not exist yet, it runs
+`nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml` and prints
+`[ok] generated NVIDIA CDI specs at /etc/cdi/nvidia.yaml`. Those specs are
+what the podman < 6.0 GPU fallback reads for Spaces GPU assignment. It stays
+silent on hosts without the toolkit, never regenerates or overwrites an
+existing spec, and warns with the manual command (then continues) if the
+generation fails — the install never stops for a GPU problem. See
+[troubleshooting.md §GPU CDI errors](troubleshooting.md#gpu-cdi-errors).
+
 The server container needs that socket too, and `outo-models start` mounts
 it into the server container automatically (using the host path the shim
 forwards as `OUTO_PODMAN_SOCK`). Deployments that launch the container

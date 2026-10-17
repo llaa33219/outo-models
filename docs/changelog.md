@@ -4,6 +4,39 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.14 — the GPU fallback self-heals
+
+### Added
+
+- **The GPU CDI resolution self-heals without the mount plumbing.**
+  The podman < 6.0 GPU fallback read the CDI specs from the server
+  container's own filesystem, so a deployment where the spec mounts were
+  never forwarded — an older CLI shim, a dropped mount on recreate, a
+  hand-rolled quadlet unit — failed with
+  `space_gpu_cdi_unresolved` even though the host had valid specs and the
+  user had a GPU assigned. Resolution now has two steps: the local read
+  first (unchanged, free, and still the fast path), then, only if that
+  finds nothing, the same **host** directories are read through the
+  Podman socket with a throwaway `outo-cdi-probe-<random>` container of
+  the Space's own image that bind mounts them read-only and cats the
+  specs out through the logs endpoint. No new flag, no new environment
+  variable, no image pull, and the helper is removed right after. When
+  both steps fail, the `space_gpu_cdi_unresolved` error now states that
+  both resolution paths were attempted, which rules the mount plumbing
+  out and leaves only "no specs on the host" or "unknown GPU id".
+
+### Fixed
+
+- **The unresolved-CDI-spec error now diagnoses itself.** "No spec of
+  kind `nvidia.com/gpu`" named the searched directories but not what the
+  resolver found in them, so specs that were never mounted, specs that
+  were mounted but unparseable, and specs of a foreign kind produced the
+  same message. The error code is unchanged; the message now appends one
+  line per searched directory with the observed state
+  (`present, N readable specs, kinds: …`, plus an `(N unreadable)` count
+  when spec files failed to parse, or `missing` / `unreadable` /
+  `not a directory`).
+
 ## v0.6.13 — the server container can read the CDI specs
 
 ### Fixed

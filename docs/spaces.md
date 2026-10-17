@@ -314,9 +314,34 @@ container themselves must mount them:
 
 When the specs are missing or do not define the requested device, the Space
 start fails with `OutoError(code="space_gpu_cdi_unresolved")` naming the
-device, the CDI kind and the directories searched — never a silently
-GPU-less container. See
+device and the CDI kind — never a silently GPU-less container. The
+"no spec of this kind" variant additionally reports, one line per searched
+directory, what the resolver actually observed (`present, N readable specs,
+kinds: …` / `missing` / `unreadable`), so "the specs were never mounted" is
+distinguishable from "the specs are mounted but of another kind" or "the
+spec files are unparseable". See
 [troubleshooting.md § GPU CDI errors](troubleshooting.md#gpu-cdi-errors).
+
+### Host CDI read fallback (automatic)
+
+The mount above is a fast path, not a requirement. When the server container
+cannot read the spec directories — the shim is older than the CDI support, the
+mount was dropped on recreate, or a deployment never mounted them — the
+runtime recovers on its own:
+
+1. It reads the spec directories inside the server container.
+2. If that finds nothing, it reads the **same host directories** through the
+   Podman socket: a throwaway container named `outo-cdi-probe-<random>` of
+   the Space's own already-built image gets `/etc/cdi` and `/var/run/cdi`
+   bind mounted read-only, cats every `.yaml` / `.yml` / `.json` spec out, and
+   the specs are resolved from that output. The helper is removed afterwards.
+3. If neither source resolves the device, the
+   `space_gpu_cdi_unresolved` error is raised with both attempts named.
+
+Nothing has to be mounted for this to work, and the healthy (mounted) state
+pays nothing — the helper container is only created when step 1 misses. The
+fallback is podman-<6-only; from Podman 6.0 on the `gpus` field makes CDI
+Podman's own job.
 
 ## Clone / push
 

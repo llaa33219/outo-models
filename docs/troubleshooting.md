@@ -688,14 +688,44 @@ CDI device '0' of kind 'nvidia.com/gpu' is not defined in the specs found in
 
 The fallback path refuses to start a Space without its GPU instead of
 silently dropping the device. Either the spec file is missing / not mounted
-(see above), the device name in the assignment has no matching entry in the
-spec's `devices:` block, or the spec requests edits (OCI hooks,
-additional GIDs) that cannot be expressed in a Podman create body — the
-message names which one. Regenerate the spec without that edit, or assign a
-device the spec defines.
+and also unreadable on the host, the device name in the assignment has no
+matching entry in the spec's `devices:` block, or the spec requests edits
+(OCI hooks, additional GIDs) that cannot be expressed in a Podman create
+body — the message names which one. Regenerate the spec without that edit, or
+assign a device the spec defines.
+
+When both resolution sources failed, the message ends with a line naming both
+attempts (`Both resolution paths were attempted: …`): the server
+container's own filesystem, then the same directories read on the host
+through the helper container. That line rules out the mount plumbing and
+leaves exactly two causes: no specs on the host at all, or an unknown GPU
+id.
 
 The "no spec of this kind" variant is the case where the server container
-cannot see valid host specs at all. Full recovery:
+cannot see valid host specs at all. It reports, one line per searched
+directory, what the resolver actually observed:
+
+```
+No CDI spec of kind 'nvidia.com/gpu' found. What the resolver actually saw:
+  /etc/cdi: present, 1 readable spec (1 unreadable), kinds: amd.com/gpu
+  /var/run/cdi: missing
+Generate the specs on the host (...), then refresh the CLI shim ...
+```
+
+`missing` means the directory was never mounted into the container. Note
+that the runtime no longer stops there: when the local read finds nothing it
+reads the same host directories through the Podman socket with a throwaway
+`outo-cdi-probe-<random>` container (the Space's own image, the spec
+directories bind mounted read-only) and resolves from that. If that works,
+the Space starts with its GPU and nothing on the host had to change; the
+refresh below is only about making step 2 above report the specs, not about
+getting a GPU.
+
+`present` means the directory is there — read the
+counts instead: `0 readable specs` with no `(N unreadable)` note is an empty
+directory, `(N unreadable)` means the spec files are there but unparseable,
+and a `kinds:` list without `nvidia.com/gpu` means the specs were generated
+for another vendor. Full recovery for the `missing` case:
 
 ```bash
 # 1) Generate the specs on the host (nvidia-container-toolkit)
@@ -706,6 +736,21 @@ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
 outo-models update
 ```
+
+The installer above already runs step 1 for you: when `nvidia-ctk` is on
+`PATH` and `/etc/cdi/nvidia.yaml` does not exist yet, it generates the spec
+and prints
+
+```
+[ok] generated NVIDIA CDI specs at /etc/cdi/nvidia.yaml
+```
+
+It is a best-effort no-op in every other case — hosts without
+`nvidia-container-toolkit` stay silent, an existing `/etc/cdi/nvidia.yaml` is
+never regenerated or overwritten, and a failed generation warns with the
+command above and continues, so the install always finishes. Run the manual
+command only when that warning appears (or when the file is gone and you do
+not want to re-run the whole installer).
 
 ## 13. `outo-models: command not found` after `podman pull`
 
