@@ -74,6 +74,53 @@ devices:
 """
 
 
+#: The shape `nvidia-ctk cdi generate` actually writes: `devices` is a LIST of
+#: `{name, containerEdits}` entries (cncf-tags/container-device-interface
+#: specs-go/config.go). Same content as `_NVIDIA_SPEC`, canonical schema.
+_NVIDIA_LIST_SPEC = """\
+cdiVersion: 0.5.0
+kind: nvidia.com/gpu
+containerEdits:
+  deviceNodes:
+    - path: /dev/nvidiactl
+      type: c
+      major: 255
+      minor: 0
+      fileMode: 0666
+  env:
+    - NVIDIA_VISIBLE_DEVICES=all
+devices:
+  - name: "0"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+          type: c
+          major: 195
+          minor: 0
+          fileMode: 0666
+      env:
+        - NVIDIA_VISIBLE_DEVICES=void
+  - name: "1"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia1
+          type: c
+          major: 195
+          minor: 1
+  - name: "all"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+          type: c
+          major: 195
+          minor: 0
+        - path: /dev/nvidia1
+          type: c
+          major: 195
+          minor: 1
+"""
+
+
 def _spec_dir(tmp_path: Path, text: str = _NVIDIA_SPEC, name: str = "nvidia.yaml") -> Path:
     directory = tmp_path / "cdi"
     directory.mkdir()
@@ -231,6 +278,26 @@ class TestResolveDeviceFailures:
         assert str(directory) in message
         assert excinfo.value.code == "space_gpu_cdi_unresolved"
 
+    def test_missing_device_lists_the_names_the_spec_defines(self, tmp_path: Path) -> None:
+        # Given: a canonical spec defining three devices.
+        directory = _spec_dir(tmp_path, _NVIDIA_LIST_SPEC)
+        # When
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["7"], dirs=[directory])
+        # Then: the operator can see at a glance whether the assignment is
+        # wrong or the spec is missing the device.
+        assert "defined devices: 0, 1, all" in str(excinfo.value)
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+
+    def test_missing_device_list_is_capped(self) -> None:
+        names = [str(index) for index in range(20)]
+        specs, _ = parse_specs(
+            "kind: nvidia.com/gpu\ndevices:\n" + "".join(f'  - name: "{name}"\n' for name in names)
+        )
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(specs, ["99"], searched=("/etc/cdi",))
+        assert f"defined devices: {', '.join(sorted(names)[:12])}…" in str(excinfo.value)
+
     def test_empty_spec_directory_names_the_missing_kind(self, tmp_path: Path) -> None:
         # The dirs are mounted but hold no spec of this kind — the classic
         # "GPU assigned, container silently GPU-less" setup.
@@ -383,6 +450,149 @@ class TestResolveEdits:
         with pytest.raises(ValidationFailedError) as excinfo:
             resolve_edits(specs, ["3"], searched=("/etc/cdi",))
         assert "helper container" not in str(excinfo.value)
+
+
+class TestCanonicalListFormSpec:
+    """The canonical CDI schema declares `devices` as a LIST of entries.
+
+    The map-shaped fixtures above covered only our own lenient reading: a
+    real `nvidia-ctk` spec parses fine — readable documents, matching kind —
+    yet no device was ever found, so the GPU never reached the container.
+    """
+
+    def test_list_form_device_merges_global_and_device_edits(self, tmp_path: Path) -> None:
+        directory = _spec_dir(tmp_path, _NVIDIA_LIST_SPEC)
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the spec-wide edits apply, then the device's own ones.
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidiactl", "/dev/nvidia0"]
+        assert edits.env == {"NVIDIA_VISIBLE_DEVICES": "void"}
+
+    @pytest.mark.parametrize("identifier", ["0", "gpu-0", "nvidia.com/gpu=0"])
+    def test_identifier_forms_resolve_to_the_same_device(
+        self, tmp_path: Path, identifier: str
+    ) -> None:
+        directory = _spec_dir(tmp_path, _NVIDIA_LIST_SPEC)
+        assert resolve_device([identifier], dirs=[directory]) == resolve_device(
+            ["0"], dirs=[directory]
+        )
+
+    def test_each_list_entry_resolves_its_own_device(self, tmp_path: Path) -> None:
+        directory = _spec_dir(tmp_path, _NVIDIA_LIST_SPEC)
+        edits = resolve_device(["1"], dirs=[directory])
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidiactl", "/dev/nvidia1"]
+
+
+class TestDeviceNameAliasing:
+    """A spec and an assignment may spell the same GPU differently."""
+
+    def test_gpu_prefixed_device_answers_a_bare_index_query(self, tmp_path: Path) -> None:
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            '  - name: "gpu-0"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia0\n",
+        )
+        assert resolve_device(["0"], dirs=[directory]).device_nodes == ({"path": "/dev/nvidia0"},)
+
+    def test_bare_index_device_answers_a_gpu_prefixed_query(self, tmp_path: Path) -> None:
+        directory = _spec_dir(tmp_path, _NVIDIA_LIST_SPEC)
+        assert resolve_device(["gpu-0"], dirs=[directory]) == resolve_device(
+            ["0"], dirs=[directory]
+        )
+
+    def test_exact_name_wins_over_a_normalized_alias(self, tmp_path: Path) -> None:
+        # Both names are defined, so "0" must resolve to the entry literally
+        # called "0" rather than to the "gpu-0" entry that aliases it.
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            '  - name: "gpu-0"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/aliased\n"
+            '  - name: "0"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/exact\n",
+        )
+        assert [node["path"] for node in resolve_device(["0"], dirs=[directory]).device_nodes] == [
+            "/dev/exact"
+        ]
+
+
+class TestMalformedDeviceEntries:
+    """One broken device entry must not take the whole spec down with it."""
+
+    def test_malformed_entries_are_skipped_and_warned_about(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        # Given: a canonical list whose first two entries are unusable.
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            "  - just-a-string\n"
+            "  - containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nameless\n"
+            '  - name: "0"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia0\n",
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the good device still resolves, and the bad entries said so.
+        # fd-level capture: structlog's capture_logs is config-order dependent.
+        captured = capfd.readouterr()
+        text = captured.out + captured.err
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidia0"]
+        assert "entry 1 is not a mapping" in text
+        assert "entry 2 has no name" in text
+
+    def test_malformed_map_entry_is_skipped_and_warned_about(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            "  broken: not-a-mapping\n"
+            '  "0":\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia0\n",
+        )
+        edits = resolve_device(["0"], dirs=[directory])
+        captured = capfd.readouterr()
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidia0"]
+        assert "device 'broken' is not a mapping" in captured.out + captured.err
+
+    def test_a_malformed_entry_is_reported_once_per_spec(
+        self, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            "  - just-a-string\n"
+            '  - name: "0"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia0\n"
+            '  - name: "all"\n'
+            "    containerEdits:\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia1\n",
+        )
+        resolve_device(["0", "all"], dirs=[directory])
+        captured = capfd.readouterr()
+        assert (captured.out + captured.err).count("entry 1 is not a mapping") == 1
 
 
 class TestMissingSpecDiagnostics:

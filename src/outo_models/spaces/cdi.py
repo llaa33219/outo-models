@@ -47,6 +47,9 @@ from typing import Any
 import yaml
 
 from outo_models.exceptions import ValidationFailedError
+from outo_models.logging import get_logger
+
+_LOGGER = get_logger(__name__)
 
 #: Host CDI spec directories, in the order the CDI spec's default cache uses.
 DEFAULT_SPEC_DIRS: tuple[str, ...] = ("/etc/cdi", "/var/run/cdi")
@@ -68,6 +71,10 @@ _UNSUPPORTED_HINT = (
 )
 
 _GPU_INDEX_PREFIX = "GPU-"
+
+#: Cap on the device names quoted back in the unresolved-device error: the
+#: list diagnoses a mistyped assignment, it is not a spec dump.
+_MAX_REPORTED_DEVICES = 12
 
 
 def device_name(assignment_id: str) -> str:
@@ -271,6 +278,80 @@ def _global_edits(spec: Mapping[str, Any]) -> dict[str, Any]:
     return edits if isinstance(edits, dict) else {}
 
 
+def _warn_bad_device(kind: Any, reason: str, entry: Any) -> None:
+    _LOGGER.warning(
+        "CDI spec device entry ignored",
+        kind=kind,
+        reason=reason,
+        entry=repr(entry),
+    )
+
+
+def _device_index(spec: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index one spec's devices by name, accepting both shapes on the wire.
+
+    The canonical schema (cncf-tags/container-device-interface
+    `specs-go/config.go`) declares `devices` as a LIST of
+    `{name, containerEdits}` entries — what `nvidia-ctk cdi generate` writes.
+    A mapping keyed by device name is indexed the same way, because a
+    strict reading here would turn a lenient third-party spec into a hard
+    failure over a shape the resolver can express perfectly well.
+
+    An entry that is not a mapping, or that carries no usable name, is
+    warned about and skipped: one broken device must not cost the host every
+    other GPU in the same spec.
+    """
+    kind = spec.get("kind")
+    devices = spec.get("devices")
+    index: dict[str, dict[str, Any]] = {}
+    if isinstance(devices, Mapping):
+        for name, device in devices.items():
+            if isinstance(device, Mapping):
+                index[str(name)] = dict(device)
+            else:
+                _warn_bad_device(kind, f"device {name!r} is not a mapping", device)
+        return index
+    if not isinstance(devices, Sequence) or isinstance(devices, (str, bytes)):
+        return index
+    for position, entry in enumerate(devices, start=1):
+        if not isinstance(entry, Mapping):
+            _warn_bad_device(kind, f"entry {position} is not a mapping", entry)
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            _warn_bad_device(kind, f"entry {position} has no name", entry)
+            continue
+        index[name] = dict(entry)
+    return index
+
+
+def _find_device(index: Mapping[str, dict[str, Any]], name: str) -> dict[str, Any] | None:
+    """Look `name` up in `index`, falling back to a normalized alias match.
+
+    `device_name` runs on both sides, so a spec that names its device
+    `gpu-0` answers the assignment `0` and the other way round. An exact
+    match always wins: a spec defining both `0` and `gpu-0` hands each
+    query the entry it literally named.
+    """
+    exact = index.get(name)
+    if exact is not None:
+        return exact
+    alias = device_name(name)
+    return next(
+        (device for stored, device in index.items() if device_name(stored) == alias),
+        None,
+    )
+
+
+def _report_devices(index: Mapping[str, dict[str, Any]]) -> str:
+    """Render the device names a spec defines, for the unresolved error."""
+    names = sorted(index)
+    listed = ", ".join(names[:_MAX_REPORTED_DEVICES])
+    if len(names) > _MAX_REPORTED_DEVICES:
+        listed += "…"
+    return listed or "none"
+
+
 def parse_specs(text: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Parse a `---`-separated stream of CDI specs into mappings.
 
@@ -330,6 +411,7 @@ def resolve_edits(
     nodes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
     env: dict[str, str] = {}
+    indexes: dict[str, dict[str, dict[str, Any]]] = {}
     for identifier in identifiers:
         device_kind, name = _split_identifier(device_name(identifier), kind)
         spec = next((s for s in specs if s.get("kind") == device_kind), None)
@@ -349,13 +431,18 @@ def resolve_edits(
                 ),
                 code=_UNRESOLVED_CODE,
             )
-        devices = spec.get("devices")
-        device = devices.get(name) if isinstance(devices, dict) else None
-        if not isinstance(device, dict):
+        # Indexed once per kind: a malformed entry is a defect of the spec,
+        # not of the assignment, so it must not be reported once per device.
+        if device_kind not in indexes:
+            indexes[device_kind] = _device_index(spec)
+        index = indexes[device_kind]
+        device = _find_device(index, name)
+        if device is None:
             raise ValidationFailedError(
                 _with_context(
                     f"CDI device {name!r} of kind {device_kind!r} is not defined "
-                    f"in the specs found in {', '.join(paths)}.",
+                    f"in the specs found in {', '.join(paths)} — defined devices: "
+                    f"{_report_devices(index)}.",
                     context,
                 ),
                 code=_UNRESOLVED_CODE,
