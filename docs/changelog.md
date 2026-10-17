@@ -4,6 +4,17 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.11 — starting a Space replaces its container
+
+### Fixed
+
+- **`start` is idempotent for container-backed Spaces.** Starting a
+  Space whose container already existed (after a stop, or after a
+  redeploy) used to fail with Podman's "container name ... is already
+  in use". The runtime now removes the existing container and
+  recreates it — after the image build, so a failed build keeps the old
+  container serving — and reclaims the same host port.
+
 ## v0.6.10 — the Space run proxy can reach Space containers
 
 ### Fixed
