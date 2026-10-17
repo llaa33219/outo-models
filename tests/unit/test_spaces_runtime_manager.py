@@ -14,6 +14,7 @@ and verifies either a wire-shape contract or an error-mapping contract.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -74,6 +75,18 @@ def _create_payload(captured: list[httpx.Request]) -> dict[str, Any]:
     create_request = next(r for r in captured if str(r.url).endswith("/containers/create"))
     payload: dict[str, Any] = json.loads(create_request.content)
     return payload
+
+
+def _version_handler(version: str):
+    """Answer `GET /libpod/version` with `version`, then delegate to the stub."""
+    inner = _create_ok_handler
+
+    def h(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/version"):
+            return httpx.Response(200, json={"Version": version})
+        return inner(request)
+
+    return h
 
 
 def _call_sequence(captured: list[httpx.Request]) -> list[str]:
@@ -319,7 +332,7 @@ class TestStartStopAndInspect:
         assert "exposedPorts" not in payload
 
     async def test_create_payload_gpus_normalize_assignment_ids(self, settings, captured) -> None:
-        client = _client_for(_create_ok_handler, captured)
+        client = _client_for(_version_handler("6.0.0"), captured)
         manager = SpaceRuntimeManager(settings, client=client)
         await manager.start("alice", "demo", gpu_ids=("gpu-0", "GPU-abc"))
         await client.aclose()
@@ -446,3 +459,146 @@ class TestStartStopAndInspect:
         paths = [str(r.url) for r in captured]
         assert any("containers/outo-space-alice-demo/stop" in p for p in paths)
         assert any("containers/outo-space-alice-demo/restart" in p for p in paths)
+
+
+_CDI_SPEC = """\
+cdiVersion: 0.5.0
+kind: nvidia.com/gpu
+containerEdits:
+  env:
+    - NVIDIA_VISIBLE_DEVICES=all
+devices:
+  "0":
+    containerEdits:
+      deviceNodes:
+        - path: /dev/nvidia0
+          type: c
+          major: 195
+          minor: 0
+          fileMode: 0666
+      mounts:
+        - hostPath: /usr/lib/libnvidia-container.so.1
+          containerPath: /usr/lib/libnvidia-container.so.1
+"""
+
+
+@pytest.fixture
+def cdi_spec_dir(tmp_path, monkeypatch) -> Path:
+    """Point the CDI resolver at a synthetic nvidia spec on disk."""
+    from outo_models.spaces import cdi
+
+    directory = tmp_path / "cdi"
+    directory.mkdir()
+    (directory / "nvidia.yaml").write_text(_CDI_SPEC, encoding="utf-8")
+    monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(directory),))
+    return directory
+
+
+class TestGpuVersionGate:
+    """`gpus` only exists on the libpod API from podman 6.0 on; older releases
+    drop the unknown JSON key silently, so the server translates the CDI spec
+    into `devices` + `mounts` + `env` itself."""
+
+    async def test_modern_podman_uses_gpus_field(self, settings, captured) -> None:
+        client = _client_for(_version_handler("6.0.0"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        payload = _create_payload(captured)
+        assert payload["gpus"] == ["0"]
+        assert "devices" not in payload
+        assert "mounts" not in payload
+
+    async def test_old_podman_gets_translated_cdi_edits(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        payload = _create_payload(captured)
+        # `gpus` on 4.x is silently dropped by Go — never send it there.
+        assert "gpus" not in payload
+        assert payload["devices"] == [
+            {
+                "path": "/dev/nvidia0",
+                "type": "c",
+                "major": 195,
+                "minor": 0,
+                "fileMode": 0o666,
+            }
+        ]
+        assert payload["mounts"] == [
+            {
+                "source": "/usr/lib/libnvidia-container.so.1",
+                "destination": "/usr/lib/libnvidia-container.so.1",
+            }
+        ]
+        # The pre-existing env map must survive the merge.
+        assert payload["env"] == {"PORT": "8000", "NVIDIA_VISIBLE_DEVICES": "all"}
+
+    async def test_podman_five_uses_the_fallback(self, settings, captured, cdi_spec_dir) -> None:
+        client = _client_for(_version_handler("5.6.0"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        payload = _create_payload(captured)
+        assert "gpus" not in payload
+        assert payload["devices"][0]["path"] == "/dev/nvidia0"
+
+    async def test_version_fetch_failure_falls_back_to_cdi(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # An unreachable / version-less podman must still get a working
+        # container: the CDI fallback is the more compatible of the two paths.
+        def h(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/version"):
+                return httpx.Response(500, json={"message": "boom"})
+            return _create_ok_handler(request)
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        payload = _create_payload(captured)
+        assert "gpus" not in payload
+        assert payload["devices"][0]["path"] == "/dev/nvidia0"
+
+    async def test_missing_cdi_spec_fails_loudly_on_old_podman(
+        self, settings, captured, tmp_path, monkeypatch
+    ) -> None:
+        # Given: podman 4.x and no CDI specs on the host. A silent GPU-less
+        # container is the exact failure the fallback exists to prevent.
+        from outo_models.spaces import cdi
+
+        empty = tmp_path / "empty-cdi"
+        empty.mkdir()
+        monkeypatch.setattr(cdi, "DEFAULT_SPEC_DIRS", (str(empty),))
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "nvidia.com/gpu" in str(excinfo.value)
+        # Nothing was created: no create call made it to the wire.
+        assert not [c for c in _call_sequence(captured) if c.endswith("/containers/create")]
+
+    async def test_version_is_fetched_once_per_manager(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await manager.start("alice", "demo2", gpu_ids=("gpu-0",))
+        await client.aclose()
+        version_calls = [c for c in _call_sequence(captured) if c.endswith("/version")]
+        assert len(version_calls) == 1
+
+    async def test_version_is_not_fetched_without_gpus(self, settings, captured) -> None:
+        # No GPU assignment → no version round-trip on the hot path.
+        client = _client_for(_create_ok_handler, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        await manager.start("alice", "demo")
+        await client.aclose()
+        assert not [c for c in _call_sequence(captured) if c.endswith("/version")]

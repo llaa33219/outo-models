@@ -67,6 +67,7 @@ import httpx
 
 from outo_models.config import Settings
 from outo_models.exceptions import OutoError
+from outo_models.spaces.cdi import device_name, resolve_device
 
 _LIBPOD_PREFIX = "/v4.0.0/libpod"
 
@@ -118,23 +119,21 @@ def _extract_first(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-_GPU_INDEX_PREFIX = "GPU-"
+# Single identifier normalizer, shared with the CDI fallback path
+# (`cdi.resolve_device` applies the same function to its input).
+_cdi_device_name = device_name
 
 
-def _cdi_device_name(assignment_id: str) -> str:
-    """Map a stored GPU assignment to an NVIDIA CDI device name.
+_GPU_FIELD_MIN_MAJOR = 6
 
-    Assignments are operator input stored verbatim (`gpu-0` in the admin UI),
-    while a valid NVIDIA CDI device name is either a bare integer index or
-    `GPU-<uuid>`. Strip a `gpu-` prefix when the remainder is an integer;
-    anything else passes through untouched — the UI track owns input rules.
-    """
-    candidate = assignment_id.strip()
-    if candidate.lower().startswith(_GPU_INDEX_PREFIX.lower()):
-        remainder = candidate[len(_GPU_INDEX_PREFIX) :]
-        if remainder.isdigit():
-            return str(int(remainder))
-    return candidate
+
+def _major_version(version: str) -> int:
+    """Return the leading integer of a `major.minor.patch` version string."""
+    head = version.strip().split(".", 1)[0]
+    try:
+        return int(head)
+    except ValueError:
+        return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +157,30 @@ class SpaceRuntimeManager:
         self._settings = settings
         self._client = client
         self._owns_client = client is None
+        self._podman_version_cache: tuple[str | None] | None = None
+
+    async def podman_version(self) -> str | None:
+        """Return the podman engine version string, or None when unknowable.
+
+        `GET /libpod/version` answers `{"Version": "4.9.3", ...}`; older
+        releases answer the same shape. Any failure (unreachable socket,
+        error status, unparseable body) resolves to None — the caller then
+        uses the more compatible of the two GPU paths.
+        """
+        if self._podman_version_cache is not None:
+            return self._podman_version_cache[0]
+        version: str | None = None
+        try:
+            response = await self._request("GET", f"{_LIBPOD_PREFIX}/version")
+            payload = response.json()
+        except (OutoError, ValueError):
+            payload = None
+        if isinstance(payload, dict):
+            candidate = payload.get("Version")
+            if isinstance(candidate, str) and candidate:
+                version = candidate
+        self._podman_version_cache = (version,)
+        return version
 
     def _build_client(self) -> httpx.AsyncClient:
         transport = httpx.AsyncHTTPTransport(uds=self._settings.podman_socket)
@@ -384,7 +407,18 @@ class SpaceRuntimeManager:
             "restart_policy": "always",
         }
         if gpu_ids:
-            body["gpus"] = [_cdi_device_name(gpu) for gpu in gpu_ids]
+            identifiers = [_cdi_device_name(gpu) for gpu in gpu_ids]
+            version = await self.podman_version()
+            if version is not None and _major_version(version) >= _GPU_FIELD_MIN_MAJOR:
+                body["gpus"] = identifiers
+            else:
+                # podman < 6.0 has no `gpus` field on the create body and
+                # silently ignores unknown JSON keys, so translate the host
+                # CDI specs into fields every version understands.
+                edits = resolve_device(identifiers)
+                body["devices"] = list(edits.device_nodes)
+                body["mounts"] = [*body.get("mounts", []), *edits.mounts]
+                body["env"].update(edits.env)
 
         create_response = await self._request(
             "POST",
