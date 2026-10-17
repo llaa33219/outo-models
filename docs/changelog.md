@@ -4,6 +4,20 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.15 — real CDI specs resolve
+
+### Fixed
+
+- **The GPU fallback now reads real CDI spec files.** The parser
+  assumed `devices` was a name-keyed map, but the canonical CDI schema
+  (what `nvidia-ctk cdi generate` writes) declares a list of `{name,
+  containerEdits}` entries — so the self-healing host read found the
+  specs, matched the kind, and still reported every device as
+  undefined. Both shapes are accepted now, device names match
+  bidirectionally (`gpu-0` resolves `0` and vice versa), exact names
+  win over normalized aliases, and the missing-device error lists the
+  defined names.
+
 ## v0.6.14 — the GPU fallback self-heals
 
 ### Added
