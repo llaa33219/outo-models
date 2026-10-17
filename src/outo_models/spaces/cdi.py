@@ -240,8 +240,11 @@ def resolve_device(
         if spec is None:
             raise ValidationFailedError(
                 f"No CDI spec of kind {device_kind!r} found (searched "
-                f"{', '.join(searched)}). Install the CDI specs on the host "
-                "or mount them into the server container.",
+                f"{', '.join(searched)}). Generate the specs on the host "
+                "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), then "
+                "refresh the CLI shim so it forwards the host spec directories "
+                "and recreate the server container so it can read them: re-run "
+                "scripts/install-cli.sh, then outo-models update.",
                 code="space_gpu_cdi_unresolved",
             )
         devices = spec.get("devices")

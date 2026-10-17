@@ -231,6 +231,20 @@ class TestResolveDeviceFailures:
         assert "nvidia.com/gpu" in str(excinfo.value)
         assert str(empty) in str(excinfo.value)
 
+    def test_missing_spec_message_gives_the_full_recovery(self, tmp_path: Path) -> None:
+        # The field failure: a host WITH valid /etc/cdi specs still hit this,
+        # because the server container could not see them. The message has to
+        # carry every step of the recovery, not just "install the specs".
+        empty = tmp_path / "cdi"
+        empty.mkdir()
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_device(["0"], dirs=[empty])
+        message = str(excinfo.value)
+        assert "nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" in message
+        assert "install-cli.sh" in message
+        assert "outo-models update" in message
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+
     def test_hooks_are_refused_loudly(self, tmp_path: Path) -> None:
         directory = _spec_dir(
             tmp_path,
