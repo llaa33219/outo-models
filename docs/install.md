@@ -158,7 +158,14 @@ then `/run/podman/podman.sock`), mounts it at
 `/run/podman/podman.sock` inside the CLI container, and forwards the host
 path through `OUTO_PODMAN_SOCK` so `outo-models start` can mount the same
 socket into the server container. The container-side path is passed as
-`OUTO_PODMAN_SOCKET=/run/podman/podman.sock`:
+`OUTO_PODMAN_SOCKET=/run/podman/podman.sock`. The same host-truth channel
+carries the CDI spec directories: the shim probes `/etc/cdi` and
+`/var/run/cdi` on the host and forwards the existing ones as
+`OUTO_CDI_DIRS`, which `outo-models start` mounts read-only into the server
+container (the podman < 6.0 GPU fallback reads the specs from there —
+see [spaces.md](spaces.md#podman-version-compatibility)). Set
+`OUTO_CDI_DIRS` yourself to override the probe, e.g. when the specs live
+outside the default locations.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash

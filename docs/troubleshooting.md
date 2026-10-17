@@ -664,8 +664,20 @@ A self-managed deployment (quadlet, a bare `podman run`) has to mount them:
 -v /etc/cdi:/etc/cdi:ro -v /var/run/cdi:/var/run/cdi:ro
 ```
 
-`outo-models start` does this automatically. After changing the mount, run
-`outo-models restart`.
+Through the standard CLI shim, `outo-models start` does this automatically:
+the shim runs on the host, probes `/etc/cdi` and `/var/run/cdi`, and forwards
+the existing ones as `OUTO_CDI_DIRS` (`start` runs inside a container and
+cannot probe the host itself). If step 2 above shows an empty `/etc/cdi`, the
+shim predates that forwarding — refresh it and recreate the container:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+outo-models update
+```
+
+Non-default spec locations go through the same channel: `OUTO_CDI_DIRS`
+(a colon-separated list of host directories) overrides the probe, e.g.
+`OUTO_CDI_DIRS=/etc/cdi:/opt/cdi outo-models start`.
 
 ### 422 `space_gpu_cdi_unresolved`
 
@@ -681,6 +693,19 @@ spec's `devices:` block, or the spec requests edits (OCI hooks,
 additional GIDs) that cannot be expressed in a Podman create body — the
 message names which one. Regenerate the spec without that edit, or assign a
 device the spec defines.
+
+The "no spec of this kind" variant is the case where the server container
+cannot see valid host specs at all. Full recovery:
+
+```bash
+# 1) Generate the specs on the host (nvidia-container-toolkit)
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+
+# 2) Refresh the shim so it forwards the host spec directories,
+#    then recreate the server container so it can read them
+curl -sSL https://raw.githubusercontent.com/llaa33219/outo-models/main/scripts/install-cli.sh | sudo bash
+outo-models update
+```
 
 ## 13. `outo-models: command not found` after `podman pull`
 

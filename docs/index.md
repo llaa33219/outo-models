@@ -91,6 +91,7 @@ definition of every `OUTO_*` variable, see the [CLI reference](cli.md#environmen
 | `OUTO_SPACES_RUNTIME_ENABLED` | Spaces container runtime on/off | `true` |
 | `OUTO_PODMAN_SOCK` | Host path to the Podman socket (mount source for `start`; forwarded by the shim) | (auto-detected) |
 | `OUTO_PODMAN_SOCKET` | Podman socket path inside the container | `/run/podman/podman.sock` |
+| `OUTO_CDI_DIRS` | Colon-separated **host** CDI spec directories mounted into the server container (probed by the shim) | (auto-detected) |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` / `_END` | Space container host-port range | `20000` / `21000` |
 | `OUTO_CONFIG` | YAML config path (used by CLI host side) | `/etc/outo-models/config.yaml` |
 | `OUTO_DESTRUCTIVE` | Safety gate that unlocks `reset --destroy` | (none) |

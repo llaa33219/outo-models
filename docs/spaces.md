@@ -302,7 +302,10 @@ runtime therefore probes `GET /libpod/version` once and picks a path:
 
 `outo-models start` mounts both CDI spec directories read-only into the
 server container when they exist on the host, so no operator step is needed
-(AGENTS.md: the install stays automatic). Deployments that launch the
+(AGENTS.md: the install stays automatic). It learns the host directories
+from `OUTO_CDI_DIRS`, which the host CLI shim fills by probing `/etc/cdi` and
+`/var/run/cdi` — `start` itself runs inside a container, where a probe would
+only see the container's own mount points. Deployments that launch the
 container themselves must mount them:
 
 ```bash
@@ -337,6 +340,7 @@ Permissions / quota / LFS policies are identical to
 | `OUTO_SPACES_RUNTIME_ENABLED` | Enable the runtime | `true` |
 | `OUTO_PODMAN_SOCK` | **Host** path to the Podman socket, read by the host shim and used by `outo-models start` as the mount source. The rootless user socket is preferred. | (auto-detected) |
 | `OUTO_PODMAN_SOCKET` | Podman socket path **inside the container**, consumed by the server (Spaces runtime) and by the CLI's `podman-remote` | `/run/podman/podman.sock` |
+| `OUTO_CDI_DIRS` | Colon-separated list of **host** CDI spec directories to mount read-only into the server container (the podman < 6.0 GPU fallback reads them). Set by the host shim's probe; an operator-set value is forwarded verbatim. | (probed by the shim: `/etc/cdi`, `/var/run/cdi`) |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_START` | Start of host port range | `20000` |
 | `OUTO_SPACES_RUNTIME_PORT_RANGE_END` | End of host port range | `21000` |
 

@@ -184,6 +184,29 @@ If `podman` is missing from `PATH`, an English message is printed to
 stderr — "this command must run on the server host" — and the process
 exits with code 1.
 
+### CDI spec auto-mount
+
+On podman < 6.0 the server resolves assigned GPUs from the host's CDI specs
+itself, so `start` mounts each spec directory read-only:
+
+```bash
+-v /etc/cdi:/etc/cdi:ro
+-v /var/run/cdi:/var/run/cdi:ro
+```
+
+The host paths come from `OUTO_CDI_DIRS`, which the `install-cli.sh` shim
+fills by probing `/etc/cdi` and `/var/run/cdi` on the host (existing
+directories only — `podman run -v` would otherwise create a missing one as an
+empty root-owned directory). An operator-set `OUTO_CDI_DIRS` is forwarded
+verbatim and replaces the probe, e.g.
+`OUTO_CDI_DIRS=/etc/cdi:/opt/cdi outo-models start`.
+
+`start` runs inside a container, so without that env var it cannot probe the
+host at all: every path it can see is the container's own mount point, and
+passing one as a `-v` source makes the host podman fail. That is why the
+knowledge travels through the shim, exactly like `OUTO_PODMAN_SOCK`. See
+[spaces.md § Podman version compatibility](spaces.md#podman-version-compatibility).
+
 ### Low-port preflight
 
 Before touching any container — before removing a stopped one and before
@@ -305,7 +328,10 @@ steps in order (the bracketed lines are the script's own echo output):
    outo-models-data:/var/lib/outo-models <image> start`, plus the host
    Podman socket mount (`-v <host-sock>:/run/podman/podman.sock`,
    `-e OUTO_PODMAN_SOCKET=/run/podman/podman.sock`,
-   `-e OUTO_PODMAN_SOCK=<host-sock>`) when one is found
+   `-e OUTO_PODMAN_SOCK=<host-sock>`) when one is found, plus
+   `-e OUTO_CDI_DIRS=<host-cdi-dirs>` when the shim forwarded them (the
+   nested `start` runs in yet another container and cannot probe the host's
+   CDI spec directories itself)
 
 Step 3 **recreates** the server container rather than restarting it: it
 runs `outo-models start` from the new image, with the same mount set the
@@ -610,6 +636,7 @@ Additional operator-facing variables:
 | `OUTO_RESET_SCRIPT` | Override `reset.sh` path | `cli.container_script` |
 | `OUTO_CADDY_ADMIN_URL` | Caddy admin API base URL | lifespan cert health check (default `http://localhost:2019`) |
 | `OUTO_PODMAN_SOCK` | **Host** path to the Podman socket (no config key — env only) | Forwarded by the `install-cli.sh` shim, then used by `start` as the `podman run` mount source. Rootless user socket preferred |
+| `OUTO_CDI_DIRS` | Colon-separated list of **host** CDI spec directories (no config key — env only) | Probed on the host by the `install-cli.sh` shim (`/etc/cdi`, `/var/run/cdi`) and forwarded verbatim, then used by `start` as read-only `podman run` mount sources for the podman < 6.0 GPU fallback |
 | `CLOUDFLARE_API_TOKEN` | Used for Caddy DNS-01 | Caddyfile `tls { dns cloudflare {env.CLOUDFLARE_API_TOKEN} }` |
 
 ## Exit codes
