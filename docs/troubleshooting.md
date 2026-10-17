@@ -683,16 +683,22 @@ Non-default spec locations go through the same channel: `OUTO_CDI_DIRS`
 
 ```
 CDI device '0' of kind 'nvidia.com/gpu' is not defined in the specs found in
-/etc/cdi, /var/run/cdi.
+/etc/cdi, /var/run/cdi — defined devices: 0.
+Podman refused the container:
+Podman API returned an error: no such device nvidia.com/gpu=0
 ```
 
-The fallback path refuses to start a Space without its GPU instead of
-silently dropping the device. Either the spec file is missing / not mounted
-and also unreadable on the host, the device name in the assignment has no
-matching entry in the spec's `devices:` block, or the spec requests edits
-(OCI hooks, additional GIDs) that cannot be expressed in a Podman create
-body — the message names which one. Regenerate the spec without that edit, or
-assign a device the spec defines.
+Podman resolves the CDI device names the create body carries (see
+[spaces.md § Podman version compatibility](spaces.md#podman-version-compatibility)),
+so this error is the *diagnosis* of a refusal Podman returned, not a separate
+resolution step: the server re-resolved the same assignment against the host's
+specs and could not either, so it reports both what the specs contain and what
+Podman said. Either the spec file is missing / not mounted and also unreadable
+on the host, the device name in the assignment has no matching entry in the
+spec's `devices:` block, or the spec requests an edit (additional GIDs,
+intel-rdt, net devices) the resolver cannot account for — the message names
+which one. Regenerate the spec without that edit, or assign a device the spec
+defines. OCI hooks are *not* a cause: Podman applies them itself.
 
 When both resolution sources failed, the message ends with a line naming both
 attempts (`Both resolution paths were attempted: …`): the server
@@ -716,10 +722,10 @@ Generate the specs on the host (...), then refresh the CLI shim ...
 that the runtime no longer stops there: when the local read finds nothing it
 reads the same host directories through the Podman socket with a throwaway
 `outo-cdi-probe-<random>` container (the Space's own image, the spec
-directories bind mounted read-only) and resolves from that. If that works,
-the Space starts with its GPU and nothing on the host had to change; the
-refresh below is only about making step 2 above report the specs, not about
-getting a GPU.
+directories bind mounted read-only) and resolves from that. If that works the
+device *is* defined, so what remains is Podman's own refusal and nothing on the
+host has to change to rule the mount plumbing out; the refresh below is only
+about making the diagnosis report the specs instead of the missing mount.
 
 `present` means the directory is there — read the
 counts instead: `0 readable specs` with no `(N unreadable)` note is an empty

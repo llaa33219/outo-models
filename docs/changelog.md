@@ -4,6 +4,33 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.16 — podman resolves the CDI names
+
+### Fixed
+
+- **The GPU fallback no longer translates CDI specs itself.** On podman
+  < 6.0 the create body carried the server's own translation of the host
+  specs (`devices` / `mounts` / `env` merged field by field), which
+  silently dropped every edit the translation had no field for — OCI
+  hooks included — so a real `nvidia-ctk` spec failed with `CDI device
+  '0' requests 'hooks', which cannot be translated into a podman create
+  body`. The body now carries CDI qualified names
+  (`devices: [{"path": "nvidia.com/gpu=0"}]`), which is podman's own CDI
+  path: `specgen.ExtractCDIDevices` → `libpod.WithCDI` →
+  `registry.InjectDevices` applies the complete `containerEdits`, hooks
+  included, server-side. Podman >= 6.0 keeps the `gpus` field.
+
+### Changed
+
+- **The spec reader became a failure diagnostic.** Since podman resolves
+  the names itself, the local-then-host ladder runs only after podman
+  refused the create, and its result only decides what the error says: a
+  failed resolution raises `space_gpu_cdi_unresolved` with the resolver's
+  report (kinds, defined devices, per-directory probe) *and* podman's own
+  message appended; a successful one re-raises podman's error unchanged,
+  because then podman is the authority. Error codes, the assignment-name
+  normalization, and the helper-container mechanics are unchanged.
+
 ## v0.6.15 — real CDI specs resolve
 
 ### Fixed

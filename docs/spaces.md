@@ -290,15 +290,23 @@ on `start`, the user's GPU list is forwarded to the container.
 ### Podman version compatibility
 
 The `gpus` field of the libpod create body exists only from Podman 6.0 on.
-Older releases (4.x, 5.x) have no CDI concept in their REST API — the CLI
-resolved CDI client-side — and Go silently drops the unknown `gpus` key, so
-an assigned GPU would be accepted and then never reach the container. The
-runtime therefore probes `GET /libpod/version` once and picks a path:
+Older releases (4.x, 5.x) do not have it, and Go silently drops the unknown
+`gpus` key, so an assigned GPU would be accepted and then never reach the
+container. They do, however, still resolve CDI — the create body's
+`devices` entries may be CDI qualified names. The runtime therefore probes
+`GET /libpod/version` once and picks a spelling:
 
 | Podman | How the GPU is injected |
 | --- | --- |
 | >= 6.0 | `gpus: ["0", …]` — resolved by Podman itself |
-| < 6.0, or version undetectable | The server reads the CDI specs in `/etc/cdi` and `/var/run/cdi` and injects the resolved `devices`, `mounts` and `env` entries — the same end state |
+| < 6.0, or version undetectable | `devices: [{"path": "nvidia.com/gpu=0"}, …]` — CDI qualified names, which Podman resolves itself |
+
+Both rows end in Podman doing the resolution. On 4.x / 5.x the qualified
+device names reach Podman's own CDI path — `specgen.ExtractCDIDevices` →
+`libpod.WithCDI` → `containers/common`'s `registry.InjectDevices` — which
+reads the host specs and applies the **complete** `containerEdits`: device
+nodes, mounts, env *and* OCI hooks. The server sends names only; it never
+translates a spec into create-body fields, so nothing can be silently lost.
 
 `outo-models start` mounts both CDI spec directories read-only into the
 server container when they exist on the host, so no operator step is needed
@@ -312,9 +320,12 @@ container themselves must mount them:
 -v /etc/cdi:/etc/cdi:ro -v /var/run/cdi:/var/run/cdi:ro
 ```
 
-When the specs are missing or do not define the requested device, the Space
-start fails with `OutoError(code="space_gpu_cdi_unresolved")` naming the
-device and the CDI kind — never a silently GPU-less container. The
+When Podman refuses the create, the server diagnoses it: it resolves the
+same assignment against the specs itself and, if it cannot either, raises
+`OutoError(code="space_gpu_cdi_unresolved")` naming the device, the CDI kind
+and what Podman said — never a silently GPU-less container, and never a bare
+Podman message. If the resolver *does* find the device, Podman's own error is
+re-raised unchanged, because at that point it is the truth. The
 "no spec of this kind" variant additionally reports, one line per searched
 directory, what the resolver actually observed (`present, N readable specs,
 kinds: …` / `missing` / `unreadable`), so "the specs were never mounted" is
@@ -336,12 +347,14 @@ runtime recovers on its own:
    bind mounted read-only, cats every `.yaml` / `.yml` / `.json` spec out, and
    the specs are resolved from that output. The helper is removed afterwards.
 3. If neither source resolves the device, the
-   `space_gpu_cdi_unresolved` error is raised with both attempts named.
+   `space_gpu_cdi_unresolved` error is raised with both attempts named and
+   Podman's refusal appended.
 
-Nothing has to be mounted for this to work, and the healthy (mounted) state
-pays nothing — the helper container is only created when step 1 misses. The
-fallback is podman-<6-only; from Podman 6.0 on the `gpus` field makes CDI
-Podman's own job.
+Nothing has to be mounted for this to work, and the healthy case pays nothing:
+Podman resolving the names means the whole ladder — step 1 included — runs
+only after Podman refused the create, and the helper only after the local read
+missed. The ladder is podman-<6-only; from Podman 6.0 on the `gpus` field
+makes CDI Podman's own job and a refusal needs no diagnosis.
 
 ## Clone / push
 
