@@ -59,15 +59,19 @@ own daemon: that job belongs to the operator and the host scripts
 
 from __future__ import annotations
 
+import asyncio
 import json
+import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 import httpx
 
 from outo_models.config import Settings
-from outo_models.exceptions import OutoError
-from outo_models.spaces.cdi import device_name, resolve_device
+from outo_models.exceptions import OutoError, ValidationFailedError
+from outo_models.spaces import cdi
+from outo_models.spaces.cdi import device_name
 
 _LIBPOD_PREFIX = "/v4.0.0/libpod"
 
@@ -78,6 +82,20 @@ _LABEL_MANAGED_VALUE = "true"
 _LABEL_SPACE = "outo.space"
 
 _ERROR_TAIL_MAX_CHARS = 2048
+
+_CDI_PROBE_PREFIX = "outo-cdi-probe-"
+_LABEL_CDI_PROBE = "outo.cdi-probe"
+_CDI_PROBE_TIMEOUT = 10.0
+_CDI_PROBE_POLL_INTERVAL = 0.1
+_CDI_HOST_CONTEXT = "specs read from the host via a helper container"
+_CDI_BOTH_ATTEMPTS = (
+    "Both resolution paths were attempted: the server container's own "
+    "filesystem first, then the same directories read on the host through a "
+    "throwaway podman helper container. Generate the specs on the host "
+    "(nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml), make sure the "
+    "GPU is assigned to the user, and check that the assigned GPU id exists "
+    "in those specs."
+)
 
 
 def container_name(owner: str, name: str) -> str:
@@ -134,6 +152,52 @@ def _major_version(version: str) -> int:
         return int(head)
     except ValueError:
         return 0
+
+
+def _cdi_probe_script(dirs: Sequence[str]) -> str:
+    """Return the shell program that cats every CDI spec out of `dirs`.
+
+    Each file is preceded by a `---` YAML document separator, which is what
+    `cdi.parse_specs` consumes. The `[ -f "$f" ]` guard is what makes an
+    unmatched glob a no-op instead of a `cat: no such file` — a directory
+    that holds only `.yaml` specs must still succeed.
+    """
+    return " ".join(
+        f'for f in "{directory}"/*{suffix}; do [ -f "$f" ] && {{ echo ---; cat "$f"; }}; done'
+        for directory in dirs
+        for suffix in (".yaml", ".yml", ".json")
+    )
+
+
+def _split_log_frames(raw: bytes) -> list[bytes]:
+    """Split a podman logs body into payloads, or return [] when unframed.
+
+    Podman's libpod logs endpoint always prefixes each line with an 8-byte
+    header (`stream`, three zero bytes, uint32 big-endian length); it omits
+    the header only for compat requests or a tty container. Both shapes are
+    accepted, and anything that does not parse as a clean frame sequence is
+    reported as unframed so the raw body is used as-is.
+    """
+    frames: list[bytes] = []
+    offset = 0
+    while offset + 8 <= len(raw):
+        header = raw[offset : offset + 8]
+        if header[0] not in (1, 2) or header[1:4] != b"\x00\x00\x00":
+            return []
+        offset += 8
+        size = int.from_bytes(header[4:8], "big")
+        if size == 0 or offset + size > len(raw):
+            return []
+        frames.append(raw[offset : offset + size])
+        offset += size
+    return frames if frames and offset == len(raw) else []
+
+
+def _decode_logs(raw: bytes) -> str:
+    """Return the text of a podman logs body, frame headers removed if any."""
+    frames = _split_log_frames(raw)
+    payload = b"".join(frames) if frames else raw
+    return payload.decode("utf-8", errors="replace")
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +437,124 @@ class SpaceRuntimeManager:
                 pass
         return body
 
+    async def _cdi_probe_finished(self, container: str) -> bool:
+        """Poll until the helper container has stopped, or the wait times out.
+
+        The exit code is irrelevant — the specs are the output either way —
+        so only "no longer running / never started" ends the wait.
+        """
+        deadline = asyncio.get_running_loop().time() + _CDI_PROBE_TIMEOUT
+        pending = {"created", "configured", "initialized", "running"}
+        while True:
+            payload = (
+                await self._request("GET", f"{_LIBPOD_PREFIX}/containers/{container}/json")
+            ).json()
+            state = payload.get("State") if isinstance(payload, dict) else None
+            status = state.get("Status") if isinstance(state, dict) else None
+            if not (isinstance(status, str) and status in pending):
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(_CDI_PROBE_POLL_INTERVAL)
+
+    async def _read_host_cdi_texts(self, dirs: Sequence[str], image: str) -> tuple[str, ...]:
+        """Read the CDI spec files of `dirs` on the host through podman.
+
+        The spec directories are host paths. `outo-models start` normally
+        bind mounts them into the server container, but that plumbing can be
+        missing or stale while the specs themselves are perfectly valid. The
+        podman socket is already the server's host-truth channel, so the
+        fallback asks podman itself: a throwaway container of the Space's own
+        already-built image gets the same directories bind mounted and cats
+        them out through the logs endpoint. No image pull, no new dependency.
+
+        Returns an empty tuple on any failure — a broken helper must fall
+        through to the loud, self-diagnosing error, never to a GPU-less
+        container.
+        """
+        container = f"{_CDI_PROBE_PREFIX}{secrets.token_hex(4)}"
+        body: dict[str, Any] = {
+            "name": container,
+            "image": image,
+            "labels": {_LABEL_MANAGED: _LABEL_MANAGED_VALUE, _LABEL_CDI_PROBE: "1"},
+            "command": ["sh", "-c", _cdi_probe_script(dirs)],
+            "mounts": [
+                {
+                    "source": directory,
+                    "destination": directory,
+                    "type": "bind",
+                    "options": ["ro", "rbind"],
+                }
+                for directory in dirs
+            ],
+        }
+        try:
+            await self._request(
+                "POST",
+                f"{_LIBPOD_PREFIX}/containers/create",
+                json_body=body,
+            )
+            await self._request("POST", f"{_LIBPOD_PREFIX}/containers/{container}/start")
+            if not await self._cdi_probe_finished(container):
+                return ()
+            response = await self._request(
+                "GET",
+                f"{_LIBPOD_PREFIX}/containers/{container}/logs",
+                params={"stdout": "true", "stderr": "false", "follow": "false"},
+            )
+        except (OutoError, ValueError):
+            return ()
+        finally:
+            await self._discard_helper(container)
+        text = _decode_logs(response.content)
+        return (text,) if text.strip() else ()
+
+    async def _discard_helper(self, container: str) -> None:
+        """Remove the helper container, tolerating a refusal from podman.
+
+        The cleanup runs on the failure path too, so an error here would
+        replace the loud, self-diagnosing resolution error with an opaque
+        podman one — exactly the diagnosis the operator needs.
+        """
+        try:
+            await self._delete_container(container)
+        except OutoError:
+            return
+
+    async def _resolve_gpu_edits(
+        self,
+        identifiers: Sequence[str],
+        image: str,
+    ) -> cdi.CdiEdits:
+        """Resolve GPU identifiers through the local specs, then the host's.
+
+        Step 1 reads the spec directories inside the server container — the
+        fast path, free of any extra podman traffic. Only when that finds
+        nothing does step 2 read the same host paths through a throwaway
+        helper container. When both fail, the error names both attempts so
+        the remaining causes (no specs on the host at all, an unknown GPU id)
+        are distinguishable.
+        """
+        try:
+            return cdi.resolve_device(identifiers)
+        except ValidationFailedError as local_exc:
+            texts = await self._read_host_cdi_texts(cdi.DEFAULT_SPEC_DIRS, image)
+            if not texts:
+                raise self._both_attempts_failed(local_exc) from local_exc
+            specs, _ = cdi.parse_specs("\n".join(texts))
+            try:
+                return cdi.resolve_edits(specs, identifiers, context=_CDI_HOST_CONTEXT)
+            except ValidationFailedError as host_exc:
+                raise self._both_attempts_failed(host_exc) from host_exc
+
+    @staticmethod
+    def _both_attempts_failed(exc: ValidationFailedError) -> ValidationFailedError:
+        """Re-raise a resolution failure with both resolution paths named."""
+        return ValidationFailedError(
+            f"{exc}\n{_CDI_BOTH_ATTEMPTS}",
+            code=exc.code,
+        )
+
     async def start(
         self,
         owner: str,
@@ -414,8 +596,9 @@ class SpaceRuntimeManager:
             else:
                 # podman < 6.0 has no `gpus` field on the create body and
                 # silently ignores unknown JSON keys, so translate the host
-                # CDI specs into fields every version understands.
-                edits = resolve_device(identifiers)
+                # CDI specs into fields every version understands — reading
+                # them locally first and from the host only if that misses.
+                edits = await self._resolve_gpu_edits(identifiers, image_tag(owner, name))
                 body["devices"] = list(edits.device_nodes)
                 body["mounts"] = [*body.get("mounts", []), *edits.mounts]
                 body["env"].update(edits.env)
@@ -452,8 +635,8 @@ class SpaceRuntimeManager:
             f"{_LIBPOD_PREFIX}/containers/{container}/restart",
         )
 
-    async def remove(self, owner: str, name: str) -> None:
-        container = container_name(owner, name)
+    async def _delete_container(self, container: str) -> None:
+        """Force-remove a container by name, ignoring an already-gone one."""
         client = self._client if self._client is not None else self._build_client()
         try:
             try:
@@ -472,6 +655,9 @@ class SpaceRuntimeManager:
                 await client.aclose()
         if response.status_code >= 400 and response.status_code != 404:
             self._raise_podman_http_error(response)
+
+    async def remove(self, owner: str, name: str) -> None:
+        await self._delete_container(container_name(owner, name))
 
     async def inspect(self, owner: str, name: str) -> dict[str, Any] | None:
         container = container_name(owner, name)
