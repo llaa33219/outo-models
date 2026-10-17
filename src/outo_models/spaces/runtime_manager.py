@@ -358,6 +358,11 @@ class SpaceRuntimeManager:
         gpu_ids: list[str] | tuple[str, ...] = (),
     ) -> tuple[str, int | None]:
         container = container_name(owner, name)
+        # Ordering is load-bearing: callers (`_run_lifecycle`) build the image
+        # BEFORE calling `start()`, so a failed build must keep the old
+        # container. Never hoist this removal above the build.
+        if await self.inspect(owner, name) is not None:
+            await self.remove(owner, name)
         host_port = await self._allocate_host_port()
         # libpod decodes this as `specgen.SpecGenerator`, not as a Docker-API
         # config: `env` is a map, ports are numeric uint16, `restart_policy` is

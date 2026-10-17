@@ -76,6 +76,11 @@ def _create_payload(captured: list[httpx.Request]) -> dict[str, Any]:
     return payload
 
 
+def _call_sequence(captured: list[httpx.Request]) -> list[str]:
+    """Reduce captured requests to `METHOD /path` strings for order assertions."""
+    return [f"{request.method} {request.url.path}" for request in captured]
+
+
 class TestContainerNameAndImageTag:
     def test_container_name_deterministic(self) -> None:
         assert container_name("alice", "demo") == "outo-space-alice-demo"
@@ -328,6 +333,68 @@ class TestStartStopAndInspect:
         await client.aclose()
         payload = _create_payload(captured)
         assert "gpus" not in payload
+
+    async def test_start_removes_an_existing_container_before_create(
+        self, settings, captured
+    ) -> None:
+        # Given: podman already holds `outo-space-alice-demo` (running, stopped
+        # or created) — create without removing it dies with
+        # "the container name ... is already in use by <id>".
+        def h(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "/containers/outo-space-alice-demo/json" in url:
+                return httpx.Response(200, json={"Id": "old-id", "State": {"Status": "running"}})
+            if request.method == "DELETE" and "/containers/outo-space-alice-demo" in url:
+                return httpx.Response(200, json={"Id": "old-id"})
+            if "/containers/json" in url:
+                return httpx.Response(200, json=[])
+            if "/containers/create" in url:
+                return httpx.Response(201, json={"Id": "new-id"})
+            if "/start" in url:
+                return httpx.Response(204)
+            return httpx.Response(200, json={})
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _ = await manager.start("alice", "demo")
+        await client.aclose()
+
+        # Then: exactly one fresh container, and remove ran before create.
+        assert container_id == "new-id"
+        sequence = _call_sequence(captured)
+        remove_index = sequence.index("DELETE /v4.0.0/libpod/containers/outo-space-alice-demo")
+        create_index = sequence.index("POST /v4.0.0/libpod/containers/create")
+        assert remove_index < create_index
+        start_call = "POST /v4.0.0/libpod/containers/outo-space-alice-demo/start"
+        assert sequence[create_index + 1] == start_call
+        # The removal is force+ignore so a running container clears too.
+        delete_request = captured[remove_index]
+        assert "force=true" in str(delete_request.url)
+
+    async def test_start_without_existing_container_skips_remove(self, settings, captured) -> None:
+        # Given: first boot — inspect reports 404.
+        def h(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "/containers/outo-space-alice-demo/json" in url:
+                return httpx.Response(404, json={"message": "no such container"})
+            if "/containers/json" in url:
+                return httpx.Response(200, json=[])
+            if "/containers/create" in url:
+                return httpx.Response(201, json={"Id": "container-id-1"})
+            if "/start" in url:
+                return httpx.Response(204)
+            return httpx.Response(200, json={})
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _ = await manager.start("alice", "demo")
+        await client.aclose()
+
+        # Then: no remove call on the lean path.
+        assert container_id == "container-id-1"
+        assert not [call for call in _call_sequence(captured) if call.startswith("DELETE")]
 
     async def test_inspect_returns_payload_or_none(self, settings) -> None:
         def h(request: httpx.Request) -> httpx.Response:
