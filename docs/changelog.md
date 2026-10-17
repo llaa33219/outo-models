@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.12 — GPUs work on every Podman version
+
+### Fixed
+
+- **GPU assignments now reach the container on Podman 4.x and 5.x.**
+  The create body's `gpus` field only exists in Podman 6.0+; older
+  versions silently ignored it, so assigned GPUs never injected
+  anything. Older hosts now get a server-side CDI fallback: the runtime
+  resolves the device specs from `/etc/cdi` and `/var/run/cdi` (mounted
+  into the server container by `outo-models start`) and injects the
+  equivalent devices, mounts and environment. Podman 6.0+ keeps the
+  `gpus` path unchanged, and a missing CDI spec fails loudly with
+  `space_gpu_cdi_unresolved` instead of silently starting without a
+  GPU.
+
 ## v0.6.11 — starting a Space replaces its container
 
 ### Fixed

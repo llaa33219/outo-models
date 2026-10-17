@@ -287,6 +287,34 @@ on `start`, the user's GPU list is forwarded to the container.
 - Build runs on a GPU-less host, so GPU assignments only affect the
   runtime container, not the build stage.
 
+### Podman version compatibility
+
+The `gpus` field of the libpod create body exists only from Podman 6.0 on.
+Older releases (4.x, 5.x) have no CDI concept in their REST API — the CLI
+resolved CDI client-side — and Go silently drops the unknown `gpus` key, so
+an assigned GPU would be accepted and then never reach the container. The
+runtime therefore probes `GET /libpod/version` once and picks a path:
+
+| Podman | How the GPU is injected |
+| --- | --- |
+| >= 6.0 | `gpus: ["0", …]` — resolved by Podman itself |
+| < 6.0, or version undetectable | The server reads the CDI specs in `/etc/cdi` and `/var/run/cdi` and injects the resolved `devices`, `mounts` and `env` entries — the same end state |
+
+`outo-models start` mounts both CDI spec directories read-only into the
+server container when they exist on the host, so no operator step is needed
+(AGENTS.md: the install stays automatic). Deployments that launch the
+container themselves must mount them:
+
+```bash
+-v /etc/cdi:/etc/cdi:ro -v /var/run/cdi:/var/run/cdi:ro
+```
+
+When the specs are missing or do not define the requested device, the Space
+start fails with `OutoError(code="space_gpu_cdi_unresolved")` naming the
+device, the CDI kind and the directories searched — never a silently
+GPU-less container. See
+[troubleshooting.md § GPU CDI errors](troubleshooting.md#gpu-cdi-errors).
+
 ## Clone / push
 
 Spaces are cloned and pushed just like regular git repos.

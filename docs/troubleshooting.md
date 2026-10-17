@@ -632,6 +632,56 @@ podman run --rm --device nvidia.com/gpu=0 docker.io/library/cuda-vectoradd:nvidi
 # and the CDI specification
 ```
 
+### The container starts but has no GPU
+
+Symptom: the Space runs, the GPU is assigned in the admin UI, but inside the
+container there is no `/dev/nvidia*`, no `NVIDIA_*` environment, and
+`nvidia-smi` is missing.
+
+This is what Podman < 6.0 does with a `gpus` field: `specgen.SpecGenerator`
+has no such key before 6.0 and Go's JSON decoder **silently ignores unknown
+fields**, so the request succeeds and the GPU is simply dropped. The server
+detects this (`GET /libpod/version`) and resolves the CDI specs itself on
+older releases, injecting `devices` + `mounts` + `env` instead.
+
+So a GPU-less container on old Podman means the CDI specs were not visible to
+the server:
+
+```bash
+# 1) Does the host have a spec at all?
+ls /etc/cdi/nvidia.yaml /var/run/cdi/nvidia.yaml
+
+# 2) Is it mounted into the server container?
+podman exec outo-models ls /etc/cdi
+
+# 3) Is the device defined by the spec?
+podman exec outo-models grep -A2 '^devices:' /etc/cdi/nvidia.yaml
+```
+
+A self-managed deployment (quadlet, a bare `podman run`) has to mount them:
+
+```bash
+-v /etc/cdi:/etc/cdi:ro -v /var/run/cdi:/var/run/cdi:ro
+```
+
+`outo-models start` does this automatically. After changing the mount, run
+`outo-models restart`.
+
+### 422 `space_gpu_cdi_unresolved`
+
+```
+CDI device '0' of kind 'nvidia.com/gpu' is not defined in the specs found in
+/etc/cdi, /var/run/cdi.
+```
+
+The fallback path refuses to start a Space without its GPU instead of
+silently dropping the device. Either the spec file is missing / not mounted
+(see above), the device name in the assignment has no matching entry in the
+spec's `devices:` block, or the spec requests edits (OCI hooks,
+additional GIDs) that cannot be expressed in a Podman create body — the
+message names which one. Regenerate the spec without that edit, or assign a
+device the spec defines.
+
 ## 13. `outo-models: command not found` after `podman pull`
 
 Pulling the image never installs a host command — the CLI lives inside the

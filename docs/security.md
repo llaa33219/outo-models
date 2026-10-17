@@ -410,6 +410,12 @@ launch the container themselves — quadlet, systemd units, a bare
 governs the file system, not socket permissions, and Podman would refuse the
 write operations anyway. Keep it for tidiness, not for isolation.
 
+`outo-models start` also mounts the host CDI spec directories
+(`/etc/cdi`, `/var/run/cdi`) read-only when they exist. The server reads
+them only to build the device/mount/env list for Podman versions older than
+6.0 (see [spaces.md § Podman version compatibility](spaces.md#podman-version-compatibility));
+the contents are declarative device definitions, never executed.
+
 Additional recommendations:
 
 - On the host, run `podman system connection ls` to verify the user socket
