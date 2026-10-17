@@ -4,6 +4,23 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.13 — the server container can read the CDI specs
+
+### Fixed
+
+- **The GPU fallback now actually reaches the CDI specs when the CLI
+  runs through the shim.** `outo-models start` always runs inside the
+  shim's container, where host paths like `/etc/cdi` are invisible, so
+  the server container never received the spec mounts and every
+  podman<6 host failed with `space_gpu_cdi_unresolved` even with valid
+  specs installed. The shim now probes the host directories and
+  forwards them as `OUTO_CDI_DIRS` (the same host-truth channel as
+  `OUTO_PODMAN_SOCK`), `outo-models update` carries the value into the
+  container recreation, and `start` uses the entries verbatim as
+  read-only mounts. The unresolved-spec error now names the full
+  recovery: generate the specs, refresh `install-cli.sh`, then
+  `outo-models update`.
+
 ## v0.6.12 — GPUs work on every Podman version
 
 ### Fixed

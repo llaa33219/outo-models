@@ -92,9 +92,16 @@ working in this repository **must** follow.
      `OUTO_PODMAN_SOCK` or a rootless-first probe. Deployments that launch
      the container themselves (quadlet, bare `podman run`) must mount it
      themselves. The rootless socket (e.g.
-     `/run/user/1000/podman/podman.sock`) is the supported path, because the
-     container runs **non-root** (uid 1000) and cannot connect to a rootful
-     socket.
+`/run/user/1000/podman/podman.sock`) is the supported path, because the
+      container runs **non-root** (uid 1000) and cannot connect to a rootful
+      socket.
+   - The same host-truth channel carries the CDI spec directories: the
+     `install-cli.sh` shim probes `/etc/cdi` and `/var/run/cdi` on the host
+     and forwards the existing ones as `OUTO_CDI_DIRS`, which `start` mounts
+     read-only (`-v <dir>:<dir>:ro`) and `update.sh` forwards into its
+     recreate. `start` runs inside a container, so it can never probe the
+     host itself — the `in_container()` guard in `_host_cdi_dirs()` is what
+     keeps a container mount point from being used as a host `-v` source.
    - Host ports are allocated sequentially from
      `OUTO_SPACES_RUNTIME_PORT_RANGE_START..END` after an occupancy check
      via `list_managed()`. Only the in-container port `8000/tcp` is exposed
