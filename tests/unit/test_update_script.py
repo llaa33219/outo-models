@@ -147,6 +147,27 @@ class TestUpdateStepSequence:
         assert "OUTO_PODMAN_SOCKET=/run/podman/podman.sock" in call
         assert f"OUTO_PODMAN_SOCK={host_socket}" in call
 
+    def test_recreate_forwards_the_host_cdi_dirs(self, tmp_path: Path, host_socket: str) -> None:
+        # Given / When: the nested `start` runs in YET another container, so
+        # it cannot probe the host's CDI spec directories either — the shim's
+        # host knowledge has to survive the extra hop, exactly like the socket.
+        result = _update(
+            tmp_path,
+            OUTO_PODMAN_SOCK=host_socket,
+            OUTO_CDI_DIRS="/etc/cdi:/var/run/cdi",
+        )
+        # Then
+        assert result.returncode == 0, result.stderr
+        assert "OUTO_CDI_DIRS=/etc/cdi:/var/run/cdi" in _recreate(_invocations(tmp_path))
+
+    def test_recreate_omits_the_cdi_env_when_the_host_knows_none(
+        self, tmp_path: Path, host_socket: str
+    ) -> None:
+        # update.sh forwards, it never probes: an unset OUTO_CDI_DIRS means
+        # "no host knowledge", and an empty `-e` would only tell `start` that.
+        assert _update(tmp_path, OUTO_PODMAN_SOCK=host_socket).returncode == 0
+        assert not [arg for arg in _recreate(_invocations(tmp_path)) if "CDI" in arg]
+
     def test_recreate_probes_the_rootless_socket_without_the_env(
         self, tmp_path: Path, host_socket: str
     ) -> None:

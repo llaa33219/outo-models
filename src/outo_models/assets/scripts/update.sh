@@ -137,6 +137,12 @@ if [[ -z "${host_sock}" ]]; then
     fi
 fi
 
+# OUTO_CDI_DIRS is the same kind of one-way host knowledge (the CDI spec
+# directories) for the same reason: the nested `start` runs in yet another
+# container and cannot probe the host. Forwarded verbatim, never probed here —
+# probing would read this container's own mount points.
+cdi_dirs="${OUTO_CDI_DIRS:-}"
+
 recreate_args=(
     --network=host
     --userns=keep-id
@@ -149,6 +155,9 @@ if [[ -n "${host_sock}" ]]; then
         -e OUTO_PODMAN_SOCKET=/run/podman/podman.sock
         -e "OUTO_PODMAN_SOCK=${host_sock}"
     )
+fi
+if [[ -n "${cdi_dirs}" ]]; then
+    recreate_args+=(-e "OUTO_CDI_DIRS=${cdi_dirs}")
 fi
 
 echo "[3/3] recreating container ${container_name} with the ${image_tag} spec"
