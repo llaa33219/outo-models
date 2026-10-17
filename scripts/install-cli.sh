@@ -122,6 +122,23 @@ if [[ -S "\${sock}" ]]; then
     args+=(-e OUTO_PODMAN_SOCK="\${sock}")
 fi
 
+# CDI spec directories, same host-truth channel: on podman < 6.0 the server
+# resolves the GPU devices from these specs itself, and `outo-models start`
+# runs in a container that cannot see the host's /etc/cdi. This shim runs ON
+# THE HOST, so it probes there and forwards the answer; `start` then mounts
+# each directory read-only. An operator-set OUTO_CDI_DIRS wins verbatim.
+cdi_dirs="\${OUTO_CDI_DIRS:-}"
+if [[ -z "\${cdi_dirs}" ]]; then
+    for dir in /etc/cdi /var/run/cdi; do
+        if [[ -d "\${dir}" ]]; then
+            cdi_dirs="\${cdi_dirs:+\${cdi_dirs}:}\${dir}"
+        fi
+    done
+fi
+if [[ -n "\${cdi_dirs}" ]]; then
+    args+=(-e "OUTO_CDI_DIRS=\${cdi_dirs}")
+fi
+
 # The setup wizard needs an interactive TTY; piping must keep working.
 if [[ -t 0 ]]; then
     args+=(-it)

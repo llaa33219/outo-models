@@ -81,6 +81,9 @@ class TestInstallCliScript:
         assert "podman/podman.sock" in INSTALL_TEXT
         assert "OUTO_IMAGE" in INSTALL_TEXT
         assert "OUTO_PODMAN_SOCK" in INSTALL_TEXT
+        # Host CDI spec directories: forwarded verbatim when the operator sets
+        # them, probed on the host otherwise (see the dedicated test below).
+        assert "OUTO_CDI_DIRS" in INSTALL_TEXT
         # The setup wizard needs a TTY only when stdin is a terminal.
         assert "-t 0" in INSTALL_TEXT
         # keep-id keeps volume/config ownership on the invoking host user
@@ -103,6 +106,18 @@ class TestInstallCliScript:
             'user_sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"'
         )
         assert user_probe < body.index("elif [[ -S /run/podman/podman.sock ]]")
+
+    def test_wrapper_probes_host_cdi_dirs_and_forwards_them(self) -> None:
+        # The podman<6 GPU fallback reads the host CDI specs inside the server
+        # container, and `start` cannot probe them: it runs in a container where
+        # every visible path is the container's own mount point. The shim runs
+        # ON THE HOST, so it probes and forwards the host paths as
+        # OUTO_CDI_DIRS — the same host-truth channel as OUTO_PODMAN_SOCK.
+        body = _wrapper_text()
+        assert 'cdi_dirs="${OUTO_CDI_DIRS:-}"' in body
+        assert "for dir in /etc/cdi /var/run/cdi" in body
+        assert 'if [[ -d "${dir}" ]]' in body
+        assert 'args+=(-e "OUTO_CDI_DIRS=${cdi_dirs}")' in body
 
     def test_installer_precreates_config_dir_writable_by_container(self) -> None:
         # podman refuses to bind-mount a missing host dir (statfs error seen
@@ -411,6 +426,123 @@ class TestWrapperForwardsHostSocketPath:
         assert f"{sock_path}:/run/podman/podman.sock" in result.stdout
         assert f"OUTO_PODMAN_SOCK={sock_path}" in result.stdout
         assert "OUTO_PODMAN_SOCKET=/run/podman/podman.sock" in result.stdout
+
+
+class TestWrapperForwardsHostCdiDirs:
+    """The shim is the only process that can see the host's CDI spec dirs.
+
+    `outo-models start` runs inside a container, where the probe would only
+    ever match the container's own mount points — passing those to the host
+    podman as `-v` sources fails. So the shim (running on the host) probes
+    once and forwards the answer in OUTO_CDI_DIRS.
+    """
+
+    def _render_with_probed_dirs(self, tmp_path: Path, candidates: str) -> Path:
+        """Wrapper whose probe list points at controlled directories.
+
+        The candidate list is the contract under test (pinned verbatim in
+        `test_wrapper_probes_host_cdi_dirs_and_forwards_them`), so swapping it
+        for a tmp pair exercises the real probe — the `-d` test, the
+        colon-joined accumulation and the conditional emit — against a
+        filesystem the test owns, instead of whatever this host happens to
+        have installed.
+        """
+        wrapper = _render_wrapper(tmp_path)
+        body = _wrapper_text().replace(
+            "for dir in /etc/cdi /var/run/cdi", f"for dir in {candidates}"
+        )
+        wrapper.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+        return wrapper
+
+    def test_env_override_is_forwarded_verbatim(self, tmp_path: Path) -> None:
+        # A colon-joined value the operator set (e.g. a non-default spec
+        # location) must survive untouched — including entries that do not
+        # exist here, since only the host podman resolves them.
+        wrapper = _render_wrapper(tmp_path)
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={
+                "OUTO_CONFIG": str(tmp_path / "absent.yaml"),
+                "OUTO_CDI_DIRS": f"{tmp_path}/specs:/opt/cdi",
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"OUTO_CDI_DIRS={tmp_path}/specs:/opt/cdi" in result.stdout
+
+    def test_probe_emits_only_the_host_directories_that_exist(self, tmp_path: Path) -> None:
+        # Given: one of the two probed host directories exists.
+        present = tmp_path / "etc-cdi"
+        present.mkdir()
+        absent = tmp_path / "run-cdi"
+        wrapper = self._render_with_probed_dirs(tmp_path, f"{present} {absent}")
+        bin_dir = _fake_podman(tmp_path)
+        # When
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+        )
+        # Then: the existing directory only — podman would otherwise create the
+        # missing one on the host as an empty root-owned directory.
+        assert result.returncode == 0, result.stderr
+        assert f"OUTO_CDI_DIRS={present}" in result.stdout
+        assert str(absent) not in result.stdout
+
+    def test_probe_emits_both_existing_directories_in_probe_order(self, tmp_path: Path) -> None:
+        first = tmp_path / "etc-cdi"
+        second = tmp_path / "run-cdi"
+        first.mkdir()
+        second.mkdir()
+        wrapper = self._render_with_probed_dirs(tmp_path, f"{first} {second}")
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"OUTO_CDI_DIRS={first}:{second}" in result.stdout
+
+    def test_probe_stays_silent_on_a_host_without_cdi_specs(self, tmp_path: Path) -> None:
+        # Given / When: neither probed directory exists (a GPU-less host).
+        wrapper = self._render_with_probed_dirs(tmp_path, f"{tmp_path}/a {tmp_path}/b")
+        bin_dir = _fake_podman(tmp_path)
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={"OUTO_CONFIG": str(tmp_path / "absent.yaml")},
+        )
+        # Then: no empty env, and the wrapper still runs the command.
+        assert result.returncode == 0, result.stderr
+        assert "OUTO_CDI_DIRS" not in result.stdout
+        assert ":stable status" in result.stdout
+
+    def test_env_override_wins_over_the_host_probe(self, tmp_path: Path) -> None:
+        # The operator's value must not be extended by the probe — an override
+        # equal to the probed set would pass either implementation.
+        probed = tmp_path / "probed-cdi"
+        probed.mkdir()
+        wrapper = self._render_with_probed_dirs(tmp_path, str(probed))
+        bin_dir = _fake_podman(tmp_path)
+        override = "/opt/cdi-only"
+        result = _run_wrapper(
+            wrapper,
+            bin_dir,
+            tmp_path,
+            extra_env={
+                "OUTO_CONFIG": str(tmp_path / "absent.yaml"),
+                "OUTO_CDI_DIRS": override,
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"OUTO_CDI_DIRS={override}" in result.stdout
+        assert str(probed) not in result.stdout
 
 
 class TestWrapperDestructiveEnvPassThrough:
