@@ -10,28 +10,42 @@ never reaches the container — no error, no device nodes, no `nvidia-smi`.
 Those releases have no CDI concept in their REST API at all (the CLI resolved
 CDI client-side), so the server has to do the resolution itself.
 
-This module reads the same CDI spec files the podman CLI would read
-(`/etc/cdi`, `/var/run/cdi`) and translates the selected devices into the
-three SpecGenerator fields that exist on every version:
+The create body this server sends names the devices and lets podman resolve
+them: `devices: [{"path": "nvidia.com/gpu=0"}]` travels to
+`specgen.ExtractCDIDevices` → `libpod.WithCDI` → `registry.InjectDevices`,
+so podman applies the complete `containerEdits` itself — device nodes,
+mounts, env and OCI hooks alike. There is no server-side translation to
+maintain for delivery.
+
+What lives here is the *diagnosis*. When that create call fails, the server
+reads the same CDI spec files the podman CLI would read (`/etc/cdi`,
+`/var/run/cdi`), resolves the selected devices itself and reports what it
+found — which kinds exist, which devices a spec defines, what each searched
+directory actually held. The translation into the three SpecGenerator fields
+that exist on every version is kept for exactly that purpose:
 
 * `devices` — OCI `specs.LinuxDevice` entries (`path`/`type`/`major`/…)
 * `mounts`  — OCI `specs.Mount` entries (`source`/`destination`/…)
 * `env`     — a `map[string]string` merge
 
-Anything the translation cannot express (OCI hooks, additional GIDs,
-intel-rdt, net devices) raises instead of being dropped: a silently
-GPU-less container is the exact failure this module removes.
+A `containerEdits` key the translation cannot express (additional GIDs,
+intel-rdt, net devices) still raises instead of being ignored: a silently
+GPU-less container is the exact failure this module removes, and an
+unreadable device name is the likeliest cause of a rejected create call.
+OCI hooks are the one key deliberately skipped — podman's own CDI path
+applies them, so their presence in a spec says nothing about whether the
+assignment resolves.
 
 The spec files live on the host, so `outo-models start` mounts both
 directories read-only into the server container (see `cli/start.py`).
 When that plumbing is missing or stale, `runtime_manager` reads the same
 directories from the host through a throwaway podman helper container and
 feeds the result to `parse_specs` + `resolve_edits` — the IO-free half of
-this module, so the translation has exactly one implementation.
+this module, so the diagnosis has exactly one implementation.
 
 # allow: SIZE_OK — the whole file is one cohesive unit: parse CDI specs
-# (from files or from a text stream) and translate a device selection into
-# podman create-body fields. Splitting the parser from the resolver would
+# (from files or from a text stream) and resolve a device selection against
+# them. Splitting the parser from the resolver would
 # leave the error paths (which need both the specs and the per-directory
 # probe report) reaching across modules, and neither half has an independent
 # lifecycle: the resolver exists to serve the parser's output.
@@ -54,7 +68,9 @@ _LOGGER = get_logger(__name__)
 #: Host CDI spec directories, in the order the CDI spec's default cache uses.
 DEFAULT_SPEC_DIRS: tuple[str, ...] = ("/etc/cdi", "/var/run/cdi")
 
-_DEFAULT_KIND = "nvidia.com/gpu"
+#: The CDI kind an unqualified GPU assignment is resolved under, and the kind
+#: the create body's qualified device names are built with.
+DEFAULT_KIND = "nvidia.com/gpu"
 
 _UNRESOLVED_CODE = "space_gpu_cdi_unresolved"
 
@@ -64,10 +80,12 @@ _SPEC_SUFFIXES = (".yaml", ".yml", ".json")
 #: Everything else fails loudly (see the module docstring).
 _SUPPORTED_EDITS = ("deviceNodes", "mounts", "env")
 
+#: Edit keys podman's own CDI path applies but this translation has no field
+#: for. They never fail a resolution: podman — not this module — injects them.
+_IGNORED_EDITS = ("hooks",)
+
 _UNSUPPORTED_HINT = (
-    "Regenerate the CDI spec without it (see the NVIDIA container toolkit "
-    "documentation), or run the Space on a host where the podman CLI handles "
-    "CDI itself."
+    "Regenerate the CDI spec without it (see the NVIDIA container toolkit documentation)."
 )
 
 _GPU_INDEX_PREFIX = "GPU-"
@@ -232,13 +250,17 @@ def _translate_edits(
     env: dict[str, str],
     context: str = "",
 ) -> None:
-    """Accumulate one `containerEdits` block into the output collections."""
+    """Accumulate one `containerEdits` block into the output collections.
+
+    Hooks are skipped rather than refused: podman applies them itself on the
+    create path, so their presence never invalidates the assignment.
+    """
     for key in sorted(edits):
-        if key not in _SUPPORTED_EDITS:
+        if key not in _SUPPORTED_EDITS and key not in _IGNORED_EDITS:
             raise ValidationFailedError(
                 _with_context(
-                    f"CDI device {device!r} requests {key!r}, which cannot be "
-                    f"translated into a podman create body. {_UNSUPPORTED_HINT}",
+                    f"CDI device {device!r} requests {key!r}, which the "
+                    f"resolver cannot account for. {_UNSUPPORTED_HINT}",
                     context,
                 ),
                 code=_UNRESOLVED_CODE,
@@ -384,7 +406,7 @@ def resolve_edits(
     specs: Sequence[Mapping[str, Any]],
     identifiers: Sequence[str],
     *,
-    kind: str = _DEFAULT_KIND,
+    kind: str = DEFAULT_KIND,
     searched: Sequence[str] | None = None,
     probes: Sequence[_DirProbe] = (),
     context: str = "",
@@ -403,9 +425,9 @@ def resolve_edits(
 
     Raises:
         ValidationFailedError: no spec / no device for a requested
-            identifier, or an edit that cannot be expressed as a podman
-            create-body field. Failing loudly is mandatory — a container
-            that silently starts without its GPU is the bug this replaces.
+            identifier, or an edit the diagnostic cannot account for.
+            Failing loudly is mandatory — a container that silently starts
+            without its GPU is the bug this replaces.
     """
     paths = tuple(DEFAULT_SPEC_DIRS if searched is None else searched)
     nodes: list[dict[str, Any]] = []
@@ -461,7 +483,7 @@ def resolve_edits(
 def resolve_device(
     identifiers: Sequence[str],
     *,
-    kind: str = _DEFAULT_KIND,
+    kind: str = DEFAULT_KIND,
     dirs: Sequence[str | Path] | None = None,
 ) -> CdiEdits:
     """Resolve CDI device identifiers into SpecGenerator-ready container edits.
@@ -476,8 +498,7 @@ def resolve_device(
 
     Raises:
         ValidationFailedError: no spec / no device for a requested
-            identifier, or an edit that cannot be expressed as a podman
-            create-body field.
+            identifier, or an edit the diagnostic cannot account for.
     """
     searched = tuple(str(d) for d in dirs) if dirs is not None else DEFAULT_SPEC_DIRS
     probes = _probe_all(searched)
@@ -486,6 +507,7 @@ def resolve_device(
 
 
 __all__ = [
+    "DEFAULT_KIND",
     "DEFAULT_SPEC_DIRS",
     "CdiEdits",
     "device_name",

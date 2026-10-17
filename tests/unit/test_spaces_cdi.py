@@ -1,10 +1,10 @@
 """Unit tests for `outo_models.spaces.cdi`.
 
-The module exists for one reason: podman < 6.0 has no `gpus` field on its
-REST create body (Go drops the unknown key silently), so assigned GPUs must
-be translated into plain SpecGenerator `devices` / `mounts` / `env` edits
-that every podman version understands. These tests pin the translation
-against a synthetic NVIDIA-style spec file — no host CDI registry needed.
+The module exists for one reason: when podman refuses a create that carried
+CDI device names (podman < 6.0 has no `gpus` field — Go drops that unknown key
+silently), the runtime must say what the host's specs actually contain. These
+tests pin that resolution against a synthetic NVIDIA-style spec file — no
+host CDI registry needed.
 
 # allow: SIZE_OK — one spec file, one translation function; splitting the
 # loader and the resolver tests across files would double the fixtures
@@ -322,7 +322,11 @@ class TestResolveDeviceFailures:
         assert "outo-models update" in message
         assert excinfo.value.code == "space_gpu_cdi_unresolved"
 
-    def test_hooks_are_refused_loudly(self, tmp_path: Path) -> None:
+    def test_hooks_are_ignored_without_failing_the_resolution(self, tmp_path: Path) -> None:
+        # Given: a spec whose device carries OCI hooks — the shape the live
+        # NVIDIA spec has. podman applies hooks itself on its own CDI path
+        # (registry.InjectDevices), so their presence must not make the
+        # assignment look unresolvable.
         directory = _spec_dir(
             tmp_path,
             "kind: nvidia.com/gpu\n"
@@ -331,12 +335,18 @@ class TestResolveDeviceFailures:
             "    containerEdits:\n"
             "      hooks:\n"
             "        - hookName: createContainer\n"
-            "          path: /bin/true\n",
+            "          path: /bin/true\n"
+            "      deviceNodes:\n"
+            "        - path: /dev/nvidia0\n"
+            "          type: c\n"
+            "          major: 195\n"
+            "          minor: 0\n",
         )
-        with pytest.raises(ValidationFailedError) as excinfo:
-            resolve_device(["0"], dirs=[directory])
-        assert "hooks" in str(excinfo.value)
-        assert "0" in str(excinfo.value)
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the device resolved and its expressible edits came through;
+        # the hooks were skipped, not refused.
+        assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidia0"]
 
     def test_unsupported_edit_kind_is_refused_loudly(self, tmp_path: Path) -> None:
         directory = _spec_dir(
@@ -437,12 +447,11 @@ class TestResolveEdits:
             "devices:\n"
             '  "0":\n'
             "    containerEdits:\n"
-            "      hooks:\n"
-            "        - hookName: createContainer\n"
+            "      additionalGIDs: [44]\n"
         )
         with pytest.raises(ValidationFailedError) as excinfo:
             resolve_edits(specs, ["0"], context="specs read from the host via a helper container")
-        assert "hooks" in str(excinfo.value)
+        assert "additionalGIDs" in str(excinfo.value)
         assert "helper container" in str(excinfo.value)
 
     def test_context_is_omitted_by_default(self) -> None:
