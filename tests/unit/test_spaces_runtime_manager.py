@@ -500,8 +500,11 @@ class TestStartStopAndInspect:
 
 
 # A spec shaped like the live `nvidia-ctk cdi generate` output: hooks
-# included. They must not stop the device from resolving — podman applies
-# them itself.
+# included. Two of them — `create-symlinks` and `update-ldcache` — are the
+# effects a create body CAN express, and they are what makes `nvidia-smi`
+# work: the SONAME symlink and the linker's view of the library folder.
+# `enable-cuda-compat` has no create-body spelling, so it is the one the
+# delivery note names.
 _CDI_SPEC = """\
 cdiVersion: 0.5.0
 kind: nvidia.com/gpu
@@ -513,7 +516,29 @@ devices:
     containerEdits:
       hooks:
         - hookName: createContainer
-          path: /bin/true
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - create-symlinks
+            - --link
+            - libnvidia-container.so.1.17.0::libnvidia-container.so.2
+        - hookName: createContainer
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - update-ldcache
+            - --folder
+            - /usr/lib
+        - hookName: createContainer
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - disable-device-node-modification
+        - hookName: createContainer
+          path: /usr/bin/nvidia-cdi-hook
+          args:
+            - nvidia-cdi-hook
+            - enable-cuda-compat
       deviceNodes:
         - path: /dev/nvidia0
           type: c
@@ -524,6 +549,21 @@ devices:
         - hostPath: /usr/lib/libnvidia-container.so.1
           containerPath: /usr/lib/libnvidia-container.so.1
 """
+
+#: The mounts the translated retry body must carry: the spec's own library
+#: mount plus the SONAME symlink synthesized from the `create-symlinks` hook.
+_TRANSLATED_MOUNTS = [
+    {
+        "source": "/usr/lib/libnvidia-container.so.1",
+        "destination": "/usr/lib/libnvidia-container.so.1",
+    },
+    {
+        "source": "libnvidia-container.so.1.17.0",
+        "destination": "libnvidia-container.so.2",
+        "type": "bind",
+        "options": ["bind", "ro"],
+    },
+]
 
 
 #: The live host spec also asks for the video/render supplementary groups
@@ -1235,17 +1275,18 @@ class TestTranslatedCdiDeliveryFallback:
         assert bodies[0]["devices"] == [{"path": "nvidia.com/gpu=0"}]
         assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
         assert bodies[1]["devices"][0]["major"] == 195
-        assert bodies[1]["mounts"] == [
-            {
-                "source": "/usr/lib/libnvidia-container.so.1",
-                "destination": "/usr/lib/libnvidia-container.so.1",
-            }
-        ]
+        assert bodies[1]["mounts"] == _TRANSLATED_MOUNTS
         assert bodies[1]["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
+        # The `update-ldcache` hook's folder is delivered as the search path
+        # the dynamic linker reads, which is what makes `nvidia-smi` run.
+        assert bodies[1]["env"]["LD_LIBRARY_PATH"] == "/usr/lib"
         assert bodies[1]["env"]["PORT"] == "8000"
         assert container_id == "translated-container-id"
-        # The spec's hooks could not travel, and that is reported, not hidden.
-        assert "hooks dropped" in note
+        # Only the hook with no create-body spelling is reported; the two
+        # translated ones no longer appear.
+        assert note.count("enable-cuda-compat") == 1
+        assert "create-symlinks" not in note
+        assert "update-ldcache" not in note
 
     async def test_the_note_is_logged_as_a_warning(
         self, settings, captured, cdi_spec_dir, capsys
@@ -1258,7 +1299,7 @@ class TestTranslatedCdiDeliveryFallback:
         await client.aclose()
         # Then: an operator reading the server log finds the same gap the
         # Space page shows.
-        assert "hooks dropped" in capsys.readouterr().out
+        assert "enable-cuda-compat" in capsys.readouterr().out
 
     async def test_a_spec_without_hooks_leaves_no_note(
         self, settings, captured, write_specs
@@ -1289,7 +1330,7 @@ class TestTranslatedCdiDeliveryFallback:
         assert bodies[0]["gpus"] == ["0"]
         assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
         assert "gpus" not in bodies[1]
-        assert "hooks dropped" in note
+        assert "enable-cuda-compat" in note
 
     async def test_an_accepted_names_body_is_never_retried(
         self, settings, captured, cdi_spec_dir
@@ -1325,18 +1366,14 @@ class TestTranslatedCdiDeliveryFallback:
         assert bodies[0]["devices"] == [{"path": "nvidia.com/gpu=0"}]
         assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
         assert bodies[1]["devices"][0]["major"] == 195
-        assert bodies[1]["mounts"] == [
-            {
-                "source": "/usr/lib/libnvidia-container.so.1",
-                "destination": "/usr/lib/libnvidia-container.so.1",
-            }
-        ]
+        assert bodies[1]["mounts"] == _TRANSLATED_MOUNTS
         assert bodies[1]["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
+        assert bodies[1]["env"]["LD_LIBRARY_PATH"] == "/usr/lib"
         assert "gpus" not in bodies[1]
         assert container_id == "container-2"
-        # The spec's hooks could not travel through a create body, and that
-        # gap is reported rather than hidden.
-        assert "hooks dropped" in note
+        # The one hook a create body cannot express is named; the translated
+        # ones travel inside the body instead of in the note.
+        assert "enable-cuda-compat" in note
 
     async def test_two_refusals_end_in_the_rich_diagnosis(
         self, settings, captured, no_local_specs

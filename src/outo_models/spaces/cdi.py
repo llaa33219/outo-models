@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -98,13 +98,29 @@ _UNSUPPORTED_HINT = (
     "Regenerate the CDI spec without it (see the NVIDIA container toolkit documentation)."
 )
 
-#: The `containerEdits` key a `SpecGenerator` body has no field for at all,
-#: and the note that says so out loud instead of dropping it in silence.
+#: The `containerEdits` key a `SpecGenerator` body has no field for at all.
+#: Most of its effects are translated anyway (`_translate_hooks`); the rest are
+#: named by the note that says so out loud.
 _HOOKS_EDIT = "hooks"
 _HOOKS_NOTE = (
     "CDI hooks dropped for {device} ({hooks}): a container create body cannot "
-    "express hooks, and this host's podman did not apply the spec's own."
+    "express them, and this host's podman did not apply the spec's own."
 )
+
+#: Hook commands whose effect a create body CAN reproduce. `nvidia-cdi-hook`
+#: (and the legacy `nvidia-ctk hook <command>` spelling) takes the command as
+#: the first argument after the binary; `_hook_command` finds it.
+_CREATE_SYMLINKS_HOOK = "create-symlinks"
+_UPDATE_LDCACHE_HOOK = "update-ldcache"
+#: Documented no-op: the device nodes are already translated.
+_DEVICE_NODE_HOOK = "disable-device-node-modification"
+_LEGACY_HOOK_MARKER = "hook"
+_UNNAMED_HOOK = "unnamed"
+
+_LINK_SEPARATOR = "::"
+_LINK_FLAG = "--link"
+_FOLDER_FLAG = "--folder"
+_LD_LIBRARY_PATH = "LD_LIBRARY_PATH"
 
 #: `additionalGids` — supplementary GIDs. podman 4.x's vendored CDI parser
 #: does not know the key and drops it silently on its own path, so the create
@@ -146,8 +162,8 @@ class CdiEdits:
     the strings the create body's `groups` field takes. Empty when the spec
     asks for none, so the caller can leave the field off the body entirely.
 
-    `notes` carries the non-fatal findings of the translation — today only
-    dropped OCI hooks. The container they came from starts fine, but it is
+    `notes` carries the non-fatal findings of the translation — today only the
+    OCI hook effects no create body can express. The container they came from starts fine, but it is
     not the container the spec describes, so the caller has to say so
     instead of letting the gap pass unnoticed.
     """
@@ -292,16 +308,126 @@ def _with_context(message: str, context: str) -> str:
     return f"{message} ({context})" if context else message
 
 
-def _hook_names(hooks: Any) -> str:
-    """Render the `hookName` of each dropped hook, so the note names them."""
-    if not isinstance(hooks, Sequence) or isinstance(hooks, (str, bytes)):
-        return "unnamed"
-    names = [
-        str(entry["hookName"])
-        for entry in hooks
-        if isinstance(entry, Mapping) and entry.get("hookName")
+def _hook_command(args: Sequence[str]) -> str:
+    """The hook's subcommand, or "" when the entry names none.
+
+    Two spellings are in the wild — `nvidia-cdi-hook <cmd>` and the legacy
+    `nvidia-ctk hook <cmd>` — and the binary path is not always the first
+    argument, so the marker is skipped rather than the position assumed.
+    """
+    rest = args[1:]
+    if rest and rest[0] == _LEGACY_HOOK_MARKER:
+        rest = rest[1:]
+    return rest[0] if rest else ""
+
+
+def _hook_args(entry: Mapping[str, Any], flag: str) -> list[str]:
+    """The values of every repeated `flag` in a hook's argument list."""
+    args = [str(arg) for arg in entry.get("args") or ()]
+    return [
+        args[position + 1]
+        for position, arg in enumerate(args[:-1])
+        if arg == flag and args[position + 1]
     ]
-    return ", ".join(names) or "unnamed"
+
+
+def _host_source(path: str, mounts: Sequence[Mapping[str, Any]]) -> str:
+    """The host path a container `path` is served from, when we know it.
+
+    The translation already holds every destination it produced, so a path the
+    spec mounts from a different `hostPath` resolves to the real host side
+    instead of being assumed to exist at the same path on the host.
+    """
+    for mount in mounts:
+        if str(mount.get("destination")) == path:
+            return str(mount.get("source"))
+    return path
+
+
+def _symlink_mount(pair: str, mounts: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Translate one `--link <target>::<link>` pair into a bind mount.
+
+    NOTE THE ORDER: `nvidia-cdi-hook create-symlinks` takes the TARGET first
+    and the LINK second (`ln -f -s target link` inside the container root), so
+    the destination is the second field. The symlink is delivered as a
+    read-only bind mount of the target file AT the link path: the loader then
+    resolves the SONAME (`libnvidia-ml.so.1`) to a real ELF file, which is
+    what a symlink in the container root would have done.
+
+    A relative target resolves against the link's directory, exactly like
+    `ln -s` would; when the spec mounts that directory from elsewhere, the
+    mounted `hostPath` is the base. A pair without the separator cannot be
+    translated, so the caller keeps the hook in the note instead of guessing.
+    """
+    target, separator, link = pair.partition(_LINK_SEPARATOR)
+    if not separator or not target.strip() or not link.strip():
+        return None
+    if PurePosixPath(target).is_absolute():
+        resolved = target
+    else:
+        base = _host_source(str(PurePosixPath(link).parent), mounts)
+        resolved = str(PurePosixPath(base) / target)
+    return {
+        "source": _host_source(resolved, mounts),
+        "destination": link,
+        "type": "bind",
+        "options": ["bind", "ro"],
+    }
+
+
+def _merge_ld_library_path(env: dict[str, str], folders: Sequence[str]) -> None:
+    """Put the collected `update-ldcache` folders in front of the search path.
+
+    Folders first so the injected NVIDIA libraries win over whatever the image
+    already searches; the spec's own `LD_LIBRARY_PATH` is preserved behind
+    them, deduplicated, so neither source can shadow the other silently.
+    """
+    existing = [part for part in env.get(_LD_LIBRARY_PATH, "").split(":") if part]
+    merged: list[str] = []
+    for folder in (*folders, *existing):
+        if folder not in merged:
+            merged.append(folder)
+    env[_LD_LIBRARY_PATH] = ":".join(merged)
+
+
+def _translate_hooks(
+    hooks: Any,
+    *,
+    device: str,
+    mounts: list[dict[str, Any]],
+    folders: list[str],
+    notes: list[str],
+) -> None:
+    """Deliver the hook effects a create body can express; note the rest.
+
+    Hooks are auxiliary: nothing here raises. A malformed entry, an unknown
+    command and an untranslatable command all end in the note, so the
+    container still starts with the GPU — just not with everything the spec
+    asked for, and the operator is told which part that was.
+    """
+    dropped: list[str] = []
+    if not isinstance(hooks, Sequence) or isinstance(hooks, (str, bytes)):
+        notes.append(_HOOKS_NOTE.format(device=device, hooks=_UNNAMED_HOOK))
+        return
+    for entry in hooks:
+        mapping = entry if isinstance(entry, Mapping) else {}
+        command = _hook_command([str(arg) for arg in mapping.get("args") or ()])
+        if command == _CREATE_SYMLINKS_HOOK:
+            pairs = _hook_args(mapping, _LINK_FLAG)
+            translated = [
+                mount for pair in pairs if (mount := _symlink_mount(pair, mounts)) is not None
+            ]
+            mounts.extend(translated)
+            if len(translated) == len(pairs):
+                continue
+        elif command == _UPDATE_LDCACHE_HOOK:
+            folders.extend(_hook_args(mapping, _FOLDER_FLAG))
+            continue
+        elif command == _DEVICE_NODE_HOOK:
+            continue
+        dropped.append(command or str(mapping.get("hookName") or _UNNAMED_HOOK))
+    if dropped:
+        notes.append(_HOOKS_NOTE.format(device=device, hooks=", ".join(dict.fromkeys(dropped))))
 
 
 def _additional_gid(entry: Any, device: str, context: str) -> str:
@@ -335,13 +461,19 @@ def _translate_edits(
     env: dict[str, str],
     gids: list[str],
     notes: list[str],
+    folders: list[str],
     context: str = "",
 ) -> None:
     """Accumulate one `containerEdits` block into the output collections.
 
-    Hooks are recorded as a note rather than refused: no create body has a
-    field for them, and their presence says nothing about whether the
-    assignment resolves — only that the delivered container misses them.
+    Hooks are translated as far as a create body goes (`_translate_hooks`) and
+    the remainder is recorded as a note rather than refused: no create body has
+    a field for them, and their presence says nothing about whether the
+    assignment resolves.
+
+    Hooks run last so they see every mount and env entry the block produced —
+    a symlink onto a mounted library and an `LD_LIBRARY_PATH` the spec itself
+    set both depend on it.
     """
     for key in sorted(edits):
         if key not in _SUPPORTED_EDITS and key not in _IGNORED_EDITS:
@@ -353,8 +485,6 @@ def _translate_edits(
                 ),
                 code=_UNRESOLVED_CODE,
             )
-    if edits.get(_HOOKS_EDIT):
-        notes.append(_HOOKS_NOTE.format(device=device, hooks=_hook_names(edits[_HOOKS_EDIT])))
     for entry in edits.get("deviceNodes") or []:
         node, mount = _device_node(entry, device)
         nodes.append(node)
@@ -386,6 +516,10 @@ def _translate_edits(
         gid = _additional_gid(entry, device, context)
         if gid not in gids:
             gids.append(gid)
+    if _HOOKS_EDIT in edits:
+        _translate_hooks(
+            edits[_HOOKS_EDIT], device=device, mounts=mounts, folders=folders, notes=notes
+        )
 
 
 def _global_edits(spec: Mapping[str, Any]) -> dict[str, Any]:
@@ -610,9 +744,9 @@ def resolve_edits(
     themselves (a caller that read them over the network has no local `Path` to
         describe), so they are separate keyword arguments by necessity.
 
-        `notes` reports what the translation had to leave behind — dropped OCI
-        hooks — so the caller can show the gap instead of shipping a container
-        that quietly misses part of its spec.
+        `notes` reports what the translation had to leave behind — the hook
+        effects no create body can express — so the caller can show the gap
+        instead of shipping a container that quietly misses part of its spec.
 
         Raises:
             ValidationFailedError: no spec / no device for a requested
@@ -628,6 +762,7 @@ def resolve_edits(
     env: dict[str, str] = {}
     gids: list[str] = []
     notes: list[str] = []
+    folders: list[str] = []
     indexes: dict[str, dict[str, dict[str, Any]]] = {}
     for identifier in identifiers:
         match = _match_device(specs, identifier, kind=kind, where=where, indexes=indexes)
@@ -639,6 +774,7 @@ def resolve_edits(
             env=env,
             gids=gids,
             notes=notes,
+            folders=folders,
             context=context,
         )
         edits = match.device.get("containerEdits")
@@ -651,8 +787,11 @@ def resolve_edits(
                 env=env,
                 gids=gids,
                 notes=notes,
+                folders=folders,
                 context=context,
             )
+    if folders:
+        _merge_ld_library_path(env, folders)
     return CdiEdits(
         device_nodes=tuple(nodes),
         mounts=tuple(mounts),

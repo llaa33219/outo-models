@@ -435,6 +435,265 @@ class TestResolveDeviceFailures:
         assert "additionalGIDs" in str(excinfo.value)
 
 
+def _hook_spec(tmp_path: Path, *hooks: str, mounts: str = "") -> Path:
+    """A spec whose device carries `hooks` (plus optional `mounts`)."""
+    return _spec_dir(
+        tmp_path,
+        "kind: nvidia.com/gpu\n"
+        "devices:\n"
+        '  "0":\n'
+        "    containerEdits:\n" + f"{mounts}" + "      hooks:\n" + "".join(hooks),
+    )
+
+
+def _nvidia_hook(command: str, *args: str) -> str:
+    """One spec hook entry invoking `nvidia-cdi-hook <command> ...`."""
+    return (
+        "        - hookName: createContainer\n"
+        "          path: /usr/bin/nvidia-cdi-hook\n"
+        "          args:\n"
+        "            - nvidia-cdi-hook\n"
+        f"            - {command}\n" + "".join(f"            - {arg}\n" for arg in args)
+    )
+
+
+class TestHookTranslation:
+    """The two NVIDIA hook effects a create body CAN express.
+
+    `nvidia-smi` fails with "couldn't find libnvidia-ml.so library" when only
+    the spec's mounts travel: the SONAME symlink
+    (`libnvidia-ml.so.1` → `libnvidia-ml.so.580.178.04`) and the linker's
+    view of the injected library folder are exactly what the spec's
+    `create-symlinks` / `update-ldcache` hooks do. A create body has no hook
+    field, so the translation reproduces both effects itself.
+    """
+
+    def test_symlink_target_first_link_second_becomes_a_bind_mount(self, tmp_path: Path) -> None:
+        # Given: the live spec's `--link <target>::<link>` pair, target FIRST.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook(
+                "create-symlinks",
+                "--link",
+                "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.580.178.04"
+                "::/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1",
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the symlink is delivered as a read-only bind mount of the
+        # target AT the link path, so the loader resolves the SONAME.
+        assert edits.mounts == (
+            {
+                "source": "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.580.178.04",
+                "destination": "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1",
+                "type": "bind",
+                "options": ["bind", "ro"],
+            },
+        )
+        assert edits.notes == ()
+
+    def test_relative_symlink_target_resolves_against_the_link_directory(
+        self, tmp_path: Path
+    ) -> None:
+        # Given: a relative target — `ln -f -s target link` inside the root.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook(
+                "create-symlinks",
+                "--link",
+                "libnvidia-container.so.1.17.0::libnvidia-container.so.2",
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the target resolves next to the link, relative to the link's
+        # directory exactly like `ln -s` inside the container root.
+        assert edits.mounts == (
+            {
+                "source": "libnvidia-container.so.1.17.0",
+                "destination": "libnvidia-container.so.2",
+                "type": "bind",
+                "options": ["bind", "ro"],
+            },
+        )
+
+    def test_symlink_prefers_an_accumulated_mounts_real_host_source(self, tmp_path: Path) -> None:
+        # Given: the spec mounts the versioned library from a DIFFERENT host
+        # path than the container path, and symlinks its SONAME onto it.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook(
+                "create-symlinks",
+                "--link",
+                "/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.580.178.04"
+                "::/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.1",
+            ),
+            mounts=(
+                "      mounts:\n"
+                "        - hostPath: /mnt/nvidia/libnvidia-ml.so.580.178.04\n"
+                "          containerPath: /usr/lib/aarch64-linux-gnu/libnvidia-ml.so.580.178.04\n"
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the symlink mount borrows the REAL host source the mount for
+        # that destination used — the container path is not a host path.
+        assert edits.mounts[1] == {
+            "source": "/mnt/nvidia/libnvidia-ml.so.580.178.04",
+            "destination": "/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.1",
+            "type": "bind",
+            "options": ["bind", "ro"],
+        }
+
+    def test_several_link_flags_on_one_hook_all_become_mounts(self, tmp_path: Path) -> None:
+        # Given: `--link` is repeatable on a single hook.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook(
+                "create-symlinks",
+                "--link",
+                "/usr/lib/libcuda.so.1::/usr/lib/libcuda.so.580",
+                "--link",
+                "/usr/lib/libnvidia-ml.so.1::/usr/lib/libnvidia-ml.so.580",
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: both pairs travel, in the order the spec lists them.
+        assert [mount["destination"] for mount in edits.mounts] == [
+            "/usr/lib/libcuda.so.580",
+            "/usr/lib/libnvidia-ml.so.580",
+        ]
+
+    def test_legacy_nvidia_ctk_hook_spelling_is_translated(self, tmp_path: Path) -> None:
+        # Given: older specs spell the binary `nvidia-ctk hook <command>`.
+        directory = _hook_spec(
+            tmp_path,
+            "        - hookName: createContainer\n"
+            "          path: /usr/bin/nvidia-ctk\n"
+            "          args:\n"
+            "            - nvidia-ctk\n"
+            "            - hook\n"
+            "            - create-symlinks\n"
+            "            - --link\n"
+            "            - /usr/lib/libcuda.so.1::/usr/lib/libcuda.so.580\n",
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the `hook` marker is skipped and the command is found.
+        assert [mount["destination"] for mount in edits.mounts] == ["/usr/lib/libcuda.so.580"]
+        assert edits.notes == ()
+
+    def test_a_malformed_link_pair_is_noted_and_never_raises(self, tmp_path: Path) -> None:
+        # Given: a `--link` value without the `::` separator. Hooks are
+        # auxiliary: a malformed one is reported, never fatal.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook("create-symlinks", "--link", "/usr/lib/libcuda.so.580"),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: nothing was mounted for it and the note names the hook.
+        assert edits.mounts == ()
+        assert len(edits.notes) == 1
+        assert "create-symlinks" in edits.notes[0]
+
+    def test_update_ldcache_folders_prepend_ld_library_path(self, tmp_path: Path) -> None:
+        # Given: the `--folder` flags the linker must see. `--ldconfig-path`
+        # names the ldconfig binary, not a folder, and is ignored.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook(
+                "update-ldcache",
+                "--folder",
+                "/usr/lib/aarch64-linux-gnu",
+                "--folder",
+                "/usr/lib",
+                "--ldconfig-path",
+                "/sbin/ldconfig",
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the folders lead the search path, in the order collected.
+        assert edits.env["LD_LIBRARY_PATH"] == "/usr/lib/aarch64-linux-gnu:/usr/lib"
+        assert edits.notes == ()
+
+    def test_ld_library_path_merge_dedupes_and_keeps_the_spec_value(self, tmp_path: Path) -> None:
+        # Given: the spec already sets LD_LIBRARY_PATH and repeats a folder.
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            '  "0":\n'
+            "    containerEdits:\n"
+            "      env:\n"
+            "        - LD_LIBRARY_PATH=/opt/site/lib\n"
+            "      hooks:\n"
+            + _nvidia_hook("update-ldcache", "--folder", "/usr/lib", "--folder", "/usr/lib"),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: folders first, the spec's own value preserved behind them,
+        # and no duplicate entry.
+        assert edits.env["LD_LIBRARY_PATH"] == "/usr/lib:/opt/site/lib"
+
+    def test_the_no_op_hook_is_dropped_without_a_note(self, tmp_path: Path) -> None:
+        # Given: `disable-device-node-modification` is documented as a
+        # no-op — the device nodes are already translated.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook("disable-device-node-modification"),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: silently nothing to report.
+        assert edits.notes == ()
+
+    def test_an_untranslatable_hook_names_its_command(self, tmp_path: Path) -> None:
+        # Given: `enable-cuda-compat` has no create-body spelling. The note
+        # must name the COMMAND, not only the lifecycle stage.
+        directory = _hook_spec(
+            tmp_path,
+            _nvidia_hook("enable-cuda-compat", "--cuda-compat-version-hint", "12.0"),
+            _nvidia_hook(
+                "create-symlinks", "--link", "/usr/lib/libcuda.so.1::/usr/lib/libcuda.so.580"
+            ),
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: only the hook that really did not travel is named; the
+        # translated one no longer appears.
+        assert len(edits.notes) == 1
+        assert "enable-cuda-compat" in edits.notes[0]
+        assert "create-symlinks" not in edits.notes[0]
+        assert "createContainer" not in edits.notes[0]
+
+    def test_hooks_without_args_are_named_by_their_lifecycle_stage(self, tmp_path: Path) -> None:
+        # Given: a hook that carries no command at all (a hand-written spec).
+        directory = _hook_spec(
+            tmp_path,
+            "        - hookName: createContainer\n          path: /bin/true\n",
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the stage name is the only thing left to report.
+        assert len(edits.notes) == 1
+        assert "createContainer" in edits.notes[0]
+
+    def test_hooks_that_do_not_fail_the_delivery(self, tmp_path: Path) -> None:
+        # Given: a hooks value that is not a list of mappings at all.
+        directory = _spec_dir(
+            tmp_path,
+            'kind: nvidia.com/gpu\ndevices:\n  "0":\n    containerEdits:\n      hooks: bogus\n',
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: reported, not raised — the assignment still resolves.
+        assert len(edits.notes) == 1
+
+
 class TestParseSpecs:
     """`parse_specs` is the IO-free half of the loader.
 
