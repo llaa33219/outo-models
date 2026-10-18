@@ -4,6 +4,24 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.20 — the translated GPU fallback carries `additionalGids`
+
+### Fixed
+
+- **A CDI spec that requests `additionalGids` no longer blocks GPU delivery.**
+  The live `nvidia-ctk cdi generate` output asks for the video/render
+  supplementary GIDs, and the translated fallback refused the spec outright
+  (`CDI device '0' requests 'additionalGids', which the resolver cannot
+  account for`, code `space_gpu_cdi_unresolved`) even though a container
+  create body *can* express them: the spec's `additionalGids` are now
+  translated into the body's `groups` field
+  (`specgen.SpecGenerator.Groups` → `libpod.WithGroups`), merged across the
+  spec-wide and per-device edits with duplicates dropped. On podman 4.x this
+  is strictly more faithful than Podman's own CDI path, whose vendored parser
+  does not know the key and drops it silently. Integers and numeric strings
+  are both accepted; a malformed entry still fails loudly, as does any
+  genuinely unknown edit key.
+
 ## v0.6.19 — the GPU ladder covers the start stage too
 
 ### Fixed
