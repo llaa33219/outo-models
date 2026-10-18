@@ -754,10 +754,13 @@ re-resolution could not explain either — in which case the message carries
 Podman's refusal text as well. Either the spec file is missing / not mounted
 and also unreadable on the host, the device name in the assignment has no
 matching entry in the spec's `devices:` block, or the spec requests an edit
-(additional GIDs, intel-rdt, net devices) the resolver cannot account for —
-the message names which one. Regenerate the spec without that edit, or assign
+the resolver cannot account for — the message names which one. The translated
+fallback expresses `deviceNodes`, `mounts`, `env` and `additionalGids` (as the
+container's `groups`), so only a genuinely unknown key (intel-rdt, net
+devices, a typo such as `additionalGIDs`) or a malformed value inside a known
+key reaches this error. Regenerate the spec without that edit, or assign
 a device the spec defines. OCI hooks are *not* a cause: Podman applies them
-itself.
+itself, and the server only records that it could not translate them.
 
 When both resolution sources failed, the message ends with a line naming both
 attempts (`Both resolution paths were attempted: …`): the server

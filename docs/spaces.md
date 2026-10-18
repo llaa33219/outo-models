@@ -344,9 +344,10 @@ stages therefore run inside the same ladder:
 2. Podman refused the create or the start → the server reads the specs (same
    local-then-host ladder as the diagnosis), removes the half-created
    container (its name would block the retry) and retries **once** with the
-   `containerEdits` merged into the fields that exist on every version:
-   `devices` (device nodes), `mounts` and `env`. The refused `devices` /
-   `gpus` entries are replaced, not extended.
+`containerEdits` merged into the fields that exist on every version:
+    `devices` (device nodes), `mounts`, `env` and `groups` (the spec's
+    `additionalGids`). The refused `devices` / `gpus` entries are replaced,
+    not extended.
 3. The retry was refused too → the existing
    `space_gpu_cdi_unresolved` diagnosis runs, with Podman's message appended.
 
@@ -357,6 +358,16 @@ produces a delivery note that
 - appears in the Space's runtime message (the runtime panel shows
   `The Space is running. CDI hooks dropped for 0 (createContainer): …`), and
 - is logged at `WARNING` on the server.
+
+Every other key the live NVIDIA spec uses is accounted for: `deviceNodes` →
+`devices`, `mounts` → `mounts`, `env` → `env`, `additionalGids` → `groups`.
+The `additionalGids` mapping is the translation's own — podman 4.x's vendored
+CDI parser does not know the key and drops it silently, so on that version the
+translated body delivers *more* of the spec than Podman's own path would.
+Only a genuinely unknown key (intel-rdt, net devices, a typo such as
+`additionalGIDs`) is refused with `space_gpu_cdi_unresolved`, and a malformed
+entry within a known key (an `additionalGids` value that is not a number, an
+`env` line without `=`) fails the same way rather than being guessed at.
 
 One practical consequence of the translated path: it mounts the libraries and
 device nodes the spec names, but a library the *host* only exposes through
