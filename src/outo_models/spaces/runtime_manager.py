@@ -719,6 +719,11 @@ class SpaceRuntimeManager:
         translated["devices"] = [dict(node) for node in edits.device_nodes]
         translated["mounts"] = [dict(mount) for mount in edits.mounts]
         translated["env"] = {**body.get("env", {}), **edits.env}
+        if edits.additional_gids:
+            # `groups` is the create body's spelling of the spec's
+            # `additionalGids` (see `cdi._ADDITIONAL_GIDS_EDIT`); an empty
+            # field is left off so the body matches the names attempt.
+            translated["groups"] = list(edits.additional_gids)
         return translated
 
     async def _deliver_gpu_ladder(self, delivery: _GpuDelivery) -> tuple[str, str]:

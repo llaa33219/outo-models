@@ -526,6 +526,15 @@ devices:
 """
 
 
+#: The live host spec also asks for the video/render supplementary groups
+#: (`additionalGids`, CDI schema 0.6.0+). A create body carries them as
+#: `groups`; podman 4.x's own CDI parser does not know the key at all.
+_CDI_GID_SPEC = _CDI_SPEC.replace(
+    "    containerEdits:\n      hooks:",
+    "    containerEdits:\n      additionalGids: [44, 109]\n      hooks:",
+)
+
+
 @pytest.fixture
 def write_specs(tmp_path, monkeypatch):
     """Write a CDI spec into a fresh dir and point the resolver at it."""
@@ -1425,6 +1434,57 @@ class TestTranslatedCdiDeliveryFallback:
         assert len(_space_create_calls(captured)) == 2
         assert excinfo.value.code == "podman_api"
         assert "device node busy" in str(excinfo.value)
+
+    async def test_additional_gids_reach_the_retry_as_groups(
+        self, settings, captured, write_specs
+    ) -> None:
+        # Given: the host spec asks for supplementary GIDs alongside the
+        # device, exactly as `nvidia-ctk cdi generate` writes it.
+        write_specs(_CDI_GID_SPEC)
+        client = _client_for(_refuse_first_create("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _port, _note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then: the retry carries them as the create body's `groups`, the only
+        # field podman applies supplementary GIDs from.
+        bodies = _space_create_calls(captured)
+        assert bodies[1]["groups"] == ["44", "109"]
+        assert "groups" not in bodies[0]
+        assert container_id == "translated-container-id"
+
+    async def test_a_spec_with_gids_starts_through_the_fallback(
+        self, settings, captured, write_specs
+    ) -> None:
+        # Given: the live failure — podman 4.x refused the START for a spec it
+        # could not resolve, and that same spec carried additionalGids. Before
+        # this was accounted for, the ladder refused it again with
+        # `space_gpu_cdi_unresolved` and the Space never got its GPU.
+        write_specs(_CDI_GID_SPEC)
+        client = _client_for(_refuse_first_start(), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _port, _note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then: the translated retry started it, with the groups delivered.
+        bodies = _space_create_calls(captured)
+        assert len(bodies) == 2
+        assert bodies[1]["groups"] == ["44", "109"]
+        assert container_id == "container-2"
+
+    async def test_a_spec_without_gids_leaves_the_body_group_free(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: a spec that asks for no supplementary groups. Inventing an
+        # empty `groups` field would make the retry differ from the names body
+        # for no reason.
+        client = _client_for(_refuse_first_create("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then
+        assert "groups" not in _space_create_calls(captured)[1]
 
 
 class TestGpuLessStartFailure:
