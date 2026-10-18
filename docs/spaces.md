@@ -346,18 +346,42 @@ stages therefore run inside the same ladder:
    container (its name would block the retry) and retries **once** with the
 `containerEdits` merged into the fields that exist on every version:
     `devices` (device nodes), `mounts`, `env` and `groups` (the spec's
-    `additionalGids`). The refused `devices` / `gpus` entries are replaced,
-    not extended.
+    `additionalGids`), plus the **translatable OCI hook effects** below. The
+    refused `devices` / `gpus` entries are replaced, not extended.
 3. The retry was refused too → the existing
    `space_gpu_cdi_unresolved` diagnosis runs, with Podman's message appended.
 
-The fidelity gap of step 2 is **not silent**. OCI hooks are the one
-`containerEdits` key a create body cannot express, so a spec that carries them
+The fallback also reproduces the two NVIDIA hook effects a create body can
+express, because without them the Space starts but `nvidia-smi` cannot run:
+
+- **`create-symlinks`** — each `--link <target>::<link>` pair becomes a
+  read-only bind mount of `<target>` **at** `<link>` (target first, link
+  second, exactly as the hook reads them). A relative `<target>` is resolved
+  against the link's directory; when the spec mounts that path from a
+  different `hostPath`, the mount's real host source is used. This is what
+  puts `libnvidia-ml.so.1` (the SONAME the dynamic loader asks for) at the
+  path the loader searches, next to the versioned file the spec mounts.
+- **`update-ldcache`** — every `--folder` is prepended (deduplicated, in
+  order) to `LD_LIBRARY_PATH`, preserving any value the spec itself set. This
+  is what registers the injected library folders with the dynamic linker
+  without running `ldconfig` inside the container.
+
+`disable-device-node-modification` is a documented no-op and is skipped
+silently — the device nodes are already translated.
+
+The remaining fidelity gap of step 2 is **not silent**. A hook with no
+create-body spelling — `enable-cuda-compat`, `chmod`,
+`update-application-profile`, a malformed `--link` pair, an unknown command —
 produces a delivery note that
 
 - appears in the Space's runtime message (the runtime panel shows
-  `The Space is running. CDI hooks dropped for 0 (createContainer): …`), and
+  `The Space is running. CDI hooks dropped for 0 (enable-cuda-compat): …`), and
 - is logged at `WARNING` on the server.
+
+The note names the hook **command**, and only the hooks whose effects were
+really not delivered: the translated ones do not appear in it. Hooks never
+fail the delivery — a hook this translation cannot express costs fidelity, not
+the GPU.
 
 Every other key the live NVIDIA spec uses is accounted for: `deviceNodes` →
 `devices`, `mounts` → `mounts`, `env` → `env`, `additionalGids` → `groups`.

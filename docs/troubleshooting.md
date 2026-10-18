@@ -681,13 +681,30 @@ server treats both refusals the same way. If the retry is refused as well, you
 get the `space_gpu_cdi_unresolved` diagnosis below with Podman's message
 appended.
 
-The translation cannot carry OCI hooks (a create body has no field for
-them). A spec that defines hooks therefore produces a delivery note, shown in
-the Space's runtime message (`The Space is running. CDI hooks dropped for 0
-(createContainer): …`) and logged at `WARNING` on the server. A library the
-host only exposes through `ldconfig` discovery rather than a bind mount may
-additionally need `LD_LIBRARY_PATH` inside the Space. When Podman's own CDI
-path works, none of this applies.
+The translation reproduces the hook effects a create body *can* express, so a
+Space gets a working `nvidia-smi` without any manual step: each
+`create-symlinks --link <target>::<link>` pair becomes a read-only bind mount
+of `<target>` at `<link>` (this is what provides the SONAME symlink
+`libnvidia-ml.so.1`, which the dynamic loader asks for by name), and every
+`update-ldcache --folder` is prepended to `LD_LIBRARY_PATH` (this is what
+registers the injected library folders with the loader in place of running
+`ldconfig` inside the container). A hook with no create-body spelling —
+`enable-cuda-compat`, `chmod`, `update-application-profile`, or a malformed
+`--link` pair — cannot be translated; it produces a delivery note naming the
+hook **command**, shown in the Space's runtime message
+(`The Space is running. CDI hooks dropped for 0 (enable-cuda-compat): …`) and
+logged at `WARNING` on the server. Hooks never fail the delivery. When
+Podman's own CDI path works, none of this applies.
+
+If `nvidia-smi` still reports `NVIDIA-SMI couldn't find libnvidia-ml.so
+library` after this translation, compare the spec's SONAME symlink target with
+the library version the spec actually mounts — the two must match, and a spec
+generated for a different driver version will not:
+
+```bash
+podman exec outo-models grep -A6 'create-symlinks' /etc/cdi/nvidia.yaml
+podman exec outo-models grep -E 'libnvidia-ml' /etc/cdi/nvidia.yaml
+```
 
 ### The container starts but has no GPU
 
@@ -760,7 +777,10 @@ container's `groups`), so only a genuinely unknown key (intel-rdt, net
 devices, a typo such as `additionalGIDs`) or a malformed value inside a known
 key reaches this error. Regenerate the spec without that edit, or assign
 a device the spec defines. OCI hooks are *not* a cause: Podman applies them
-itself, and the server only records that it could not translate them.
+itself on its own path, and on the translated path their two expressible
+effects (symlink mounts, `LD_LIBRARY_PATH`) are delivered — the server only
+records the commands it could not translate, and it never refuses a spec for
+them.
 
 When both resolution sources failed, the message ends with a line naming both
 attempts (`Both resolution paths were attempted: …`): the server
