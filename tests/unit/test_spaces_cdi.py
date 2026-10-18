@@ -565,6 +565,78 @@ class TestCanonicalListFormSpec:
         assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidiactl", "/dev/nvidia1"]
 
 
+_GID_SPEC = """\
+kind: nvidia.com/gpu
+containerEdits:
+  additionalGids: [44]
+devices:
+  - name: "0"
+    containerEdits:
+      additionalGids: [109, 44]
+  - name: "1"
+"""
+
+
+class TestAdditionalGidsTranslation:
+    """`additionalGids` (CDI schema 0.6.0+) becomes the create body's `groups`.
+
+    The live NVIDIA spec asks for the video/render supplementary groups, and
+    podman 4.x's vendored CDI parser does not know the key at all — it drops
+    it silently on its own path. A create body CAN carry supplementary groups
+    (`specgen.SpecGenerator.Groups`), so refusing the spec as unaccountable
+    locked out the GPU entirely over something the translation can express.
+    """
+
+    def test_global_and_device_gids_merge_in_order_without_duplicates(self) -> None:
+        # Given: a spec whose global edits ask for GID 44 and whose device
+        # adds 109 plus a repeat of 44.
+        specs, _warnings = parse_specs(_GID_SPEC)
+        # When
+        edits = resolve_edits(specs, ["0"])
+        # Then: order is preserved and the exact duplicate is dropped — a gid
+        # twice in the process's group list is the same gid.
+        assert edits.additional_gids == ("44", "109")
+
+    def test_numeric_strings_are_normalized_to_the_same_form(self) -> None:
+        # Given: the same list quoted, which is how a hand-written spec spells
+        # it. A spec must not be rejected for its quoting.
+        specs, _warnings = parse_specs(
+            'kind: nvidia.com/gpu\ndevices:\n  "0":\n'
+            "    containerEdits:\n      additionalGids: ['44', '109']\n"
+        )
+        # When
+        edits = resolve_edits(specs, ["0"])
+        # Then
+        assert edits.additional_gids == ("44", "109")
+
+    def test_a_spec_without_the_key_asks_for_no_groups(self, tmp_path: Path) -> None:
+        # When: a spec whose edits carry no additionalGids at all.
+        edits = resolve_device(["0"], dirs=[_spec_dir(tmp_path)])
+        # Then: the collection is empty, so the body is left as it was.
+        assert edits.additional_gids == ()
+
+    def test_a_device_without_its_own_gids_inherits_the_global_ones(self) -> None:
+        specs, _warnings = parse_specs(_GID_SPEC)
+        # When: device "1" defines no containerEdits of its own.
+        edits = resolve_edits(specs, ["1"])
+        # Then
+        assert edits.additional_gids == ("44",)
+
+    def test_a_malformed_gid_is_refused_loudly(self) -> None:
+        # Given: a gid that is not a number at all. Guessing what the spec
+        # meant would hand the container the wrong groups silently.
+        specs, _warnings = parse_specs(
+            'kind: nvidia.com/gpu\ndevices:\n  "0":\n'
+            "    containerEdits:\n      additionalGids: [video]\n"
+        )
+        # When / Then: same code and message shape as a malformed env entry.
+        with pytest.raises(ValidationFailedError) as excinfo:
+            resolve_edits(specs, ["0"])
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        message = str(excinfo.value)
+        assert "malformed additionalGids entry 'video'" in message
+
+
 class TestDeviceNameAliasing:
     """A spec and an assignment may spell the same GPU differently."""
 

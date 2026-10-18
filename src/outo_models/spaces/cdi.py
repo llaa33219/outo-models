@@ -30,12 +30,16 @@ purpose:
 * `devices` — OCI `specs.LinuxDevice` entries (`path`/`type`/`major`/…)
 * `mounts`  — OCI `specs.Mount` entries (`source`/`destination`/…)
 * `env`     — a `map[string]string` merge
+* `groups`  — the spec's `additionalGids`, from the create body's
+  supplementary-groups field
 
-A `containerEdits` key the translation cannot express (additional GIDs,
-intel-rdt, net devices) still raises instead of being ignored: a silently
-GPU-less container is the exact failure this module removes, and an
-unreadable device name is the likeliest cause of a rejected create call.
-OCI hooks are the one key the translation cannot express at all — a
+A `containerEdits` key the translation cannot express (intel-rdt, net
+devices) still raises instead of being ignored: a silently GPU-less container
+is the exact failure this module removes, and an unreadable device name is the
+likeliest cause of a rejected create call. `additionalGids` used to be in
+that set and is not any more — podman 4.x's own CDI path drops it silently,
+so the translated `groups` field is strictly the more faithful delivery. OCI
+hooks are the one key the translation cannot express at all — a
 `SpecGenerator` body has no field for them — so they are recorded as a
 `CdiEdits.notes` entry instead of failing. A note is not silence: the
 caller surfaces it, so an operator learns that the container it started
@@ -84,7 +88,7 @@ _SPEC_SUFFIXES = (".yaml", ".yml", ".json")
 
 #: The only edit keys we can faithfully express in a SpecGenerator body.
 #: Everything else fails loudly (see the module docstring).
-_SUPPORTED_EDITS = ("deviceNodes", "mounts", "env")
+_SUPPORTED_EDITS = ("deviceNodes", "mounts", "env", "additionalGids")
 
 #: Edit keys podman's own CDI path applies but this translation has no field
 #: for. They never fail a resolution: podman — not this module — injects them.
@@ -101,6 +105,13 @@ _HOOKS_NOTE = (
     "CDI hooks dropped for {device} ({hooks}): a container create body cannot "
     "express hooks, and this host's podman did not apply the spec's own."
 )
+
+#: `additionalGids` — supplementary GIDs. podman 4.x's vendored CDI parser
+#: does not know the key and drops it silently on its own path, so the create
+#: body's `groups` (`specgen.SpecGenerator.Groups` → `libpod.WithGroups`) is
+#: the only way to deliver them: the field name is not derivable from the CDI
+#: key, and translating it delivers more fidelity than podman itself.
+_ADDITIONAL_GIDS_EDIT = "additionalGids"
 
 _GPU_INDEX_PREFIX = "GPU-"
 
@@ -131,6 +142,10 @@ def device_name(assignment_id: str) -> str:
 class CdiEdits:
     """Translated container edits, shaped for `specgen.SpecGenerator`.
 
+    `additional_gids` are the spec's supplementary GIDs, already normalized to
+    the strings the create body's `groups` field takes. Empty when the spec
+    asks for none, so the caller can leave the field off the body entirely.
+
     `notes` carries the non-fatal findings of the translation — today only
     dropped OCI hooks. The container they came from starts fine, but it is
     not the container the spec describes, so the caller has to say so
@@ -140,6 +155,7 @@ class CdiEdits:
     device_nodes: tuple[dict[str, Any], ...]
     mounts: tuple[dict[str, Any], ...]
     env: dict[str, str]
+    additional_gids: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
 
 
@@ -288,6 +304,28 @@ def _hook_names(hooks: Any) -> str:
     return ", ".join(names) or "unnamed"
 
 
+def _additional_gid(entry: Any, device: str, context: str) -> str:
+    """Normalize one `additionalGids` entry to the string `groups` takes.
+
+    The CDI schema types these as integers, but a hand-written spec spells
+    them quoted; both mean the same GID. Anything else is refused rather than
+    guessed — handing the container a group the spec never named is exactly
+    the silent gap this module exists to close.
+    """
+    if isinstance(entry, bool) or not (
+        isinstance(entry, int) or (isinstance(entry, str) and entry.strip().isdigit())
+    ):
+        raise ValidationFailedError(
+            _with_context(
+                f"CDI device {device!r} has a malformed {_ADDITIONAL_GIDS_EDIT} "
+                f"entry {entry!r} (expected a numeric GID).",
+                context,
+            ),
+            code=_UNRESOLVED_CODE,
+        )
+    return str(int(entry))
+
+
 def _translate_edits(
     edits: dict[str, Any],
     *,
@@ -295,6 +333,7 @@ def _translate_edits(
     nodes: list[dict[str, Any]],
     mounts: list[dict[str, Any]],
     env: dict[str, str],
+    gids: list[str],
     notes: list[str],
     context: str = "",
 ) -> None:
@@ -343,6 +382,10 @@ def _translate_edits(
                 code=_UNRESOLVED_CODE,
             )
         env[key] = value
+    for entry in edits.get(_ADDITIONAL_GIDS_EDIT) or []:
+        gid = _additional_gid(entry, device, context)
+        if gid not in gids:
+            gids.append(gid)
 
 
 def _global_edits(spec: Mapping[str, Any]) -> dict[str, Any]:
@@ -583,6 +626,7 @@ def resolve_edits(
     nodes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
     env: dict[str, str] = {}
+    gids: list[str] = []
     notes: list[str] = []
     indexes: dict[str, dict[str, dict[str, Any]]] = {}
     for identifier in identifiers:
@@ -593,6 +637,7 @@ def resolve_edits(
             nodes=nodes,
             mounts=mounts,
             env=env,
+            gids=gids,
             notes=notes,
             context=context,
         )
@@ -604,10 +649,17 @@ def resolve_edits(
                 nodes=nodes,
                 mounts=mounts,
                 env=env,
+                gids=gids,
                 notes=notes,
                 context=context,
             )
-    return CdiEdits(device_nodes=tuple(nodes), mounts=tuple(mounts), env=env, notes=tuple(notes))
+    return CdiEdits(
+        device_nodes=tuple(nodes),
+        mounts=tuple(mounts),
+        env=env,
+        additional_gids=tuple(gids),
+        notes=tuple(notes),
+    )
 
 
 def resolve_names(
