@@ -392,6 +392,35 @@ class TestResolveDeviceFailures:
         # the hooks were skipped, not refused.
         assert [node["path"] for node in edits.device_nodes] == ["/dev/nvidia0"]
 
+    def test_dropped_hooks_are_reported_as_a_note(self, tmp_path: Path) -> None:
+        # Given: the same hook-carrying spec. The hooks cannot be expressed
+        # in a create body, but dropping them silently would ship a container
+        # that is not the one the spec describes.
+        directory = _spec_dir(
+            tmp_path,
+            "kind: nvidia.com/gpu\n"
+            "devices:\n"
+            '  "0":\n'
+            "    containerEdits:\n"
+            "      hooks:\n"
+            "        - hookName: createContainer\n"
+            "          path: /bin/true\n"
+            "        - hookName: startContainer\n"
+            "          path: /bin/true\n",
+        )
+        # When
+        edits = resolve_device(["0"], dirs=[directory])
+        # Then: the note names the hooks that did not make it.
+        assert len(edits.notes) == 1
+        assert "hooks dropped" in edits.notes[0]
+        assert "createContainer, startContainer" in edits.notes[0]
+
+    def test_a_spec_without_hooks_reports_no_notes(self, tmp_path: Path) -> None:
+        # When
+        edits = resolve_device(["0"], dirs=[_spec_dir(tmp_path)])
+        # Then: nothing was left behind, so the caller has nothing to say.
+        assert edits.notes == ()
+
     def test_unsupported_edit_kind_is_refused_loudly(self, tmp_path: Path) -> None:
         directory = _spec_dir(
             tmp_path,

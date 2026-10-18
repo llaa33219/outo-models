@@ -35,9 +35,11 @@ A `containerEdits` key the translation cannot express (additional GIDs,
 intel-rdt, net devices) still raises instead of being ignored: a silently
 GPU-less container is the exact failure this module removes, and an
 unreadable device name is the likeliest cause of a rejected create call.
-OCI hooks are the one key deliberately skipped — podman's own CDI path
-applies them, so their presence in a spec says nothing about whether the
-assignment resolves.
+OCI hooks are the one key the translation cannot express at all — a
+`SpecGenerator` body has no field for them — so they are recorded as a
+`CdiEdits.notes` entry instead of failing. A note is not silence: the
+caller surfaces it, so an operator learns that the container it started
+without the spec's hooks rather than discovering it later in an audit log.
 
 The spec files live on the host, so `outo-models start` mounts both
 directories read-only into the server container (see `cli/start.py`).
@@ -92,6 +94,14 @@ _UNSUPPORTED_HINT = (
     "Regenerate the CDI spec without it (see the NVIDIA container toolkit documentation)."
 )
 
+#: The `containerEdits` key a `SpecGenerator` body has no field for at all,
+#: and the note that says so out loud instead of dropping it in silence.
+_HOOKS_EDIT = "hooks"
+_HOOKS_NOTE = (
+    "CDI hooks dropped for {device} ({hooks}): a container create body cannot "
+    "express hooks, and this host's podman did not apply the spec's own."
+)
+
 _GPU_INDEX_PREFIX = "GPU-"
 
 #: Cap on the device names quoted back in the unresolved-device error: the
@@ -119,11 +129,18 @@ def device_name(assignment_id: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class CdiEdits:
-    """Translated container edits, shaped for `specgen.SpecGenerator`."""
+    """Translated container edits, shaped for `specgen.SpecGenerator`.
+
+    `notes` carries the non-fatal findings of the translation — today only
+    dropped OCI hooks. The container they came from starts fine, but it is
+    not the container the spec describes, so the caller has to say so
+    instead of letting the gap pass unnoticed.
+    """
 
     device_nodes: tuple[dict[str, Any], ...]
     mounts: tuple[dict[str, Any], ...]
     env: dict[str, str]
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +276,18 @@ def _with_context(message: str, context: str) -> str:
     return f"{message} ({context})" if context else message
 
 
+def _hook_names(hooks: Any) -> str:
+    """Render the `hookName` of each dropped hook, so the note names them."""
+    if not isinstance(hooks, Sequence) or isinstance(hooks, (str, bytes)):
+        return "unnamed"
+    names = [
+        str(entry["hookName"])
+        for entry in hooks
+        if isinstance(entry, Mapping) and entry.get("hookName")
+    ]
+    return ", ".join(names) or "unnamed"
+
+
 def _translate_edits(
     edits: dict[str, Any],
     *,
@@ -266,12 +295,14 @@ def _translate_edits(
     nodes: list[dict[str, Any]],
     mounts: list[dict[str, Any]],
     env: dict[str, str],
+    notes: list[str],
     context: str = "",
 ) -> None:
     """Accumulate one `containerEdits` block into the output collections.
 
-    Hooks are skipped rather than refused: podman applies them itself on the
-    create path, so their presence never invalidates the assignment.
+    Hooks are recorded as a note rather than refused: no create body has a
+    field for them, and their presence says nothing about whether the
+    assignment resolves — only that the delivered container misses them.
     """
     for key in sorted(edits):
         if key not in _SUPPORTED_EDITS and key not in _IGNORED_EDITS:
@@ -283,6 +314,8 @@ def _translate_edits(
                 ),
                 code=_UNRESOLVED_CODE,
             )
+    if edits.get(_HOOKS_EDIT):
+        notes.append(_HOOKS_NOTE.format(device=device, hooks=_hook_names(edits[_HOOKS_EDIT])))
     for entry in edits.get("deviceNodes") or []:
         node, mount = _device_node(entry, device)
         nodes.append(node)
@@ -524,21 +557,25 @@ def resolve_edits(
 ) -> CdiEdits:
     """Translate already-parsed CDI specs into SpecGenerator container edits.
 
-    The pure half of `resolve_device`: same merge rules, same refusals, same
-    error codes — the specs arrive as data instead of being read from disk, so
-    a caller that obtained them from another filesystem resolves identically.
+        The pure half of `resolve_device`: same merge rules, same refusals, same
+        error codes — the specs arrive as data instead of being read from disk, so
+        a caller that obtained them from another filesystem resolves identically.
 
-    `searched`, `probes` and `context` exist only for the error message: they
-    say which directories were looked at, what each of them actually held, and
-    where these specs came from. Diagnostics cannot travel with the specs
-    themselves (a caller that read them over the network has no local `Path`
-    to describe), so they are separate keyword arguments by necessity.
+        `searched`, `probes` and `context` exist only for the error message: they
+        say which directories were looked at, what each of them actually held, and
+        where these specs came from. Diagnostics cannot travel with the specs
+    themselves (a caller that read them over the network has no local `Path` to
+        describe), so they are separate keyword arguments by necessity.
 
-    Raises:
-        ValidationFailedError: no spec / no device for a requested
-            identifier, or an edit the diagnostic cannot account for.
-            Failing loudly is mandatory — a container that silently starts
-            without its GPU is the bug this replaces.
+        `notes` reports what the translation had to leave behind — dropped OCI
+        hooks — so the caller can show the gap instead of shipping a container
+        that quietly misses part of its spec.
+
+        Raises:
+            ValidationFailedError: no spec / no device for a requested
+                identifier, or an edit the diagnostic cannot account for.
+                Failing loudly is mandatory — a container that silently starts
+                without its GPU is the bug this replaces.
     """
     where = _Where(
         tuple(DEFAULT_SPEC_DIRS if searched is None else searched), tuple(probes), context
@@ -546,6 +583,7 @@ def resolve_edits(
     nodes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
     env: dict[str, str] = {}
+    notes: list[str] = []
     indexes: dict[str, dict[str, dict[str, Any]]] = {}
     for identifier in identifiers:
         match = _match_device(specs, identifier, kind=kind, where=where, indexes=indexes)
@@ -555,14 +593,21 @@ def resolve_edits(
             nodes=nodes,
             mounts=mounts,
             env=env,
+            notes=notes,
             context=context,
         )
         edits = match.device.get("containerEdits")
         if isinstance(edits, dict):
             _translate_edits(
-                edits, device=match.name, nodes=nodes, mounts=mounts, env=env, context=context
+                edits,
+                device=match.name,
+                nodes=nodes,
+                mounts=mounts,
+                env=env,
+                notes=notes,
+                context=context,
             )
-    return CdiEdits(device_nodes=tuple(nodes), mounts=tuple(mounts), env=env)
+    return CdiEdits(device_nodes=tuple(nodes), mounts=tuple(mounts), env=env, notes=tuple(notes))
 
 
 def resolve_names(
