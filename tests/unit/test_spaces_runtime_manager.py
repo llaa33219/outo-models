@@ -329,7 +329,7 @@ class TestStartStopAndInspect:
         manager = SpaceRuntimeManager(settings, client=client)
         object.__setattr__(settings, "spaces_runtime_port_range_start", 20000)
         object.__setattr__(settings, "spaces_runtime_port_range_end", 20010)
-        container_id, port = await manager.start("alice", "demo")
+        container_id, port, _note = await manager.start("alice", "demo")
         await client.aclose()
         assert container_id == "container-id-1"
         # 20000 / 20001 should be free, only 20002 is in use → next free is 20000.
@@ -338,7 +338,7 @@ class TestStartStopAndInspect:
     async def test_create_payload_matches_libpod_specgenerator(self, settings, captured) -> None:
         client = _client_for(_create_ok_handler, captured)
         manager = SpaceRuntimeManager(settings, client=client)
-        _, host_port = await manager.start("alice", "demo")
+        _, host_port, _note = await manager.start("alice", "demo")
         await client.aclose()
         payload = _create_payload(captured)
         assert payload["name"] == "outo-space-alice-demo"
@@ -408,7 +408,7 @@ class TestStartStopAndInspect:
         client = _client_for(h, captured)
         manager = SpaceRuntimeManager(settings, client=client)
         # When
-        container_id, _ = await manager.start("alice", "demo")
+        container_id, _, _note = await manager.start("alice", "demo")
         await client.aclose()
 
         # Then: exactly one fresh container, and remove ran before create.
@@ -440,7 +440,7 @@ class TestStartStopAndInspect:
         client = _client_for(h, captured)
         manager = SpaceRuntimeManager(settings, client=client)
         # When
-        container_id, _ = await manager.start("alice", "demo")
+        container_id, _, _note = await manager.start("alice", "demo")
         await client.aclose()
 
         # Then: no remove call on the lean path.
@@ -1120,3 +1120,209 @@ class TestHostCdiReadFallback:
         await client.aclose()
         assert excinfo.value.code == "podman_api"
         assert _PODMAN_REFUSAL_TEXT in str(excinfo.value)
+
+
+def _refuse_first_create(version: str, refusal: httpx.Response = _PODMAN_REFUSAL):
+    """Refuse the podman-native GPU body, accept the translated retry."""
+    delegate = _version_handler(version)
+    seen: list[int] = []
+
+    def h(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/containers/create") and not _is_probe_create(request):
+            seen.append(1)
+            if len(seen) == 1:
+                return refusal
+            return httpx.Response(201, json={"Id": "translated-container-id"})
+        return delegate(request)
+
+    return h
+
+
+def _is_probe_create(request: httpx.Request) -> bool:
+    return "outo-cdi-probe-" in request.content.decode(errors="replace")
+
+
+def _translate_handler(refusal: httpx.Response = _PODMAN_REFUSAL):
+    """Refuse every Space create — no translation can rescue this one."""
+    delegate = _version_handler("4.9.3")
+
+    def h(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/containers/create") and not _is_probe_create(request):
+            return refusal
+        return delegate(request)
+
+    return h
+
+
+#: The translated edits a create body must carry for `_CDI_SPEC`'s device 0.
+_TRANSLATED_NODES = ["/dev/nvidia0"]
+
+
+class TestTranslatedCdiDeliveryFallback:
+    """podman's own CDI resolution is not available on every host.
+
+    An older containers/common drops a newer `cdiVersion` spec out of the CDI
+    registry, and podman then answers `unresolvable CDI devices nvidia.com/gpu=0`
+    for a device whose spec is sitting right there. The server therefore
+    translates the spec edits itself and retries the create exactly once — so
+    the GPU arrives on any podman/CDI combination, at the cost of the one
+    `containerEdits` key no create body can carry.
+    """
+
+    async def test_refused_names_body_is_retried_with_translated_edits(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: podman 4.x refused the qualified device names, and the
+        # mounted spec resolves the device with expressible edits.
+        client = _client_for(_refuse_first_create("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _port, note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        bodies = _space_create_calls(captured)
+        # Then: the first attempt asked podman to resolve the device itself,
+        # the second carries the spec's own edits, and the container is the
+        # retry's.
+        assert len(bodies) == 2
+        assert bodies[0]["devices"] == [{"path": "nvidia.com/gpu=0"}]
+        assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
+        assert bodies[1]["devices"][0]["major"] == 195
+        assert bodies[1]["mounts"] == [
+            {
+                "source": "/usr/lib/libnvidia-container.so.1",
+                "destination": "/usr/lib/libnvidia-container.so.1",
+            }
+        ]
+        assert bodies[1]["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
+        assert bodies[1]["env"]["PORT"] == "8000"
+        assert container_id == "translated-container-id"
+        # The spec's hooks could not travel, and that is reported, not hidden.
+        assert "hooks dropped" in note
+
+    async def test_the_note_is_logged_as_a_warning(
+        self, settings, captured, cdi_spec_dir, capsys
+    ) -> None:
+        # Given: the same fallback, with the server's logger captured.
+        client = _client_for(_refuse_first_create("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then: an operator reading the server log finds the same gap the
+        # Space page shows.
+        assert "hooks dropped" in capsys.readouterr().out
+
+    async def test_a_spec_without_hooks_leaves_no_note(
+        self, settings, captured, write_specs
+    ) -> None:
+        # Given: a spec that asks for nothing a create body cannot carry.
+        write_specs(_GPU_ALIASED_SPEC)
+        client = _client_for(_refuse_first_create("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        _container_id, _port, note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then: nothing was dropped, so the message the operator sees is the
+        # unchanged "The Space is running."
+        assert note == ""
+
+    async def test_modern_podman_falls_back_from_the_gpus_field(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: podman 6.x, whose `gpus` field resolves through the same CDI
+        # registry and therefore fails the same way.
+        client = _client_for(_refuse_first_create("6.0.0"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        _container_id, _port, note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        bodies = _space_create_calls(captured)
+        # Then: the retry carries the translated edits, not another `gpus`.
+        assert bodies[0]["gpus"] == ["0"]
+        assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
+        assert "gpus" not in bodies[1]
+        assert "hooks dropped" in note
+
+    async def test_an_accepted_names_body_is_never_retried(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: podman resolves the device itself, the common case.
+        client = _client_for(_version_handler("4.9.3"), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        _container_id, _port, note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then: exactly one create, and no translated edits on the wire.
+        assert len(_space_create_calls(captured)) == 1
+        assert note == ""
+
+    async def test_two_refusals_end_in_the_rich_diagnosis(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: the host read sees the spec only on the translation probe —
+        # the live flakiness of a podman whose CDI registry cannot see the
+        # spec. The create is refused twice.
+        delegate = _probe_handler(httpx.Response(200, content=_PROBE_SPEC_STREAM.encode()))
+        logs_read: list[int] = []
+
+        def flaky_logs(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/logs"):
+                logs_read.append(1)
+                if len(logs_read) == 2:
+                    return delegate(request)
+                return httpx.Response(200, content=b"")
+            return delegate(request)
+
+        client = _client_for(flaky_logs, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        message = str(excinfo.value)
+        # Then: the translated body was tried and refused, and the failure is
+        # the self-diagnosing one — the resolver's report plus podman's text,
+        # not a bare podman message.
+        assert len(_space_create_calls(captured)) == 2
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "What the resolver actually saw" in message
+        assert _PODMAN_REFUSAL_TEXT in message
+
+    async def test_a_first_refusal_with_nothing_to_translate_never_retries(
+        self, settings, captured, no_local_specs
+    ) -> None:
+        # Given: no spec is readable at all. There is nothing to translate,
+        # so a second create could only send podman an empty device list.
+        client = _client_for(
+            _probe_handler(httpx.Response(200, content=b""), refusal=_PODMAN_REFUSAL), captured
+        )
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        message = str(excinfo.value)
+        # Then: one attempt, and the error still names the resolver's findings
+        # and podman's refusal.
+        assert len(_space_create_calls(captured)) == 1
+        assert excinfo.value.code == "space_gpu_cdi_unresolved"
+        assert "What the resolver actually saw" in message
+        assert _PODMAN_REFUSAL_TEXT in message
+
+    async def test_a_translation_the_podman_also_refuses_stays_loud(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: the spec resolves, but podman refuses the translated body too
+        # — the edits themselves are the problem. Podman's message is then the
+        # truth, and the resolver must not overwrite it.
+        refusal = httpx.Response(500, json={"message": "device node busy"})
+        client = _client_for(_translate_handler(refusal), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then
+        assert len(_space_create_calls(captured)) == 2
+        assert excinfo.value.code == "podman_api"
+        assert "device node busy" in str(excinfo.value)

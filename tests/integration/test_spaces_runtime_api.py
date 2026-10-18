@@ -131,11 +131,11 @@ class _FakeSpaceRuntimeManager:
         name: str,
         *,
         gpu_ids: list[str] | tuple[str, ...] = (),
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, str]:
         if self._raise is not None:
             raise self._raise
         self.start_calls.append((owner, name, tuple(gpu_ids)))
-        return ("container-id-xyz", self._port or 20000)
+        return ("container-id-xyz", self._port or 20000, "")
 
     async def stop(self, owner: str, name: str) -> None:
         if self._raise is not None:
