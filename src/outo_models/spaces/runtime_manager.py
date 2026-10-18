@@ -127,6 +127,20 @@ class _CdiSpecs:
     source: str
 
 
+@dataclass(frozen=True, slots=True)
+class _GpuDelivery:
+    """One container the GPU ladder may have to deliver twice.
+
+    `identifiers` is empty when no GPU is assigned, which is what makes the
+    first failure final instead of triggering the translated retry.
+    """
+
+    body: dict[str, Any]
+    container: str
+    identifiers: tuple[str, ...]
+    image: str
+
+
 def container_name(owner: str, name: str) -> str:
     """Return the deterministic podman container name for a Space."""
     return f"outo-space-{owner}-{name}"
@@ -669,52 +683,35 @@ class SpaceRuntimeManager:
             raise _refusal_diagnosis(diagnostic, exc) from diagnostic
         raise exc
 
-    async def _create_container(
-        self,
-        body: dict[str, Any],
-        identifiers: tuple[str, ...],
-        image: str,
-    ) -> tuple[httpx.Response, str]:
-        """Create the Space's container, retrying once with translated edits.
+    async def _create_and_start(self, body: dict[str, Any], container: str) -> str:
+        """Create the Space's container and start it, returning its id.
 
-        Podman's own CDI resolution is the primary delivery: it applies every
-        `containerEdits` key, hooks included. It is not available on every
-        host, though — an older containers/common drops a newer
-        `cdiVersion` spec out of its CDI registry, and podman then answers
-        `unresolvable CDI devices` for a device whose spec is right there. So
-        a refused create that carries a GPU assignment gets exactly one more
-        attempt, with the spec edits translated by this server into the three
-        SpecGenerator fields every version has. Whatever that translation
-        cannot express comes back as a note, never as silence.
-
-        Without an assignment there is nothing to fall back to, and podman's
-        refusal is the answer to give.
+        The two calls are one unit because that is where podman resolves
+        CDI: `libpod.WithCDI` only *stores* the qualified device names at
+        create (`ctr.config.CDIDevices = devices`), and the registry lookup
+        happens in `generateSpec()` when the container starts. So a create
+        that stored the names perfectly can still be refused by the very
+        next call — which is why the delivery ladder has to cover both.
         """
-        try:
-            return await self._request(
-                "POST", f"{_LIBPOD_PREFIX}/containers/create", json_body=body
-            ), ""
-        except OutoError as refusal:
-            if not identifiers:
-                raise
-            try:
-                edits = await self._resolve_gpu_edits(identifiers, image)
-            except ValidationFailedError as diagnostic:
-                raise _refusal_diagnosis(diagnostic, refusal) from diagnostic
-            return await self._retry_translated(body, identifiers, image, edits)
+        response = await self._request(
+            "POST", f"{_LIBPOD_PREFIX}/containers/create", json_body=body
+        )
+        container_id = ""
+        payload = response.json()
+        if isinstance(payload, dict):
+            cid = payload.get("Id") or payload.get("id")
+            if isinstance(cid, str):
+                container_id = cid
+        await self._request("POST", f"{_LIBPOD_PREFIX}/containers/{container}/start")
+        return container_id
 
-    async def _retry_translated(
-        self,
-        body: dict[str, Any],
-        identifiers: tuple[str, ...],
-        image: str,
-        edits: cdi.CdiEdits,
-    ) -> tuple[httpx.Response, str]:
-        """Second and last create attempt, with the server's own translation.
+    @staticmethod
+    def _translated_body(body: dict[str, Any], edits: cdi.CdiEdits) -> dict[str, Any]:
+        """Replace the qualified device names with the spec's own edits.
 
-        The qualified device names are replaced, not extended: podman has
-        already refused them, and a body carrying both spellings would ask
-        it to resolve the same device twice.
+        The names are replaced, not extended: podman has already refused
+        them, and a body carrying both spellings would ask it to resolve the
+        same device twice.
         """
         translated = dict(body)
         for key in ("devices", "gpus"):
@@ -722,16 +719,50 @@ class SpaceRuntimeManager:
         translated["devices"] = [dict(node) for node in edits.device_nodes]
         translated["mounts"] = [dict(mount) for mount in edits.mounts]
         translated["env"] = {**body.get("env", {}), **edits.env}
+        return translated
+
+    async def _deliver_gpu_ladder(self, delivery: _GpuDelivery) -> tuple[str, str]:
+        """Run the dual GPU delivery ladder and return `(container_id, note)`.
+
+        Podman's own CDI resolution is the primary delivery: it applies every
+        `containerEdits` key, hooks included. It is not available on every
+        host, though — an older containers/common drops a newer
+        `cdiVersion` spec out of its CDI registry, and podman then answers
+        `unresolvable CDI devices` for a device whose spec is right there.
+        So a refused create-or-start that carries a GPU assignment gets
+        exactly one more attempt with this server's own translation; a
+        refusal without an assignment is podman's answer to give.
+        """
         try:
-            response = await self._request(
-                "POST", f"{_LIBPOD_PREFIX}/containers/create", json_body=translated
+            return await self._create_and_start(delivery.body, delivery.container), ""
+        except OutoError as exc:
+            if not delivery.identifiers:
+                raise
+            return await self._retry_translated(delivery, exc)
+
+    async def _retry_translated(
+        self,
+        delivery: _GpuDelivery,
+        refusal: OutoError,
+    ) -> tuple[str, str]:
+        """Second and last attempt, with the spec edits translated by us."""
+        try:
+            edits = await self._resolve_gpu_edits(delivery.identifiers, delivery.image)
+        except ValidationFailedError as diagnostic:
+            raise _refusal_diagnosis(diagnostic, refusal) from diagnostic
+        # The first attempt left a container behind under this name (create
+        # accepted, start refused), and podman refuses a duplicate name.
+        await self._delete_container(delivery.container)
+        try:
+            container_id = await self._create_and_start(
+                self._translated_body(delivery.body, edits), delivery.container
             )
         except OutoError as retry_exc:
-            await self._raise_gpu_diagnosis(retry_exc, identifiers, image)
+            await self._raise_gpu_diagnosis(retry_exc, delivery.identifiers, delivery.image)
         note = " ".join(edits.notes)
         if note:
             _LOGGER.warning("Space GPU delivered by translated CDI edits", note=note)
-        return response, note
+        return container_id, note
 
     async def start(
         self,
@@ -789,23 +820,12 @@ class SpaceRuntimeManager:
                 # `devices` are its own CDI path (ExtractCDIDevices →
                 # libpod.WithCDI → registry.InjectDevices): podman reads the
                 # host specs and applies the complete containerEdits, hooks
-                # included. `_create_container` translates them itself only
-                # after podman has refused this body.
+                # included. `_deliver_gpu_ladder` translates them itself only
+                # after podman has refused this body at create *or* start.
                 body["devices"] = [{"path": f"{cdi.DEFAULT_KIND}={name}"} for name in names]
 
-        create_response, note = await self._create_container(
-            body, cdi_identifiers, image_tag(owner, name)
-        )
-        container_id = ""
-        payload = create_response.json()
-        if isinstance(payload, dict):
-            cid = payload.get("Id") or payload.get("id")
-            if isinstance(cid, str):
-                container_id = cid
-
-        await self._request(
-            "POST",
-            f"{_LIBPOD_PREFIX}/containers/{container}/start",
+        container_id, note = await self._deliver_gpu_ladder(
+            _GpuDelivery(body, container, cdi_identifiers, image_tag(owner, name))
         )
         return container_id, host_port, note
 

@@ -1157,6 +1157,45 @@ def _translate_handler(refusal: httpx.Response = _PODMAN_REFUSAL):
 #: The translated edits a create body must carry for `_CDI_SPEC`'s device 0.
 _TRANSLATED_NODES = ["/dev/nvidia0"]
 
+#: Podman does not resolve CDI at create — `libpod.WithCDI` only stores the
+#: names, and the registry lookup happens in `generateSpec()` when the
+#: container is started. A host whose containers/common drops a newer
+#: `cdiVersion` spec therefore answers this at start, with a create that
+#: looked perfectly fine.
+_CDI_START_REFUSAL_TEXT = "setting up CDI devices: unresolvable CDI devices nvidia.com/gpu=0"
+
+
+def _refuse_first_start(version: str = "4.9.3"):
+    """Accept every create, refuse the FIRST start — the live podman 4.x shape."""
+
+    delegate = _version_handler(version)
+    seen: dict[str, int] = {"create": 0, "start": 0}
+
+    def h(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/containers/create") and not _is_probe_create(request):
+            seen["create"] += 1
+            return httpx.Response(201, json={"Id": f"container-{seen['create']}"})
+        if path.endswith("/start"):
+            seen["start"] += 1
+            if seen["start"] == 1:
+                return httpx.Response(500, json={"message": _CDI_START_REFUSAL_TEXT})
+            return httpx.Response(204)
+        return delegate(request)
+
+    return h
+
+
+def _space_start_calls(captured: list[httpx.Request]) -> list[str]:
+    """Return the path of every Space container start call."""
+    return [
+        request.url.path
+        for request in captured
+        if request.method == "POST"
+        and request.url.path.endswith("/start")
+        and "outo-space-" in request.url.path
+    ]
+
 
 class TestTranslatedCdiDeliveryFallback:
     """podman's own CDI resolution is not available on every host.
@@ -1256,6 +1295,40 @@ class TestTranslatedCdiDeliveryFallback:
         assert len(_space_create_calls(captured)) == 1
         assert note == ""
 
+    async def test_a_start_refusal_is_retried_with_translated_edits(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: podman 4.x stored the qualified names at create and refused at
+        # START with `unresolvable CDI devices nvidia.com/gpu=0`, because its
+        # CDI registry dropped the host's newer `cdiVersion` spec. The spec
+        # itself is mounted and resolvable.
+        client = _client_for(_refuse_first_start(), captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        container_id, _port, note = await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+
+        # Then: the ladder wrapped create AND start — the retry re-created the
+        # container with the spec's own edits and started that one instead.
+        bodies = _space_create_calls(captured)
+        assert len(bodies) == 2
+        assert len(_space_start_calls(captured)) == 2
+        assert bodies[0]["devices"] == [{"path": "nvidia.com/gpu=0"}]
+        assert [node["path"] for node in bodies[1]["devices"]] == _TRANSLATED_NODES
+        assert bodies[1]["devices"][0]["major"] == 195
+        assert bodies[1]["mounts"] == [
+            {
+                "source": "/usr/lib/libnvidia-container.so.1",
+                "destination": "/usr/lib/libnvidia-container.so.1",
+            }
+        ]
+        assert bodies[1]["env"]["NVIDIA_VISIBLE_DEVICES"] == "all"
+        assert "gpus" not in bodies[1]
+        assert container_id == "container-2"
+        # The spec's hooks could not travel through a create body, and that
+        # gap is reported rather than hidden.
+        assert "hooks dropped" in note
+
     async def test_two_refusals_end_in_the_rich_diagnosis(
         self, settings, captured, no_local_specs
     ) -> None:
@@ -1326,3 +1399,52 @@ class TestTranslatedCdiDeliveryFallback:
         assert len(_space_create_calls(captured)) == 2
         assert excinfo.value.code == "podman_api"
         assert "device node busy" in str(excinfo.value)
+
+    async def test_a_second_start_refusal_stays_loud(
+        self, settings, captured, cdi_spec_dir
+    ) -> None:
+        # Given: the translated container starts and podman refuses it too, so
+        # the refusal is podman's truth and the resolver must not overwrite it.
+        delegate = _refuse_first_start()
+        seen: dict[str, int] = {"start": 0}
+
+        def h(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/start"):
+                seen["start"] += 1
+                if seen["start"] > 1:
+                    return httpx.Response(500, json={"message": "device node busy"})
+            return delegate(request)
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo", gpu_ids=("gpu-0",))
+        await client.aclose()
+        # Then
+        assert len(_space_create_calls(captured)) == 2
+        assert excinfo.value.code == "podman_api"
+        assert "device node busy" in str(excinfo.value)
+
+
+class TestGpuLessStartFailure:
+    """Without an assignment there is nothing to fall back to, so a refused
+    start is podman's answer to give, once."""
+
+    async def test_a_start_failure_without_a_gpu_is_raised_raw(self, settings, captured) -> None:
+        # Given: no GPU assigned and podman refuses the start itself.
+        def h(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/start"):
+                return httpx.Response(500, json={"message": "port 8000 already in use"})
+            return _create_ok_handler(request)
+
+        client = _client_for(h, captured)
+        manager = SpaceRuntimeManager(settings, client=client)
+        # When
+        with pytest.raises(OutoError) as excinfo:
+            await manager.start("alice", "demo")
+        await client.aclose()
+        # Then: exactly one attempt, and podman's own message reaches the caller.
+        assert len(_space_create_calls(captured)) == 1
+        assert excinfo.value.code == "podman_api"
+        assert "port 8000 already in use" in str(excinfo.value)
