@@ -4,6 +4,25 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.19 — the GPU ladder covers the start stage too
+
+### Fixed
+
+- **GPU delivery now falls back when Podman refuses the START, not only
+  when it refuses the create.** Podman does not resolve CDI at create time:
+  `libpod.WithCDI` only stores the qualified device names, and the registry
+  lookup happens in `generateSpec()` when the container starts. On a host
+  whose older `containers/common` dropped the newer `cdiVersion` spec out of
+  its CDI registry, the create therefore succeeded and the start answered
+  `setting up CDI devices: unresolvable CDI devices nvidia.com/gpu=0` — the
+  server's create-only retry never ran. The delivery ladder now wraps
+  create *and* start as one unit, so such a host gets the same single retry
+  with the spec's `containerEdits` translated into `devices` / `mounts` /
+  `env` (the half-created container is removed first, since its name would
+  block the retry). Dropped OCI hooks still surface as a note in the Space
+  runtime message, and a second refusal still ends in the rich
+  `space_gpu_cdi_unresolved` diagnosis.
+
 ## v0.6.18 — the GPU delivery never gives up
 
 ### Fixed

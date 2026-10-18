@@ -330,16 +330,23 @@ spec file is sitting right there in `/etc/cdi`. Nothing about that host is
 broken from the user's point of view: they assigned a GPU and expect it to
 work.
 
-So a create that carries a GPU assignment and is **refused** gets exactly one
-more attempt, with the server doing the translation itself:
+So a create-or-start that carries a GPU assignment and is **refused** gets
+exactly one more attempt, with the server doing the translation itself. Podman
+resolves CDI when the container is *started*, not when it is created —
+`libpod.WithCDI` only stores the qualified names at create — so on an older
+`containers/common` the create succeeds and the very next call answers
+`setting up CDI devices: unresolvable CDI devices nvidia.com/gpu=0`. Both
+stages therefore run inside the same ladder:
 
-1. Podman resolves the device (canonical qualified names on 4.x / 5.x, the
-   `gpus` field on 6.x) — device nodes, mounts, env *and* hooks.
-2. Podman refused → the server reads the specs (same local-then-host ladder as
-   the diagnosis) and retries **once** with the `containerEdits` merged into
-   the fields that exist on every version: `devices` (device nodes),
-   `mounts` and `env`. The refused `devices` / `gpus` entries are replaced,
-   not extended.
+1. Podman creates and starts the container (canonical qualified names on
+   4.x / 5.x, the `gpus` field on 6.x) — device nodes, mounts, env *and*
+   hooks.
+2. Podman refused the create or the start → the server reads the specs (same
+   local-then-host ladder as the diagnosis), removes the half-created
+   container (its name would block the retry) and retries **once** with the
+   `containerEdits` merged into the fields that exist on every version:
+   `devices` (device nodes), `mounts` and `env`. The refused `devices` /
+   `gpus` entries are replaced, not extended.
 3. The retry was refused too → the existing
    `space_gpu_cdi_unresolved` diagnosis runs, with Podman's message appended.
 

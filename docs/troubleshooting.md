@@ -670,12 +670,16 @@ podman exec outo-models grep -A5 '^devices:' /etc/cdi/nvidia.yaml
 podman run --rm --device nvidia.com/gpu=0 docker.io/library/cuda-vectoradd:nvidia-12.0.0
 ```
 
-You do not have to fix the host. When a create with an assigned GPU is
-refused, the server translates the spec edits itself and retries the create
-once — `devices` (device nodes), `mounts` and `env` merged into the create
-body — so the GPU arrives on that combination too. If that retry is refused
-as well, you get the `space_gpu_cdi_unresolved` diagnosis below with Podman's
-message appended.
+You do not have to fix the host. When a container with an assigned GPU is
+refused, the server translates the spec edits itself and retries the
+create-and-start once — `devices` (device nodes), `mounts` and `env` merged
+into the create body — so the GPU arrives on that combination too. Podman
+resolves CDI at *start*, not at create, so on these hosts the create often
+succeeds and the start answers
+`setting up CDI devices: unresolvable CDI devices nvidia.com/gpu=0`; the
+server treats both refusals the same way. If the retry is refused as well, you
+get the `space_gpu_cdi_unresolved` diagnosis below with Podman's message
+appended.
 
 The translation cannot carry OCI hooks (a create body has no field for
 them). A spec that defines hooks therefore produces a delivery note, shown in
