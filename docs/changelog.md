@@ -4,6 +4,40 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.21 — the translated GPU fallback carries the hook effects too
+
+### Fixed
+
+- **`nvidia-smi` now works in a Space delivered through the translated GPU
+  fallback, with no manual step.** A rootless podman 4.x drops the host's
+  `cdiVersion: 0.7.0` NVIDIA spec out of its CDI registry, so the GPU is
+  delivered through the server's own translation of `containerEdits`. That
+  translation covered `deviceNodes` / `mounts` / `env` / `additionalGids` and
+  dropped the spec's OCI hooks — which is why `nvidia-smi` still failed with
+  exit 12, `NVIDIA-SMI couldn't find libnvidia-ml.so library`: only the
+  versioned library file was mounted, the SONAME symlink
+  (`libnvidia-ml.so.1` → `libnvidia-ml.so.580.178.04`) the loader resolves by
+  name did not exist, and nothing registered the injected library folders with
+  the dynamic linker. Those two effects are exactly what the spec's
+  `create-symlinks` and `update-ldcache` hooks do, so the translation now
+  reproduces them:
+  - each `create-symlinks --link <target>::<link>` pair (target first, link
+    second) becomes a read-only bind mount of `<target>` **at** `<link>`, with
+    a relative `<target>` resolved against the link's directory and a mounted
+    path re-pointed at that mount's real host `hostPath`;
+  - every `update-ldcache --folder` is prepended (deduplicated, order
+    preserved) to `LD_LIBRARY_PATH`, keeping any value the spec itself set.
+
+  Both the `nvidia-cdi-hook <cmd>` and the legacy `nvidia-ctk hook <cmd>`
+  argument spellings are accepted. `disable-device-node-modification` is a
+  documented no-op and is skipped silently. The delivery note is now precise:
+  it names the hook **command** (`enable-cuda-compat`, `chmod`,
+  `update-application-profile`, an unknown or malformed hook) instead of only
+  the lifecycle stage, and only names the hooks whose effects were really not
+  delivered — a spec whose hooks are fully translated leaves no note at all.
+  Hooks still never fail the delivery: anything untranslatable costs fidelity
+  and is reported, not raised. No public interface changed.
+
 ## v0.6.20 — the translated GPU fallback carries `additionalGids`
 
 ### Fixed
