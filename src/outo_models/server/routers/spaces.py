@@ -355,8 +355,7 @@ async def _run_lifecycle(
                 )
             await manager.stop(owner_name, space_name)
             await manager.build_image(owner_name, space_name)
-            await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
-            return await runtime_status_async(repo, settings=settings, manager=manager)
+            return await _started()
         if sdk == "static":
             export_static_site(
                 owner_name,
@@ -378,8 +377,26 @@ async def _run_lifecycle(
                     "Containerfile at the repository root."
                 )
         await manager.build_image(owner_name, space_name)
-        await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
-        return await runtime_status_async(repo, settings=settings, manager=manager)
+        return await _started()
+
+    async def _started() -> RuntimeStatus:
+        """Start the container and fold the delivery note into the message.
+
+        The note reports what the translated GPU delivery could not carry
+        (OCI hooks). The runtime panel is where an operator looks after a
+        start, so it has to say so there.
+        """
+        _cid, _port, note = await manager.start(owner_name, space_name, gpu_ids=gpu_ids)
+        result = await runtime_status_async(repo, settings=settings, manager=manager)
+        if not note:
+            return result
+        return RuntimeStatus(
+            state=result.state,
+            message=f"The Space is running. {note}",
+            url=result.url,
+            container_id=result.container_id,
+            port=result.port,
+        )
 
     try:
         async with REPO_LOCKS.acquire(owner_name, space_name):

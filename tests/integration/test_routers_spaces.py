@@ -146,3 +146,104 @@ class TestLoadOwnerGpuIds:
         _, _, _ = app
         async with factory() as session:
             assert await _load_owner_gpu_ids(session, "nobody") == []
+
+
+_DELIVERY_NOTE = (
+    "CDI hooks dropped for 0 (createContainer): a container create body cannot "
+    "express hooks, and this host's podman did not apply the spec's own."
+)
+
+
+class _StubRuntimeManager:
+    """Stands in for the Podman manager: no socket in the test environment."""
+
+    def __init__(self, settings: object, **_: object) -> None:
+        self.gpu_ids: list[str] = []
+
+    async def inspect(self, owner: str, name: str) -> dict[str, object]:
+        return {
+            "Id": "stub-container-id",
+            "State": {"Status": "running"},
+            "NetworkSettings": {"Ports": [{"host_port": 23456}]},
+        }
+
+    async def build_image(self, owner: str, name: str) -> str:
+        return "stub-image-id"
+
+    async def start(
+        self, owner: str, name: str, *, gpu_ids: list[str] | tuple[str, ...] = ()
+    ) -> tuple[str, int, str]:
+        self.gpu_ids = list(gpu_ids)
+        return "stub-container-id", 23456, _DELIVERY_NOTE
+
+    async def stop(self, owner: str, name: str) -> None:
+        return None
+
+
+class TestStartDeliveryNote:
+    """The GPU delivery note reaches the Space's runtime panel.
+
+    The fallback reports what it could not carry; the runtime message is
+    where an operator looks right after a start, so a note that stops at the
+    server log would be a silent gap.
+    """
+
+    async def test_the_note_is_appended_to_the_running_message(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, factory, monkeypatch
+    ) -> None:
+        # Given: a container Space whose owner has an assigned GPU, and a
+        # manager that reports a dropped-hook note.
+        client, _, _ = app
+        await seed_approved_user(username="erin")
+        client.post(
+            "/api/auth/login",
+            json={"username": "erin", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/spaces",
+            json={"name": "trainer", "sdk": "gradio", "visibility": "public"},
+        )
+        async with factory() as session:
+            session.add(WebSetting(key="gpu:erin", value='["gpu-0"]'))
+            await session.commit()
+        monkeypatch.setattr(
+            "outo_models.server.routers.spaces.SpaceRuntimeManager", _StubRuntimeManager
+        )
+
+        # When
+        response = client.post("/api/spaces/erin/trainer/start")
+
+        # Then
+        assert response.status_code == 200
+        assert response.json()["message"] == f"The Space is running. {_DELIVERY_NOTE}"
+
+    async def test_the_base_message_is_unchanged_without_a_note(
+        self, app: tuple[TestClient, FastAPI, object], seed_approved_user, monkeypatch
+    ) -> None:
+        # Given: the same Space started without a note — podman's own CDI path
+        # delivered everything the spec asked for.
+        client, _, _ = app
+        await seed_approved_user(username="erin")
+        client.post(
+            "/api/auth/login",
+            json={"username": "erin", "password": "correct horse battery staple"},
+        )
+        client.post(
+            "/api/spaces",
+            json={"name": "trainer", "sdk": "gradio", "visibility": "public"},
+        )
+
+        class _Quiet(_StubRuntimeManager):
+            async def start(
+                self, owner: str, name: str, *, gpu_ids: list[str] | tuple[str, ...] = ()
+            ) -> tuple[str, int, str]:
+                return "stub-container-id", 23456, ""
+
+        monkeypatch.setattr("outo_models.server.routers.spaces.SpaceRuntimeManager", _Quiet)
+
+        # When
+        response = client.post("/api/spaces/erin/trainer/start")
+
+        # Then
+        assert response.status_code == 200
+        assert response.json()["message"] == "The Space is running."
