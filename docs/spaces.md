@@ -315,8 +315,47 @@ On 4.x / 5.x the qualified
 device names reach Podman's own CDI path — `specgen.ExtractCDIDevices` →
 `libpod.WithCDI` → `containers/common`'s `registry.InjectDevices` — which
 reads the host specs and applies the **complete** `containerEdits`: device
-nodes, mounts, env *and* OCI hooks. The server sends names only; it never
-translates a spec into create-body fields, so nothing can be silently lost.
+nodes, mounts, env *and* OCI hooks. On that path the server sends names only
+and never translates a spec into create-body fields, so nothing can be
+silently lost — see the translated fallback below for when Podman's own
+resolution is unavailable.
+
+#### Translated fallback (automatic)
+
+Podman's own resolution is not available on every host. An older
+`containers/common` — the CDI parser inside Podman 4.x — can drop a newer
+`cdiVersion` spec (for example a `0.7.0` spec) out of its CDI registry, and
+then answers `unresolvable CDI devices nvidia.com/gpu=0` for a device whose
+spec file is sitting right there in `/etc/cdi`. Nothing about that host is
+broken from the user's point of view: they assigned a GPU and expect it to
+work.
+
+So a create that carries a GPU assignment and is **refused** gets exactly one
+more attempt, with the server doing the translation itself:
+
+1. Podman resolves the device (canonical qualified names on 4.x / 5.x, the
+   `gpus` field on 6.x) — device nodes, mounts, env *and* hooks.
+2. Podman refused → the server reads the specs (same local-then-host ladder as
+   the diagnosis) and retries **once** with the `containerEdits` merged into
+   the fields that exist on every version: `devices` (device nodes),
+   `mounts` and `env`. The refused `devices` / `gpus` entries are replaced,
+   not extended.
+3. The retry was refused too → the existing
+   `space_gpu_cdi_unresolved` diagnosis runs, with Podman's message appended.
+
+The fidelity gap of step 2 is **not silent**. OCI hooks are the one
+`containerEdits` key a create body cannot express, so a spec that carries them
+produces a delivery note that
+
+- appears in the Space's runtime message (the runtime panel shows
+  `The Space is running. CDI hooks dropped for 0 (createContainer): …`), and
+- is logged at `WARNING` on the server.
+
+One practical consequence of the translated path: it mounts the libraries and
+device nodes the spec names, but a library the *host* only exposes through
+`ldconfig` discovery rather than a bind mount may still need
+`ldconfig`/`LD_LIBRARY_PATH` handling. Use Podman's own CDI path (step 1) when
+it works — it applies the full spec.
 
 `outo-models start` mounts both CDI spec directories read-only into the
 server container when they exist on the host, so no operator step is needed

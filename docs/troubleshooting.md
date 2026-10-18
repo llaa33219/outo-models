@@ -656,6 +656,35 @@ podman exec outo-models grep -A5 '^devices:' /etc/cdi/nvidia.yaml
 podman run --rm --device nvidia.com/gpu=gpu-0 docker.io/library/cuda-vectoradd:nvidia-12.0.0
 ```
 
+**A second, subtler cause: an older Podman CDI parser drops a newer spec.**
+Podman 4.x ships an older `containers/common`, whose CDI spec parser does not
+understand a newer `cdiVersion` — a spec written as `cdiVersion: 0.7.0`, for
+instance. Podman then reports *no spec at all*, even though the file is
+present, readable and defines exactly the device you assigned:
+
+```bash
+# The spec is there, and it declares the device:
+podman exec outo-models grep -E '^(cdiVersion|kind):' /etc/cdi/nvidia.yaml
+podman exec outo-models grep -A5 '^devices:' /etc/cdi/nvidia.yaml
+# …but podman's own registry cannot see it:
+podman run --rm --device nvidia.com/gpu=0 docker.io/library/cuda-vectoradd:nvidia-12.0.0
+```
+
+You do not have to fix the host. When a create with an assigned GPU is
+refused, the server translates the spec edits itself and retries the create
+once — `devices` (device nodes), `mounts` and `env` merged into the create
+body — so the GPU arrives on that combination too. If that retry is refused
+as well, you get the `space_gpu_cdi_unresolved` diagnosis below with Podman's
+message appended.
+
+The translation cannot carry OCI hooks (a create body has no field for
+them). A spec that defines hooks therefore produces a delivery note, shown in
+the Space's runtime message (`The Space is running. CDI hooks dropped for 0
+(createContainer): …`) and logged at `WARNING` on the server. A library the
+host only exposes through `ldconfig` discovery rather than a bind mount may
+additionally need `LD_LIBRARY_PATH` inside the Space. When Podman's own CDI
+path works, none of this applies.
+
 ### The container starts but has no GPU
 
 Symptom: the Space runs, the GPU is assigned in the admin UI, but inside the

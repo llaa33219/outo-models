@@ -4,6 +4,21 @@ Every public-interface change to `outo-models` is recorded here. Per
 AGENTS.md §2.8, CLI flags / REST endpoints / environment variables stay
 backwards-compatible, and breaking changes ship with a migration guide.
 
+## v0.6.18 — the GPU delivery never gives up
+
+### Fixed
+
+- **The GPU delivery now works on hosts whose podman drops the CDI
+  spec.** Older podman CDI parsers can reject a newer `cdiVersion`
+  spec (a 0.7.0 spec on podman 4.x), and the registry then answers
+  `unresolvable CDI devices` for a device the file plainly defines.
+  Delivery is a ladder now: podman's own CDI resolution first (hooks
+  included), then — on any create refusal — one retry with the spec
+  edits translated into `devices` / `mounts` / `env`, then the rich
+  diagnostic. Where the OCI hooks could not be translated they are
+  dropped with a visible note in the Space runtime message instead of
+  silently.
+
 ## v0.6.17 — the CDI names the specs define
 
 ### Fixed
